@@ -1,0 +1,206 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "linux-x11-gcc",
+            "displayName": "Linux X11 GCC",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        },
+        {
+            "name": "linux-x11-clang",
+            "displayName": "Linux X11 Clang",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "windows-msvc",
+            "displayName": "Windows MSVC",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "toolset": {
+                "value": "host=x64",
+                "strategy": "external"
+            },
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl",
+                "CMAKE_CXX_COMPILER": "cl"
+            }
+        },
+        {
+            "name": "windows-clang-cl",
+            "displayName": "Windows Clang-CL (MSVC ABI)",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl"
+            }
+        },
+        {
+            "name": "windows-mingw",
+            "displayName": "Windows MinGW-w64",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "linux-x11-gcc-debug",
+            "displayName": "Debug",
+            "configurePreset": "linux-x11-gcc",
+            "configuration": "Debug"
+        },
+        {
+            "name": "linux-x11-gcc-release",
+            "displayName": "Release",
+            "configurePreset": "linux-x11-gcc",
+            "configuration": "Release"
+        },
+        {
+            "name": "linux-x11-clang-debug",
+            "displayName": "Debug",
+            "configurePreset": "linux-x11-clang",
+            "configuration": "Debug"
+        },
+        {
+            "name": "linux-x11-clang-release",
+            "displayName": "Release",
+            "configurePreset": "linux-x11-clang",
+            "configuration": "Release"
+        },
+        {
+            "name": "windows-msvc-debug",
+            "displayName": "Debug",
+            "configurePreset": "windows-msvc",
+            "configuration": "Debug"
+        },
+        {
+            "name": "windows-msvc-release",
+            "displayName": "Release",
+            "configurePreset": "windows-msvc",
+            "configuration": "Release"
+        },
+        {
+            "name": "windows-clang-cl-debug",
+            "displayName": "Debug",
+            "configurePreset": "windows-clang-cl",
+            "configuration": "Debug"
+        },
+        {
+            "name": "windows-clang-cl-release",
+            "displayName": "Release",
+            "configurePreset": "windows-clang-cl",
+            "configuration": "Release"
+        },
+        {
+            "name": "windows-mingw-debug",
+            "displayName": "Debug",
+            "configurePreset": "windows-mingw",
+            "configuration": "Debug"
+        },
+        {
+            "name": "windows-mingw-release",
+            "displayName": "Release",
+            "configurePreset": "windows-mingw",
+            "configuration": "Release"
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "linux-x11-gcc",
+            "displayName": "Linux X11 GCC",
+            "steps": [
+                { "type": "configure", "name": "linux-x11-gcc" },
+                { "type": "build", "name": "linux-x11-gcc-debug" },
+                { "type": "build", "name": "linux-x11-gcc-release" }
+            ]
+        },
+        {
+            "name": "linux-x11-clang",
+            "displayName": "Linux X11 Clang",
+            "steps": [
+                { "type": "configure", "name": "linux-x11-clang" },
+                { "type": "build", "name": "linux-x11-clang-debug" },
+                { "type": "build", "name": "linux-x11-clang-release" }
+            ]
+        },
+        {
+            "name": "windows-msvc",
+            "displayName": "Windows MSVC",
+            "steps": [
+                { "type": "configure", "name": "windows-msvc" },
+                { "type": "build", "name": "windows-msvc-debug" },
+                { "type": "build", "name": "windows-msvc-release" }
+            ]
+        },
+        {
+            "name": "windows-clang-cl",
+            "displayName": "Windows Clang-CL",
+            "steps": [
+                { "type": "configure", "name": "windows-clang-cl" },
+                { "type": "build", "name": "windows-clang-cl-debug" },
+                { "type": "build", "name": "windows-clang-cl-release" }
+            ]
+        },
+        {
+            "name": "windows-mingw",
+            "displayName": "Windows MinGW-w64",
+            "steps": [
+                { "type": "configure", "name": "windows-mingw" },
+                { "type": "build", "name": "windows-mingw-debug" },
+                { "type": "build", "name": "windows-mingw-release" }
+            ]
+        }
+    ]
+}

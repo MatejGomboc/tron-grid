@@ -1,0 +1,50 @@
+name: Setup Vulkan SDK (Windows)
+description: Downloads, caches, and configures the LunarG Vulkan SDK on the Windows runner.
+
+inputs:
+    version:
+        description: Vulkan SDK version
+        required: true
+
+runs:
+    using: composite
+
+    steps:
+        # On main: restore and save cache. On PRs: restore only (read-only).
+        - name: Restore Vulkan SDK cache
+          if: github.ref != 'refs/heads/main'
+          uses: actions/cache/restore@v4
+          with:
+            path: C:\VulkanSDK\${{ inputs.version }}
+            key: vulkan-sdk-windows-${{ inputs.version }}
+
+        - name: Restore and save Vulkan SDK cache
+          if: github.ref == 'refs/heads/main'
+          uses: actions/cache@v4
+          with:
+            path: C:\VulkanSDK\${{ inputs.version }}
+            key: vulkan-sdk-windows-${{ inputs.version }}
+
+        - name: Check if SDK already exists
+          id: check-sdk
+          shell: pwsh
+          run: |
+            if (Test-Path "C:\VulkanSDK\${{ inputs.version }}\Bin") {
+              echo "exists=true" >> $env:GITHUB_OUTPUT
+            } else {
+              echo "exists=false" >> $env:GITHUB_OUTPUT
+            }
+
+        - name: Download and install Vulkan SDK
+          if: steps.check-sdk.outputs.exists != 'true'
+          shell: pwsh
+          run: |
+            Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/${{ inputs.version }}/windows/vulkansdk-windows-X64-${{ inputs.version }}.exe" -OutFile VulkanSDK-Installer.exe
+            Start-Process -FilePath .\VulkanSDK-Installer.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install com.lunarg.vulkan.volk" -Wait
+            Remove-Item VulkanSDK-Installer.exe
+
+        - name: Setup environment
+          shell: pwsh
+          run: |
+            echo "VULKAN_SDK=C:\VulkanSDK\${{ inputs.version }}" >> $env:GITHUB_ENV
+            echo "C:\VulkanSDK\${{ inputs.version }}\Bin" >> $env:GITHUB_PATH

@@ -1,0 +1,53 @@
+name: Setup Vulkan SDK (Linux)
+
+description: Downloads, caches, and configures the LunarG Vulkan SDK on the Linux runner.
+
+inputs:
+    version:
+        description: Vulkan SDK version
+        required: true
+
+runs:
+    using: composite
+
+    steps:
+        # On main: restore and save cache. On PRs: restore only (read-only).
+        - name: Restore Vulkan SDK cache
+          if: github.ref != 'refs/heads/main'
+          uses: actions/cache/restore@v4
+          with:
+            path: ~/VulkanSDK/${{ inputs.version }}
+            key: vulkan-sdk-linux-${{ inputs.version }}
+
+        - name: Restore and save Vulkan SDK cache
+          if: github.ref == 'refs/heads/main'
+          uses: actions/cache@v4
+          with:
+            path: ~/VulkanSDK/${{ inputs.version }}
+            key: vulkan-sdk-linux-${{ inputs.version }}
+
+        - name: Check if SDK already exists
+          id: check-sdk
+          shell: bash
+          run: |
+            if [ -d "$HOME/VulkanSDK/${{ inputs.version }}/x86_64" ]; then
+              echo "exists=true" >> $GITHUB_OUTPUT
+            else
+              echo "exists=false" >> $GITHUB_OUTPUT
+            fi
+
+        - name: Download and extract Vulkan SDK
+          if: steps.check-sdk.outputs.exists != 'true'
+          shell: bash
+          run: |
+            wget -q "https://sdk.lunarg.com/sdk/download/${{ inputs.version }}/linux/vulkansdk-linux-x86_64-${{ inputs.version }}.tar.xz" -O vulkansdk.tar.xz
+            mkdir -p ~/VulkanSDK
+            tar -xf vulkansdk.tar.xz -C ~/VulkanSDK
+            rm vulkansdk.tar.xz
+
+        - name: Setup environment
+          shell: bash
+          run: |
+            echo "VULKAN_SDK=$HOME/VulkanSDK/${{ inputs.version }}/x86_64" >> $GITHUB_ENV
+            echo "$HOME/VulkanSDK/${{ inputs.version }}/x86_64/bin" >> $GITHUB_PATH
+            echo "LD_LIBRARY_PATH=$HOME/VulkanSDK/${{ inputs.version }}/x86_64/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
