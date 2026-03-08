@@ -53,6 +53,73 @@ The aesthetic is not just visual — it informs everything:
 | **NPCs** | Geometric wireframe shapes (simple programmes) |
 | **Mortality** | Programmes derez permanently; players resurrect at a safe house |
 
+### Rendering Requirements
+
+The Tron aesthetic demands specific rendering capabilities:
+
+| Effect | Implementation |
+|--------|----------------|
+| **Neon glow** | Multi-pass bloom, HDR rendering |
+| **Grid lines** | Procedural geometry, anti-aliased lines |
+| **Data streams** | Particle systems, animated UVs |
+| **Reflections** | Screen-space reflections on grid floor |
+| **Light trails** | Motion blur, temporal effects |
+
+### Colour Palette
+
+| Colour | Hex | Role |
+|--------|-----|------|
+| Cyan | `#00FFFF` | Primary |
+| Magenta | `#FF00FF` | Accent |
+| Orange | `#FF8800` | Warning / energy |
+| White | `#FFFFFF` | Highlights |
+| Black | `#000000` | Void background |
+
+### AI Visual Identity
+
+The AI should look *different* from the geometric world around it:
+
+- **Organic curves** in a world of straight lines
+- **Soft glow** versus harsh neon
+- **Warm colour** (soft white/gold) versus cool cyan
+- **Pulsing** brightness that reflects emotional state
+
+## AI as Network Client
+
+The AI brain runs as a **separate process** that connects to TronGrid via a streaming protocol —
+just like a human player logging in. This gives complete separation with no FFI or shared memory.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    TRONGRID (C++20)                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   Renderer   │  │   Physics    │  │  World State │      │
+│  │  (Vulkan)    │  │              │  │              │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│                    ┌──────────────┐                         │
+│                    │   Network    │◄────── Human Players    │
+│                    │   Protocol   │◄────── AI Brain (bot)   │
+│                    └──────────────┘                         │
+└─────────────────────────────────────────────────────────────┘
+                            ▲
+                            │ TCP / UDP / WebSocket
+                            │
+┌───────────────────────────┴─────────────────────────────────┐
+│              AI BRAIN (separate repository)                 │
+│              Connects as just another client                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+TronGrid sends the AI extra data that human players do not receive:
+
+- Rendered image from the AI's viewpoint (for visual perception)
+- Precise sound events (not just an audio stream)
+- Ground-truth entity data (for learning)
+
+This is the same proven architecture that AAA studios use for MMO testing bots — automated clients
+that connect via the standard player protocol. The difference is that those bots are disposable QA
+tools, while this AI is a persistent entity with memory and personality that *lives* in the world.
+
 ## Target Hardware
 
 - **GPU:** NVIDIA RTX 4090 (Ada Lovelace), 16 GB VRAM
