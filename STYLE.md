@@ -59,7 +59,7 @@ Key settings:
 
 | Item | Convention | Example |
 |------|------------|---------|
-| Namespaces | snake_case | `tron_grid` |
+| Namespaces | PascalCase | `TronGrid` |
 | Types / Classes | PascalCase | `SwapchainImage` |
 | Functions | snake_case | `create_device` |
 | Constants | SCREAMING_SNAKE_CASE | `MAX_FRAMES_IN_FLIGHT` |

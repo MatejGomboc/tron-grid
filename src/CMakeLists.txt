@@ -15,10 +15,17 @@ add_executable(${PROJECT_NAME}
     volk.cpp
 )
 
+if(WIN32)
+    target_sources(${PROJECT_NAME} PRIVATE window/win32_window.cpp)
+elseif(UNIX)
+    target_sources(${PROJECT_NAME} PRIVATE window/xcb_window.cpp)
+endif()
+
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/window"
     "${Vulkan_INCLUDE_DIRS}"
 )
 
