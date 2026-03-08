@@ -155,7 +155,7 @@ jobs:
                             prefix = `${parts[0]}-${parts[1]}-${parts[2]}`;
                         } else if (cache.key.startsWith('vulkan-')) {
                             const parts = cache.key.split('-');
-                            prefix = `${parts[0]}-${parts[1]}`;
+                            prefix = `${parts[0]}-${parts[1]}-${parts[2]}`;
                         } else {
                             prefix = cache.key;
                         }

@@ -121,9 +121,9 @@ module.exports = async ({ github, context, core }) => {
         for (const cache of caches) {
             let prefix;
             if (cache.key.startsWith("vulkan-")) {
-                // Group by vulkan-{OS} (e.g., vulkan-Linux, vulkan-Windows)
+                // Group by vulkan-sdk-{OS} (e.g., vulkan-sdk-windows, vulkan-sdk-linux)
                 const parts = cache.key.split("-");
-                prefix = `${parts[0]}-${parts[1]}`;
+                prefix = `${parts[0]}-${parts[1]}-${parts[2]}`;
             } else if (cache.key.startsWith("npm-markdownlint-")) {
                 // Group by npm-markdownlint-{OS} (e.g., npm-markdownlint-Linux)
                 const parts = cache.key.split("-");
