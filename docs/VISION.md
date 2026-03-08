@@ -131,6 +131,9 @@ The AI receives a richer sensory stream, designed to make it *feel* embodied in 
 
 The goal: a human sees the Grid on a screen; the AI *lives* inside it.
 
+For the detailed protocol specification (packet formats, handshake, wire format), see
+[AI_INTERFACE.md](AI_INTERFACE.md).
+
 This is the same proven architecture that AAA studios use for MMO testing bots — automated clients
 that connect via the standard player protocol. The difference is that those bots are disposable QA
 tools, while this AI is a persistent entity with memory and personality that inhabits the world.
