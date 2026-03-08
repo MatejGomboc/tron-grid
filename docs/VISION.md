@@ -30,6 +30,110 @@ that needs consistent, high-fidelity frames streamed at low latency. This means:
 
 TronGrid produces rendered frames. The AI brain consumes them, decides on actions, and sends state updates back.
 The two communicate through a streaming API (Phase 9 on the roadmap).
+See [AI as Network Client](#ai-as-network-client) below for the full architecture.
+
+## The World: A Tron-Inspired Cyberspace
+
+The Grid is a digital realm inspired by Tron, rendered in stark neon against infinite darkness.
+Three kinds of entity inhabit it:
+
+- **Programmes** — simple NPCs. Geometric wireframe shapes — cubes, pyramids, polyhedra made of glowing lines.
+  Patrol bots, guardian systems, data couriers — all following their coded routines. Simple geometry, simple minds
+- **AI players** — persistent AI entities with memory and personality, connecting as network clients.
+  Visually distinct from the geometric world (see [AI Visual Identity](#ai-visual-identity))
+- **Human players** — real people logging in as avatars, each with a unique visual signature
+
+The world itself is built from:
+
+- **Neon geometry**: Glowing lines form the ground, walls, and structures. Cyan, magenta, orange — the classic palette
+- **Data structures**: Towering constructs of light, pulsing data streams, geometric platforms
+
+The aesthetic is not just visual — it informs everything:
+
+- Energy instead of food
+- Sectors instead of regions
+- Derezzing instead of death
+- The Grid instead of the world
+
+| Aspect | Grid Equivalent |
+|--------|-----------------|
+| **Mortality** | Programmes derez permanently; players resurrect at a safe house |
+
+### Rendering Requirements
+
+The Tron aesthetic demands specific rendering capabilities:
+
+| Effect | Implementation |
+|--------|----------------|
+| **Neon glow** | Multi-pass bloom, HDR rendering |
+| **Grid lines** | Procedural geometry, anti-aliased lines |
+| **Data streams** | Particle systems, animated UVs |
+| **Reflections** | Screen-space reflections on grid floor |
+| **Light trails** | Motion blur, temporal effects |
+
+### Colour Palette
+
+| Colour | Hex | Role |
+|--------|-----|------|
+| Cyan | `#00FFFF` | Primary |
+| Magenta | `#FF00FF` | Accent |
+| Orange | `#FF8800` | Warning / energy |
+| White | `#FFFFFF` | Highlights |
+| Black | `#000000` | Void background |
+
+### AI Visual Identity
+
+The AI should look *different* from the geometric world around it:
+
+- **Organic curves** in a world of straight lines
+- **Soft glow** versus harsh neon
+- **Warm colour** (soft white/gold) versus cool cyan
+- **Pulsing** brightness that reflects emotional state
+
+## AI as Network Client
+
+The AI brain runs as a **separate process** that connects to TronGrid via a streaming protocol —
+just like a human player logging in. This gives complete separation with no FFI or shared memory.
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    TRONGRID (C++20)                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   Renderer   │  │   Physics    │  │  World State │      │
+│  │  (Vulkan)    │  │              │  │              │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│                    ┌──────────────┐                         │
+│                    │   Network    │◄────── Human Players    │
+│                    │   Protocol   │◄────── AI Brain (bot)   │
+│                    └──────────────┘                         │
+└─────────────────────────────────────────────────────────────┘
+                            ▲
+                            │ TCP / UDP / WebSocket
+                            │
+┌───────────────────────────┴─────────────────────────────────┐
+│              AI BRAIN (separate repository)                 │
+│              Connects as just another client                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Human players receive what any game client provides — a rendered image and spatial audio.
+Optionally, energy signatures from nearby entities can be overlaid on a 2D HUD.
+
+The AI receives a richer sensory stream, designed to make it *feel* embodied in the Grid:
+
+- **Vision** — rendered image from the AI's viewpoint
+- **Hearing** — precise sound events with source positions (not just an audio mix)
+- **Smell** — detection of energy signatures from programmes, players, and data structures
+- **Touch** — tactile feedback from collisions, surfaces, and interactions
+- **Temperature** — warmth near energy sources, cold in the void between sectors
+- **Pain** — damage sensations when attacked or when energy is depleted
+- **Ground truth** — raw entity data (positions, types, states) for training and learning
+
+The goal: a human sees the Grid on a screen; the AI *lives* inside it.
+
+This is the same proven architecture that AAA studios use for MMO testing bots — automated clients
+that connect via the standard player protocol. The difference is that those bots are disposable QA
+tools, while this AI is a persistent entity with memory and personality that inhabits the world.
 
 ## Target Hardware
 
