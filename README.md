@@ -24,11 +24,19 @@ Early development. Currently building Vulkan infrastructure (Phase 0).
 - **CMake** 3.16+
 - **Ninja** build system
 
-### Target Hardware
+### Development Reference Hardware
 
-- **GPU:** NVIDIA RTX 4090 (Ada Lovelace)
-- **VRAM:** 16 GB
-- **Target:** 4K @ 60+ FPS with full ray tracing
+| Component | Specification |
+|-----------|---------------|
+| CPU | Intel Core i9-14900HX (24 cores / 32 threads) |
+| GPU | NVIDIA GeForce RTX 4090 Laptop GPU (Ada Lovelace) |
+| VRAM | 16 GB GDDR6 |
+| RAM | 64 GB DDR5-5600 (2 × 32 GB) |
+| Storage | ~10 GB NVMe |
+| OS | Windows 11 / Ubuntu 24.04 LTS |
+| Vulkan | 1.4.325+ |
+
+**Target:** 4K @ 60+ FPS with full ray tracing
 
 ### Required Vulkan Extensions
 
