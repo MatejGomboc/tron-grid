@@ -26,7 +26,7 @@ What actually happened.
 
 ## Error Messages / Logs
 
-```
+```text
 Paste any error messages or validation layer output here.
 ```
 

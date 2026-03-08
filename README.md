@@ -32,7 +32,7 @@ Early development. Currently building Vulkan infrastructure (Phase 0).
 
 ### Required Vulkan Extensions
 
-```
+```text
 VK_EXT_mesh_shader              // Task + Mesh shaders
 VK_KHR_acceleration_structure   // RT acceleration structures
 VK_KHR_ray_tracing_pipeline     // RT pipeline
@@ -84,7 +84,7 @@ cmake --build build/linux-x11-clang --config Debug
 
 ## Architecture
 
-```
+```text
 APPLICATION LAYER
   Scene Graph, Entity System, Camera, Input, AI Interface
                               |
@@ -144,7 +144,7 @@ GEOMETRY PROCESSING  (Compute Shaders)
 | 8 - Optimisation | 4K@60+ performance | Rock-solid renderer |
 | 9 - AI Prep | AI vision interface | Frame streaming API |
 
-```
+```text
 Phase 0 --> Phase 1 --> Phase 2 --+--> Phase 3 --> Phase 4
                                   |
                                   +--> Phase 5 --> Phase 6
@@ -158,7 +158,7 @@ Phases 3-4 (Mesh Shaders / Geometry) and Phases 5-6 (RT) can be developed in par
 
 ## Frame Data Flow
 
-```
+```text
 1. UPDATE      Scene changes, camera update
 2. GEOMETRY    Re-tessellate dirty objects, update meshlet buffers
 3. CULL/DRAW   Task shader culls, mesh shader emits, fragment writes vis buffer

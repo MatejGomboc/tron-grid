@@ -169,7 +169,7 @@ Use British spelling in all documentation and user-facing text:
 
 We use [Conventional Commits](https://www.conventionalcommits.org/). Format:
 
-```
+```text
 <type>(<scope>): <description>
 
 [optional body]
@@ -193,7 +193,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/). Format:
 
 ### Examples
 
-```
+```text
 feat(vulkan): add swapchain creation
 
 fix(window): correct X11 event handling on multi-monitor setups

@@ -1,4 +1,5 @@
 name: Setup Vulkan SDK (Windows)
+
 description: Downloads, caches, and configures the LunarG Vulkan SDK on the Windows runner.
 
 inputs:
