@@ -32,7 +32,5 @@
     "[github-actions-workflow]": {
         "editor.formatOnSave": false
     },
-    "C_Cpp.default.cppStandard": "c++20",
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/${command:cmake.activeBuildPreset}/compile_commands.json",
     "cmake.configureOnOpen": false
 }
