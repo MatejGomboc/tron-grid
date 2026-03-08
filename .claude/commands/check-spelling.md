@@ -51,4 +51,6 @@ All documentation, comments, and user-facing strings MUST use British English sp
 
 ## What to Check
 
-If no files are specified via $ARGUMENTS, check all `.md`, `.cpp`, `.h`, and `.yml` files in the repo. Report every violation with file path, line number, the offending word, and its British equivalent. Then offer to fix them all.
+If no files are specified via $ARGUMENTS, check all `.md`, `.cpp`, `.h`, and `.yml` files in the repo.
+Report every violation with file path, line number, the offending word, and its British equivalent.
+Then offer to fix them all.

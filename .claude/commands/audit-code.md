@@ -3,6 +3,7 @@ Perform a thorough C++ code quality and bug-hunting audit on specified files or 
 ## What to Check
 
 ### Memory & Resource Safety
+
 - Uninitialised variables
 - Use-after-free or dangling pointers
 - Missing `nullptr` checks before dereference
@@ -11,6 +12,7 @@ Perform a thorough C++ code quality and bug-hunting audit on specified files or 
 - Double-free or double-destroy of Vulkan objects
 
 ### Vulkan-Specific
+
 - Missing error checks on `vkCreate*` / `vkAllocate*` calls (every `VkResult` must be checked)
 - Incorrect struct `sType` fields
 - Missing `pNext = nullptr` in Vulkan structs
@@ -20,6 +22,7 @@ Perform a thorough C++ code quality and bug-hunting audit on specified files or 
 - Using features without checking `vkGetPhysicalDeviceFeatures`
 
 ### Logic Errors
+
 - Off-by-one errors in loops and array indexing
 - Integer overflow/underflow
 - Incorrect operator precedence
@@ -28,6 +31,7 @@ Perform a thorough C++ code quality and bug-hunting audit on specified files or 
 - Implicit narrowing conversions
 
 ### C++20 Best Practices
+
 - Raw `new`/`delete` instead of smart pointers or RAII wrappers
 - C-style casts instead of `static_cast`/`reinterpret_cast`
 - Missing `const` where appropriate
@@ -35,6 +39,7 @@ Perform a thorough C++ code quality and bug-hunting audit on specified files or 
 - Using `NULL` instead of `nullptr`
 
 ### Platform-Specific
+
 - Windows/Linux code paths missing from `#ifdef` blocks
 - Platform-specific types used without guards
 - Hardcoded paths or assumptions about OS behaviour
@@ -42,6 +47,7 @@ Perform a thorough C++ code quality and bug-hunting audit on specified files or 
 ## Output Format
 
 For each issue found, report:
+
 1. **File and line number**
 2. **Severity** (critical / warning / suggestion)
 3. **Description** of the issue
