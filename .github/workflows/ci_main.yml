@@ -81,9 +81,9 @@ jobs:
             - name: Checkout repository
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-            - name: Install X11 development headers (Linux)
+            - name: Install XCB development headers (Linux)
               if: runner.os == 'Linux'
-              run: sudo apt-get update && sudo apt-get install -y libx11-dev
+              run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
 
             - name: Setup Vulkan SDK (Windows)
               if: runner.os == 'Windows'

@@ -97,7 +97,7 @@ When submitting:
 - CMake 3.16+
 - Ninja build system
 - Vulkan SDK 1.4.335.0+
-- X11 development headers (Linux only)
+- XCB development headers (Linux only)
 
 ### Setup
 
@@ -111,7 +111,7 @@ cmake --preset windows-msvc
 cmake --build build/windows-msvc --config Debug
 
 # Linux
-sudo apt-get install libx11-dev
+sudo apt-get install libxcb1-dev
 cmake --preset linux-x11-gcc
 cmake --build build/linux-x11-gcc --config Debug
 ```

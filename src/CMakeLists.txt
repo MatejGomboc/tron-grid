@@ -5,9 +5,10 @@ if(WIN32)
     set(PLATFORM_LIBS "")
 
 elseif(UNIX)
-    find_package(X11 REQUIRED)
-    set(PLATFORM_DEFINES VK_USE_PLATFORM_XLIB_KHR)
-    set(PLATFORM_LIBS ${X11_LIBRARIES})
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(XCB REQUIRED IMPORTED_TARGET xcb)
+    set(PLATFORM_DEFINES VK_USE_PLATFORM_XCB_KHR)
+    set(PLATFORM_LIBS PkgConfig::XCB)
 endif()
 
 add_executable(${PROJECT_NAME}
