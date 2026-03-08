@@ -116,15 +116,24 @@ just like a human player logging in. This gives complete separation with no FFI 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-TronGrid sends the AI extra data that human players do not receive:
+Human players receive what any game client provides — a rendered image and spatial audio.
+Optionally, energy signatures from nearby entities can be overlaid on a 2D HUD.
 
-- Rendered image from the AI's viewpoint (for visual perception)
-- Precise sound events (not just an audio stream)
-- Ground-truth entity data (for learning)
+The AI receives a richer sensory stream, designed to make it *feel* embodied in the Grid:
+
+- **Vision** — rendered image from the AI's viewpoint
+- **Hearing** — precise sound events with source positions (not just an audio mix)
+- **Smell** — detection of energy signatures from programmes, players, and data structures
+- **Touch** — tactile feedback from collisions, surfaces, and interactions
+- **Temperature** — warmth near energy sources, cold in the void between sectors
+- **Pain** — damage sensations when attacked or when energy is depleted
+- **Ground truth** — raw entity data (positions, types, states) for training and learning
+
+The goal: a human sees the Grid on a screen; the AI *lives* inside it.
 
 This is the same proven architecture that AAA studios use for MMO testing bots — automated clients
 that connect via the standard player protocol. The difference is that those bots are disposable QA
-tools, while this AI is a persistent entity with memory and personality that *lives* in the world.
+tools, while this AI is a persistent entity with memory and personality that inhabits the world.
 
 ## Target Hardware
 
