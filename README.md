@@ -2,7 +2,7 @@
 
 A modern Vulkan-based rendering engine optimised for the Tron aesthetic — clean geometry, emissive materials, reflective surfaces, neon glow.
 
-Designed as the visual foundation for [Project MOTE](https://github.com/MatejGomboc/mote): a digital world where AI creatures perceive and navigate through rendered images rather than direct scene graph access.
+Designed as the visual foundation for a digital world where AI creatures perceive and navigate through rendered images rather than direct scene graph access.
 
 ## Status
 
@@ -84,7 +84,7 @@ cmake --build build/linux-x11-clang --config Debug
 
 ```
 APPLICATION LAYER
-  Scene Graph, Entity System, Camera, Input, MOTE Interface
+  Scene Graph, Entity System, Camera, Input, AI Interface
                               |
                               v
 SCENE REPRESENTATION
@@ -140,7 +140,7 @@ GEOMETRY PROCESSING  (Compute Shaders)
 | 6 - RT Lighting | Physically-based lighting | Full RT lighting |
 | 7 - Post Processing | The Tron *look* | Bloom, tonemapping |
 | 8 - Optimisation | 4K@60+ performance | Rock-solid renderer |
-| 9 - MOTE Prep | AI vision interface | Frame streaming API |
+| 9 - AI Prep | AI vision interface | Frame streaming API |
 
 ```
 Phase 0 --> Phase 1 --> Phase 2 --+--> Phase 3 --> Phase 4
