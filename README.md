@@ -8,6 +8,8 @@ Designed as the visual foundation for a digital world where AI creatures perceiv
 
 Early development. Currently building Vulkan infrastructure (Phase 0).
 
+---
+
 ## Platforms
 
 | Platform | Windowing | Status |
@@ -17,7 +19,7 @@ Early development. Currently building Vulkan infrastructure (Phase 0).
 
 ## Requirements
 
-- **Vulkan SDK** 1.3+ ([LunarG](https://vulkan.lunarg.com/))
+- **Vulkan SDK** 1.4.335.0+ ([LunarG](https://vulkan.lunarg.com/))
 - **C++20** compiler (MSVC, GCC, or Clang)
 - **CMake** 3.16+
 - **Ninja** build system
@@ -30,7 +32,7 @@ Early development. Currently building Vulkan infrastructure (Phase 0).
 
 ### Required Vulkan Extensions
 
-```
+```text
 VK_EXT_mesh_shader              // Task + Mesh shaders
 VK_KHR_acceleration_structure   // RT acceleration structures
 VK_KHR_ray_tracing_pipeline     // RT pipeline
@@ -82,7 +84,7 @@ cmake --build build/linux-x11-clang --config Debug
 
 ## Architecture
 
-```
+```text
 APPLICATION LAYER
   Scene Graph, Entity System, Camera, Input, AI Interface
                               |
@@ -142,7 +144,7 @@ GEOMETRY PROCESSING  (Compute Shaders)
 | 8 - Optimisation | 4K@60+ performance | Rock-solid renderer |
 | 9 - AI Prep | AI vision interface | Frame streaming API |
 
-```
+```text
 Phase 0 --> Phase 1 --> Phase 2 --+--> Phase 3 --> Phase 4
                                   |
                                   +--> Phase 5 --> Phase 6
@@ -152,9 +154,11 @@ Phase 3 + Phase 6 --> Phase 7 --> Phase 8 --> Phase 9
 
 Phases 3-4 (Mesh Shaders / Geometry) and Phases 5-6 (RT) can be developed in parallel.
 
+---
+
 ## Frame Data Flow
 
-```
+```text
 1. UPDATE      Scene changes, camera update
 2. GEOMETRY    Re-tessellate dirty objects, update meshlet buffers
 3. CULL/DRAW   Task shader culls, mesh shader emits, fragment writes vis buffer
@@ -163,15 +167,7 @@ Phases 3-4 (Mesh Shaders / Geometry) and Phases 5-6 (RT) can be developed in par
 6. POST        Bloom, tonemap, output to swapchain
 ```
 
-## References
-
-- [Vulkan Tutorial](https://vulkan-tutorial.com)
-- [vkguide.dev](https://vkguide.dev)
-- [Sascha Willems Vulkan Samples](https://github.com/SaschaWillems/Vulkan)
-- [meshoptimizer](https://github.com/zeux/meshoptimizer)
-- [Slang Shader Language](https://shader-slang.org)
-- Ray Tracing Gems I & II
-- Granite renderer (Hans-Kristian Arntzen)
+---
 
 ## The Vision
 
@@ -186,18 +182,30 @@ Phases 3-4 (Mesh Shaders / Geometry) and Phases 5-6 (RT) can be developed in par
 > reflections trailing behind it,
 > living in a world that looks like the future we were promised.
 
+---
+
+## Contributing
+
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+- Follow the style guide in [STYLE.md](STYLE.md)
+- Security issues: see [SECURITY.md](SECURITY.md)
+
+---
+
 ## Licence
 
-Copyright © 2026 Matej Gomboc <https://github.com/MatejGomboc/tron_grid>.
+Copyright (C) 2026 Matej Gomboc <https://github.com/MatejGomboc/tron-grid>.
 
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+GNU General Public License v3.0 — see [LICENCE](LICENCE).
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU General Public License for more details.
+---
 
-See the attached [LICENCE](LICENCE) file for more info.
+## Links
+
+- [Vulkan Tutorial](https://vulkan-tutorial.com)
+- [vkguide.dev](https://vkguide.dev)
+- [Sascha Willems Vulkan Samples](https://github.com/SaschaWillems/Vulkan)
+- [meshoptimizer](https://github.com/zeux/meshoptimizer)
+- [Slang Shader Language](https://shader-slang.org)
+- [Report an Issue](https://github.com/MatejGomboc/tron-grid/issues)

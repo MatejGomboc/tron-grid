@@ -1,17 +1,20 @@
 {
     "recommendations": [
-        "davidanson.vscode-markdownlint",
-        "donjayamanne.githistory",
-        "editorconfig.editorconfig",
-        "github.vscode-github-actions",
-        "Gruntfuggly.todo-tree",
-        "ms-vscode.cmake-tools",
         "ms-vscode.cpptools-extension-pack",
         "ms-vscode.cpptools-themes",
-        "ms-vscode.hexeditor",
-        "redhat.vscode-yaml",
+        "ms-vscode.cmake-tools",
+        "xaver.clang-format",
         "slevesque.shader",
         "usernamehw.errorlens",
-        "xaver.clang-format"
+        "editorconfig.editorconfig",
+        "davidanson.vscode-markdownlint",
+        "bierner.markdown-mermaid",
+        "donjayamanne.githistory",
+        "github.vscode-github-actions",
+        "gruntfuggly.todo-tree",
+        "redhat.vscode-yaml",
+        "ms-vscode.hexeditor",
+        "github.copilot",
+        "github.vscode-pull-request-github"
     ]
 }
