@@ -34,7 +34,7 @@ Early development. Currently building Vulkan infrastructure (Phase 0).
 | RAM | 64 GB DDR5-5600 (2 × 32 GB) |
 | Storage | ~10 GB NVMe |
 | OS | Windows 11 / Ubuntu 24.04 LTS |
-| Vulkan | 1.4.325+ |
+| Vulkan | 1.4.335.0+ |
 
 **Target:** 4K @ 60+ FPS with full ray tracing
 
