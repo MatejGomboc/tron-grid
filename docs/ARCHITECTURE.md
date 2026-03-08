@@ -99,4 +99,5 @@ Once the foundation is solid, the architecture will evolve towards:
 - **Bindless resources** — all textures and buffers accessible via descriptor indexing
 - **Mesh shading** — meshlet-based geometry processing, replacing the traditional vertex pipeline
 - **Ray tracing** — acceleration structures for shadows and full global illumination
+- **AI interface** — staged sensory protocol for AI clients (see [AI_INTERFACE.md](AI_INTERFACE.md))
 - **Frame streaming** — capturing rendered frames and piping them to the AI brain (Phase 9)
