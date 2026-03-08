@@ -34,13 +34,19 @@ See [AI as Network Client](#ai-as-network-client) below for the full architectur
 
 ## The World: A Tron-Inspired Cyberspace
 
-The Grid is a digital realm inspired by Tron, rendered in stark neon against infinite darkness:
+The Grid is a digital realm inspired by Tron, rendered in stark neon against infinite darkness.
+Three kinds of entity inhabit it:
+
+- **Programmes** — simple NPCs. Geometric wireframe shapes — cubes, pyramids, polyhedra made of glowing lines.
+  Patrol bots, guardian systems, data couriers — all following their coded routines. Simple geometry, simple minds
+- **AI players** — persistent AI entities with memory and personality, connecting as network clients.
+  Visually distinct from the geometric world (see [AI Visual Identity](#ai-visual-identity))
+- **Human players** — real people logging in as avatars, each with a unique visual signature
+
+The world itself is built from:
 
 - **Neon geometry**: Glowing lines form the ground, walls, and structures. Cyan, magenta, orange — the classic palette
 - **Data structures**: Towering constructs of light, pulsing data streams, geometric platforms
-- **Programmes**: Conventional NPCs are geometric wireframe shapes — cubes, pyramids, polyhedra made of glowing
-  lines. Patrol bots, guardian systems, data couriers — all following their coded routines. Simple geometry, simple minds
-- **Users**: Human players appear as avatars, each with a unique visual signature
 
 The aesthetic is not just visual — it informs everything:
 
