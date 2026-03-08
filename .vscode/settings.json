@@ -2,13 +2,16 @@
     "editor.insertSpaces": true,
     "editor.tabSize": 4,
     "editor.trimAutoWhitespace": true,
-    "editor.defaultFormatter": "xaver.clang-format",
-    "editor.rulers": [170],
+    "editor.formatOnSave": true,
+    "editor.rulers": [
+        170
+    ],
     "files.trimTrailingWhitespace": true,
     "files.insertFinalNewline": true,
     "files.encoding": "utf8",
     "editor.renderWhitespace": "boundary",
     "[markdown]": {
+        "editor.defaultFormatter": "DavidAnson.vscode-markdownlint",
         "files.trimTrailingWhitespace": false
     },
     "[cpp]": {
@@ -17,5 +20,19 @@
     "[c]": {
         "editor.defaultFormatter": "xaver.clang-format"
     },
+    "[json]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[yaml]": {
+        "editor.formatOnSave": false
+    },
+    "[github-actions-workflow]": {
+        "editor.formatOnSave": false
+    },
+    "C_Cpp.default.cppStandard": "c++20",
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/${command:cmake.activeBuildPreset}/compile_commands.json",
     "cmake.configureOnOpen": false
 }

@@ -14,14 +14,14 @@ runs:
         # On main: restore and save cache. On PRs: restore only (read-only).
         - name: Restore Vulkan SDK cache
           if: github.ref != 'refs/heads/main'
-          uses: actions/cache/restore@v4
+          uses: actions/cache/restore@v5
           with:
             path: ~/VulkanSDK/${{ inputs.version }}
             key: vulkan-sdk-linux-${{ inputs.version }}
 
         - name: Restore and save Vulkan SDK cache
           if: github.ref == 'refs/heads/main'
-          uses: actions/cache@v4
+          uses: actions/cache@v5
           with:
             path: ~/VulkanSDK/${{ inputs.version }}
             key: vulkan-sdk-linux-${{ inputs.version }}

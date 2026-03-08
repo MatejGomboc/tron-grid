@@ -1,28 +1,55 @@
-name: CI
+name: CI - Pull Request
 
 permissions:
     contents: read
 
 on:
-    push:
-        branches: [main] # Populate cache on main after PR merges.
-
     pull_request:
-        branches: ["**"] # Run validation on any PR.
-
-    workflow_dispatch: # Manual trigger option.
+        branches: ["**"]
 
 env:
     VULKAN_SDK_VERSION: "1.4.335.0"
 
 jobs:
+    quick-checks:
+        name: Quick Checks (markdown)
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+
+            - name: Setup Node.js
+              id: setup-node
+              uses: actions/setup-node@v6
+              with:
+                node-version: "lts/*"
+
+            - name: Get markdownlint-cli2 version
+              id: mdlint-version
+              run: echo "version=$(npm view markdownlint-cli2 version)" >> "$GITHUB_OUTPUT"
+
+            # Restore cache from main branch (read-only)
+            - name: Restore npm cache
+              uses: actions/cache/restore@v5
+              with:
+                path: ~/.npm
+                key: npm-markdownlint-${{ runner.os }}-node-${{ steps.setup-node.outputs.node-version }}-mdlint-${{ steps.mdlint-version.outputs.version }}
+
+            - name: Install markdownlint-cli2
+              run: npm install -g markdownlint-cli2
+
+            - name: Lint markdown
+              run: markdownlint-cli2 "**/*.md"
+
     build:
+        name: Build (${{ matrix.preset }})
+        needs: quick-checks
         timeout-minutes: 30
 
         strategy:
-            fail-fast: false # Don't cancel other jobs if one fails.
-
-            max-parallel: 20 # Use maximum possible parallelisation.
+            fail-fast: false
+            max-parallel: 20
 
             matrix:
                 include:
@@ -41,7 +68,7 @@ jobs:
         runs-on: ${{ matrix.os }}
 
         steps:
-            - name: Checkout Github repository
+            - name: Checkout repository
               uses: actions/checkout@v6
 
             - name: Install X11 development headers (Linux)
@@ -67,18 +94,18 @@ jobs:
             - name: Run CMake workflow
               run: cmake --workflow --preset=${{ matrix.preset }}
 
-    build_summary:
-        needs: build
-
+    ci-success:
+        name: CI Success
+        needs: [quick-checks, build]
         runs-on: ubuntu-latest
-
-        if: always() # Run even if some matrix jobs failed.
+        if: always()
 
         steps:
             - name: Check if all jobs succeeded
               run: |
-                  if [[ "${{ needs.build.result }}" != "success" ]]; then
-                      echo "One or more jobs failed"
-                      exit 1
-                  fi
-                  echo "All jobs completed successfully"
+                if [[ "${{ needs.quick-checks.result }}" != "success" ]] || \
+                   [[ "${{ needs.build.result }}" != "success" ]]; then
+                    echo "One or more jobs failed"
+                    exit 1
+                fi
+                echo "All jobs completed successfully"

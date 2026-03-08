@@ -1,0 +1,245 @@
+name: Release
+
+permissions:
+    contents: write
+    id-token: write
+    attestations: write
+
+on:
+    push:
+        tags:
+            - "v[0-9]+.[0-9]+.[0-9]+"
+            - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+env:
+    VULKAN_SDK_VERSION: "1.4.335.0"
+
+jobs:
+    validate:
+        name: Validate Release
+        runs-on: ubuntu-latest
+
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+            tag: ${{ steps.version.outputs.tag }}
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+
+            - name: Determine version
+              id: version
+              shell: bash
+              run: |
+                TAG="${GITHUB_REF#refs/tags/}"
+
+                # Validate tag format
+                if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.*)?$ ]]; then
+                    echo "Error: Invalid tag format: $TAG"
+                    echo "Expected format: v0.0.0 or v0.0.0-suffix"
+                    exit 1
+                fi
+
+                VERSION="${TAG#v}"
+                echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+                echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                echo "Release version: $VERSION (tag: $TAG)"
+
+            - name: Verify CMakeLists.txt version matches tag
+              shell: bash
+              run: |
+                CMAKE_VERSION=$(grep 'VERSION ' CMakeLists.txt | head -1 | sed 's/.*VERSION \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/')
+                TAG_VERSION="${{ steps.version.outputs.version }}"
+
+                # For pre-release tags like v0.1.0-rc1, compare base version
+                BASE_TAG_VERSION="${TAG_VERSION%%-*}"
+
+                if [[ "$CMAKE_VERSION" != "$BASE_TAG_VERSION" ]]; then
+                    echo "Error: Version mismatch!"
+                    echo "  CMakeLists.txt: $CMAKE_VERSION"
+                    echo "  Tag:            $BASE_TAG_VERSION"
+                    echo ""
+                    echo "Update CMakeLists.txt version before tagging."
+                    exit 1
+                fi
+
+                echo "Version verified: $CMAKE_VERSION"
+
+    build:
+        name: Build (${{ matrix.preset }})
+        needs: validate
+        timeout-minutes: 30
+
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: windows-latest
+                      preset: windows-msvc
+                      msvc-setup-needed: true
+                      artifact: tron-grid-windows-x86_64
+                      binary: TronGrid.exe
+                      archive: zip
+
+                    - os: ubuntu-latest
+                      preset: linux-x11-gcc
+                      artifact: tron-grid-linux-x86_64
+                      binary: TronGrid
+                      archive: tar.gz
+
+        runs-on: ${{ matrix.os }}
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+
+            - name: Install X11 development headers (Linux)
+              if: runner.os == 'Linux'
+              run: sudo apt-get update && sudo apt-get install -y libx11-dev
+
+            - name: Setup Vulkan SDK (Windows)
+              if: runner.os == 'Windows'
+              uses: ./.github/actions/setup-vulkan-windows
+              with:
+                version: ${{ env.VULKAN_SDK_VERSION }}
+
+            - name: Setup Vulkan SDK (Linux)
+              if: runner.os == 'Linux'
+              uses: ./.github/actions/setup-vulkan-linux
+              with:
+                version: ${{ env.VULKAN_SDK_VERSION }}
+
+            - name: Setup MSVC environment
+              if: matrix.msvc-setup-needed
+              uses: ilammy/msvc-dev-cmd@v1
+
+            # No caching for release builds - they're one-off events triggered by
+            # version tags, so caches would never be reused and just waste storage
+
+            - name: Configure
+              run: cmake --preset ${{ matrix.preset }}
+
+            - name: Build release binary
+              run: cmake --build build/${{ matrix.preset }} --config Release --verbose
+
+            - name: Prepare artifact (Unix)
+              if: runner.os != 'Windows'
+              shell: bash
+              run: |
+                mkdir -p dist
+                cp build/${{ matrix.preset }}/Release/${{ matrix.binary }} dist/
+                cp README.md LICENCE CHANGELOG.md dist/
+                cd dist
+                tar -czvf ../${{ matrix.artifact }}.tar.gz *
+
+            - name: Prepare artifact (Windows)
+              if: runner.os == 'Windows'
+              shell: bash
+              run: |
+                mkdir -p dist
+                cp build/${{ matrix.preset }}/Release/${{ matrix.binary }} dist/
+                cp README.md LICENCE CHANGELOG.md dist/
+                cd dist
+                7z a -tzip ../${{ matrix.artifact }}.zip *
+
+            - name: Upload artifact (Unix)
+              if: runner.os != 'Windows'
+              uses: actions/upload-artifact@v6
+              with:
+                name: ${{ matrix.artifact }}
+                path: ${{ matrix.artifact }}.tar.gz
+                retention-days: 1
+
+            - name: Upload artifact (Windows)
+              if: runner.os == 'Windows'
+              uses: actions/upload-artifact@v6
+              with:
+                name: ${{ matrix.artifact }}
+                path: ${{ matrix.artifact }}.zip
+                retention-days: 1
+
+    release:
+        name: Create Release
+        needs: [validate, build]
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+
+            - name: Download all artifacts
+              uses: actions/download-artifact@v7
+              with:
+                path: artifacts
+
+            - name: List artifacts
+              run: find artifacts -type f
+
+            - name: Generate checksums
+              shell: bash
+              run: |
+                cd artifacts
+                find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec mv {} . \;
+                sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+                cat SHA256SUMS.txt
+
+            - name: Attest build provenance
+              uses: actions/attest-build-provenance@v3
+              with:
+                subject-path: |
+                    artifacts/*.tar.gz
+                    artifacts/*.zip
+
+            - name: Extract release notes from CHANGELOG
+              id: release-notes
+              shell: bash
+              run: |
+                VERSION="${{ needs.validate.outputs.version }}"
+
+                # Extract release notes for this version from CHANGELOG.md
+                # Uses awk with index() for literal string matching (avoids regex escaping issues)
+                awk -v ver="## [${VERSION}]" '
+                    index($0, ver) == 1 { found=1; next }
+                    found && /^## \[/ { exit }
+                    found { print }
+                ' CHANGELOG.md > release_notes.md
+
+                # Trim leading/trailing blank lines
+                sed -i '/./,$!d' release_notes.md
+                sed -i ':a;/^[[:space:]]*$/{$d;N;ba}' release_notes.md
+
+                if [[ -s release_notes.md ]]; then
+                    echo "Found release notes in CHANGELOG.md:"
+                else
+                    echo "No CHANGELOG entry for ${VERSION}, using default"
+                    echo "Release ${VERSION}" > release_notes.md
+                fi
+
+                echo "--- Release Notes ---"
+                cat release_notes.md
+
+            - name: Create GitHub Release
+              shell: bash
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                TAG="${{ needs.validate.outputs.tag }}"
+                VERSION="${{ needs.validate.outputs.version }}"
+
+                # Determine if this is a prerelease
+                PRERELEASE_FLAG=""
+                if [[ "$VERSION" == *-* ]]; then
+                    PRERELEASE_FLAG="--prerelease"
+                fi
+
+                # Create the release with gh CLI (more reliable than third-party actions)
+                gh release create "$TAG" \
+                    --title "$TAG" \
+                    --notes-file release_notes.md \
+                    --latest \
+                    $PRERELEASE_FLAG \
+                    artifacts/*.tar.gz \
+                    artifacts/*.zip \
+                    artifacts/SHA256SUMS.txt
+
+                echo "Release created: $TAG"
