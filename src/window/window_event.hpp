@@ -2,55 +2,52 @@
 
 #include <cstdint>
 
-namespace TronGrid
-{
-    struct WindowEvent {
-        enum class Type {
-            None,
-            Close,
-            Resize,
-            KeyDown,
-            KeyUp,
-            MouseMove,
-            MouseButtonDown,
-            MouseButtonUp,
-            Focus,
-            Blur
-        };
-
-        Type type = Type::None;
-
-        union {
-            struct {
-                uint32_t width;
-                uint32_t height;
-            } resize;
-
-            struct {
-                uint32_t keycode;
-                bool repeat;
-            } key;
-
-            struct {
-                int32_t x;
-                int32_t y;
-                int32_t dx; // delta since last event
-                int32_t dy;
-            } mouse_move;
-
-            struct {
-                uint8_t button; // 0=left, 1=right, 2=middle
-                int32_t x;
-                int32_t y;
-            } mouse_button;
-        };
-
-        WindowEvent() : type(Type::None)
-        {
-        }
-
-        explicit WindowEvent(Type t) : type(t)
-        {
-        }
+struct WindowEvent {
+    enum class Type {
+        None,
+        Close,
+        Resize,
+        KeyDown,
+        KeyUp,
+        MouseMove,
+        MouseButtonDown,
+        MouseButtonUp,
+        Focus,
+        Blur
     };
-} // namespace TronGrid
+
+    Type type = Type::None;
+
+    union {
+        struct {
+            uint32_t width;
+            uint32_t height;
+        } resize;
+
+        struct {
+            uint32_t keycode;
+            bool repeat;
+        } key;
+
+        struct {
+            int32_t x;
+            int32_t y;
+            int32_t dx; // delta since last event
+            int32_t dy;
+        } mouse_move;
+
+        struct {
+            uint8_t button; // 0=left, 1=right, 2=middle
+            int32_t x;
+            int32_t y;
+        } mouse_button;
+    };
+
+    WindowEvent() : type(Type::None)
+    {
+    }
+
+    explicit WindowEvent(Type t) : type(t)
+    {
+    }
+};

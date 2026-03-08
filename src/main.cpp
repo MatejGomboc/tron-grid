@@ -7,12 +7,12 @@
 #include <iostream>
 #include <memory>
 
-std::unique_ptr<TronGrid::Window> create_window(const TronGrid::WindowConfig& config)
+std::unique_ptr<Window> create_window(const WindowConfig& config)
 {
 #ifdef _WIN32
-    return std::make_unique<TronGrid::Win32Window>(config);
+    return std::make_unique<Win32Window>(config);
 #elif defined(__linux__)
-    return std::make_unique<TronGrid::XcbWindow>(config);
+    return std::make_unique<XcbWindow>(config);
 #else
 #error "Unsupported platform"
 #endif
@@ -21,7 +21,7 @@ std::unique_ptr<TronGrid::Window> create_window(const TronGrid::WindowConfig& co
 int main()
 {
     try {
-        TronGrid::WindowConfig config;
+        WindowConfig config;
         config.title = "TRON Grid Renderer";
         config.width = 1280;
         config.height = 720;
@@ -35,18 +35,18 @@ int main()
         while (!window->should_close()) {
             window->pump_events();
 
-            TronGrid::WindowEvent ev;
+            WindowEvent ev;
             while (window->poll_event(ev)) {
                 switch (ev.type) {
-                case TronGrid::WindowEvent::Type::Close:
+                case WindowEvent::Type::Close:
                     std::cout << "Close requested\n";
                     break;
 
-                case TronGrid::WindowEvent::Type::Resize:
+                case WindowEvent::Type::Resize:
                     std::cout << "Resize: " << ev.resize.width << "x" << ev.resize.height << "\n";
                     break;
 
-                case TronGrid::WindowEvent::Type::KeyDown:
+                case WindowEvent::Type::KeyDown:
                     std::cout << "Key down: " << ev.key.keycode;
                     if (ev.key.repeat)
                         std::cout << " (repeat)";
@@ -62,29 +62,29 @@ int main()
 #endif
                     break;
 
-                case TronGrid::WindowEvent::Type::KeyUp:
+                case WindowEvent::Type::KeyUp:
                     std::cout << "Key up: " << ev.key.keycode << "\n";
                     break;
 
-                case TronGrid::WindowEvent::Type::MouseMove:
+                case WindowEvent::Type::MouseMove:
                     // Uncomment for verbose mouse tracking:
                     // std::cout << "Mouse: " << ev.mouse_move.x << ", " << ev.mouse_move.y
                     //           << " (delta: " << ev.mouse_move.dx << ", " << ev.mouse_move.dy << ")\n";
                     break;
 
-                case TronGrid::WindowEvent::Type::MouseButtonDown:
+                case WindowEvent::Type::MouseButtonDown:
                     std::cout << "Mouse button down: " << (int)ev.mouse_button.button << " at (" << ev.mouse_button.x << ", " << ev.mouse_button.y << ")\n";
                     break;
 
-                case TronGrid::WindowEvent::Type::MouseButtonUp:
+                case WindowEvent::Type::MouseButtonUp:
                     std::cout << "Mouse button up: " << (int)ev.mouse_button.button << " at (" << ev.mouse_button.x << ", " << ev.mouse_button.y << ")\n";
                     break;
 
-                case TronGrid::WindowEvent::Type::Focus:
+                case WindowEvent::Type::Focus:
                     std::cout << "Window focused\n";
                     break;
 
-                case TronGrid::WindowEvent::Type::Blur:
+                case WindowEvent::Type::Blur:
                     std::cout << "Window lost focus\n";
                     break;
 
