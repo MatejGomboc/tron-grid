@@ -228,15 +228,17 @@ jobs:
 
                 # Determine if this is a prerelease
                 PRERELEASE_FLAG=""
+                LATEST_FLAG="--latest"
                 if [[ "$VERSION" == *-* ]]; then
                     PRERELEASE_FLAG="--prerelease"
+                    LATEST_FLAG=""
                 fi
 
                 # Create the release with gh CLI (more reliable than third-party actions)
                 gh release create "$TAG" \
                     --title "$TAG" \
                     --notes-file release_notes.md \
-                    --latest \
+                    $LATEST_FLAG \
                     $PRERELEASE_FLAG \
                     artifacts/*.tar.gz \
                     artifacts/*.zip \
