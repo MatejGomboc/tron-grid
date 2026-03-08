@@ -48,6 +48,11 @@ The aesthetic is not just visual — it informs everything:
 - Derezzing instead of death
 - The Grid instead of the world
 
+| Aspect | Grid Equivalent |
+|--------|-----------------|
+| **NPCs** | Geometric wireframe shapes (simple programmes) |
+| **Mortality** | Programmes derez permanently; players resurrect at a safe house |
+
 ## Target Hardware
 
 - **GPU:** NVIDIA RTX 4090 (Ada Lovelace), 16 GB VRAM
