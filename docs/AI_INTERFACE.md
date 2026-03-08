@@ -3,8 +3,13 @@
 > **Design principle:** The AI client defines what sensory data it needs.
 > TronGrid adapts its world sampling to match — not the other way around.
 
-This document specifies the network protocol between TronGrid (world server) and AI brain clients
-that connect as network entities. For the overall architecture, see [VISION.md](VISION.md) §
+TronGrid uses a **traditional MMO architecture**: one authoritative server, each player runs their
+own local client instance. AI brains connect to a **headless TronGrid client** running on the same
+machine — the server sees all clients identically and has no AI-specific code.
+
+This document specifies the **local sensory protocol** between a headless TronGrid client and an
+AI brain process. This is not the server protocol — it runs locally on the AI's machine. For the
+overall architecture, see [VISION.md](VISION.md) §
 [AI as Network Client](VISION.md#ai-as-network-client).
 
 ---
@@ -39,7 +44,7 @@ remain valid at every subsequent stage.
 At Stage 0, TronGrid samples the world at the AI client's position and delivers scalar readings.
 No rendering pipeline is involved — just field sampling and collision queries.
 
-### Server → AI: `SensoryPacket`
+### Headless Client → AI Brain: `SensoryPacket`
 
 ```cpp
 /// What TronGrid sends the AI client each simulation tick.
@@ -110,7 +115,7 @@ energy type in the Grid. Initial implementation uses a single channel (generic e
 Future stages add programme-type signatures, data stream traces, player residue, and sector
 identity markers.
 
-### AI → Server: `ActionPacket`
+### AI Brain → Headless Client: `ActionPacket`
 
 ```cpp
 /// What the AI client sends back each tick.
@@ -131,10 +136,10 @@ and emote signals — but Stage 0 needs only locomotion.
 
 ---
 
-## What TronGrid Computes (Server-Side)
+## What the Headless Client Computes (Client-Side)
 
-TronGrid's responsibility is **sensory simulation** — sampling the virtual world at the AI client's
-position. At Stage 0, this involves:
+The headless client's responsibility is **sensory simulation** — sampling its local copy of the
+world state at the AI's position. At Stage 0, this involves:
 
 | Sensory channel | Server computation |
 |----------------|-------------------:|
@@ -149,8 +154,8 @@ position. At Stage 0, this involves:
 | `body_curvature` / `speed` / `heading` | Read from physics body state |
 
 All operations are scalar field samples or collision queries. **No rendering pipeline is required
-at Stage 0.** TronGrid places energy sources, data structures, and environmental fields in the
-world and samples them at points.
+at Stage 0.** The headless client receives world state from the server (energy sources, data
+structures, environmental fields) and samples them locally at the AI's position.
 
 ### Energy / Signature Field Implementation
 
@@ -176,10 +181,10 @@ finite difference.
 
 ## Handshake
 
-Before streaming packets, the AI client and TronGrid perform a minimal handshake:
+Before streaming packets, the AI brain and headless client perform a local handshake:
 
 ```cpp
-/// AI → Server: connection request.
+/// AI brain → Headless client: connection request.
 struct ClientHandshake
 {
     /// Protocol version (major, minor, patch).
@@ -192,7 +197,7 @@ struct ClientHandshake
     uint8_t num_signature_channels;
 };
 
-/// Server → AI: connection accepted.
+/// Headless client → AI brain: connection accepted.
 struct ServerHandshake
 {
     /// Actual tick rate the server will provide.
@@ -213,9 +218,9 @@ struct ArenaDescriptor
 };
 ```
 
-The `stage` field in the handshake tells TronGrid which sensory channels to compute and transmit.
+The `stage` field in the handshake tells the headless client which sensory subsystems to enable.
 A Stage 0 AI never receives rendered frames; a Stage 2 AI receives everything a Stage 0 AI does,
-plus visual data.
+plus visual data (rendered offscreen by the headless client's Vulkan pipeline).
 
 ---
 
@@ -255,13 +260,13 @@ packet boundary makes replay possible across process boundaries and even across 
 |--------|-----------------|----------------|
 | **SensoryPacket size** | ~120 bytes | ~50 KB+ (rendered frame) |
 | **ActionPacket size** | 16 bytes (2 doubles) | ~64 bytes (vectors, targets, emotes) |
-| **Server rendering** | None required | Full Vulkan offscreen render |
+| **Client rendering** | None required | Offscreen Vulkan render (not displayed) |
 | **Visual processing** | None | Rendered frame for AI vision |
 | **Audio processing** | None | Spatial audio events / FFT |
 | **Entity awareness** | None (field sampling only) | Entity list with bearings, types, states |
 
-The protocol starts minimal and grows only as the AI brain's capabilities demand. TronGrid
-implements the current stage's sensory simulation and extends it when the AI advances.
+The protocol starts minimal and grows only as the AI brain's capabilities demand. The headless
+client enables more subsystems at each stage; the server never changes.
 
 ---
 
