@@ -1,6 +1,6 @@
 # TronGrid
 
-Vulkan-based rendering engine for Project MOTE — a digital world where AI creatures perceive and navigate through rendered images. This repo is the renderer. The AI brain lives in a separate `mote` repo (Rust).
+Vulkan-based rendering engine for a digital world where AI creatures perceive and navigate through rendered images. This repo is the renderer. The AI brain lives in a separate repo.
 
 ## Quick Orientation
 
@@ -76,7 +76,7 @@ Currently in **Phase 0 — Foundation** (triangle on screen).
 | 6     | Physically-based RT     | Full RT lighting                 |
 | 7     | Post processing         | Bloom, tonemapping               |
 | 8     | Optimisation            | 4K @ 60+ rock-solid              |
-| 9     | MOTE integration        | Frame streaming API for AI brain |
+| 9     | AI integration          | Frame streaming API for AI brain |
 
 Phases 3–4 and 5–6 can be developed in parallel after phase 2.
 
