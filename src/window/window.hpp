@@ -1,7 +1,6 @@
 #pragma once
 
 #include "window_event.hpp"
-
 #include <queue>
 #include <string>
 #include <cstdint>

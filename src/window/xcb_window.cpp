@@ -1,9 +1,7 @@
 #ifdef __linux__
 
 #include "xcb_window.hpp"
-
 #include <volk/volk.h>
-
 #include <cstring>
 #include <stdexcept>
 

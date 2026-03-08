@@ -1,9 +1,7 @@
 #ifdef _WIN32
 
 #include "win32_window.hpp"
-
 #include <volk/volk.h>
-
 #include <stdexcept>
 
 namespace TronGrid

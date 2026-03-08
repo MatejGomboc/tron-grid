@@ -3,7 +3,6 @@
 #ifdef _WIN32
 
 #include "window.hpp"
-
 // Lean and mean Windows
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX

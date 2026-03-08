@@ -1,11 +1,9 @@
 #include "window.hpp"
-
 #ifdef _WIN32
 #include "win32_window.hpp"
 #elif defined(__linux__)
 #include "xcb_window.hpp"
 #endif
-
 #include <iostream>
 #include <memory>
 

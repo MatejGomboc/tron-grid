@@ -3,7 +3,6 @@
 #ifdef __linux__
 
 #include "window.hpp"
-
 #include <xcb/xcb.h>
 
 namespace TronGrid
