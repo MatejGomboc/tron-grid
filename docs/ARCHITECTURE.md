@@ -48,9 +48,9 @@ The platform layer handles window creation and input. There is no abstraction la
 has its own code path:
 
 - **Windows:** Win32 API (`CreateWindowEx`, message pump)
-- **Linux:** X11 / Xlib (`XCreateWindow`, event loop)
+- **Linux:** XCB (`xcb_create_window`, event loop)
 
-Platform-specific Vulkan surface creation uses `VK_USE_PLATFORM_WIN32_KHR` or `VK_USE_PLATFORM_XLIB_KHR`.
+Platform-specific Vulkan surface creation uses `VK_USE_PLATFORM_WIN32_KHR` or `VK_USE_PLATFORM_XCB_KHR`.
 
 ## Build System
 

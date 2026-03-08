@@ -8,4 +8,8 @@ project(TronGrid
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(NOT (WIN32 OR (UNIX AND NOT APPLE)))
+    message(FATAL_ERROR "Unsupported platform. Only Windows and Linux are supported.")
+endif()
+
 add_subdirectory(src)

@@ -68,7 +68,7 @@ cmake --build build/windows-clang-cl --config Debug
 ### Linux (GCC)
 
 ```bash
-sudo apt-get install libx11-dev
+sudo apt-get install libxcb1-dev
 cmake --preset linux-x11-gcc
 cmake --build build/linux-x11-gcc --config Debug
 ```
@@ -76,7 +76,7 @@ cmake --build build/linux-x11-gcc --config Debug
 ### Linux (Clang)
 
 ```bash
-sudo apt-get install libx11-dev
+sudo apt-get install libxcb1-dev
 cmake --preset linux-x11-clang
 cmake --build build/linux-x11-clang --config Debug
 ```

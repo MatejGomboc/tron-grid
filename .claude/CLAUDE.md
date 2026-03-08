@@ -87,7 +87,7 @@ cmake --preset windows-msvc
 cmake --build build/windows-msvc --config Debug
 
 # Linux
-sudo apt-get install libx11-dev
+sudo apt-get install libxcb1-dev
 cmake --preset linux-x11-gcc
 cmake --build build/linux-x11-gcc --config Debug
 ```
