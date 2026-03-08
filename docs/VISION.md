@@ -31,6 +31,23 @@ that needs consistent, high-fidelity frames streamed at low latency. This means:
 TronGrid produces rendered frames. The AI brain consumes them, decides on actions, and sends state updates back.
 The two communicate through a streaming API (Phase 9 on the roadmap).
 
+## The World: A Tron-Inspired Cyberspace
+
+The Grid is a digital realm inspired by Tron, rendered in stark neon against infinite darkness:
+
+- **Neon geometry**: Glowing lines form the ground, walls, and structures. Cyan, magenta, orange — the classic palette
+- **Data structures**: Towering constructs of light, pulsing data streams, geometric platforms
+- **Programmes**: Conventional NPCs are geometric wireframe shapes — cubes, pyramids, polyhedra made of glowing
+  lines. Patrol bots, guardian systems, data couriers — all following their coded routines. Simple geometry, simple minds
+- **Users**: Human players appear as avatars, each with a unique visual signature
+
+The aesthetic is not just visual — it informs everything:
+
+- Energy instead of food
+- Sectors instead of regions
+- Derezzing instead of death
+- The Grid instead of the world
+
 ## Target Hardware
 
 - **GPU:** NVIDIA RTX 4090 (Ada Lovelace), 16 GB VRAM
