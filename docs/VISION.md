@@ -30,6 +30,7 @@ that needs consistent, high-fidelity frames streamed at low latency. This means:
 
 TronGrid produces rendered frames. The AI brain consumes them, decides on actions, and sends state updates back.
 The two communicate through a streaming API (Phase 9 on the roadmap).
+See [AI as Network Client](#ai-as-network-client) below for the full architecture.
 
 ## The World: A Tron-Inspired Cyberspace
 
@@ -50,7 +51,6 @@ The aesthetic is not just visual — it informs everything:
 
 | Aspect | Grid Equivalent |
 |--------|-----------------|
-| **NPCs** | Geometric wireframe shapes (simple programmes) |
 | **Mortality** | Programmes derez permanently; players resurrect at a safe house |
 
 ### Rendering Requirements
