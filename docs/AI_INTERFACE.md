@@ -1,14 +1,23 @@
 # AI Interface Protocol
 
-> **Design principle:** The AI brain is a DLL/SO plugin. It receives only what its senses
-> provide — never raw world state. The TronGrid client calls into the brain each tick;
-> the brain returns actions. The server cannot tell AI clients from human clients.
+> **Design principle:** The AI brain is an independent DLL/SO — a separate project with its own
+> architecture. TronGrid defines only the shared memory interface through which sensory data and
+> actions are exchanged. The brain's internals are entirely up to its author.
 
-The AI brain is a **shared library** (`.dll` on Windows, `.so` on Linux) loaded by a standard
-TronGrid client instance. The client renders off-screen, samples the world, and passes structured
-sensory data to the brain through a C ABI function interface. The brain returns motor actions.
-The client then sends those actions to the server using the same network protocol as every other
-player.
+## Overview
+
+The AI brain is a **shared library** (`.dll` on Windows, `.so` on Linux) — an independent
+project built entirely outside of TronGrid. When the TronGrid client is launched in **bot mode**
+(`trongrid --bot brain.dll`), it loads the brain library, renders off-screen, and routes all
+sensory output through the bot interface. The client and the brain communicate through **shared
+memory buffers** — the client writes sensory data, the brain reads it; the brain writes actions,
+the client reads them. The brain never links against TronGrid, never calls engine functions,
+and never sees raw world state.
+
+The brain's internal architecture is **completely agnostic** — neural network, rule-based,
+hand-coded, LLM-driven, or anything else. TronGrid does not impose any AI framework, language
+constraint, or design pattern. The only requirement is: implement the interface, produce a
+DLL/SO.
 
 For the overall architecture, see [VISION.md](VISION.md) § [AI Embodiment](VISION.md#ai-embodiment).
 
@@ -39,76 +48,115 @@ remain valid at every subsequent stage.
 
 ---
 
-## Brain DLL/SO Interface
+## Shared Memory Interface
 
-The AI brain exports a small set of C-linkage functions. The TronGrid client loads the library
-at startup and calls these functions at the appropriate lifecycle points.
+The TronGrid client and the AI brain communicate through shared memory regions. The client owns
+and manages these regions; the brain receives access to them when loaded.
+
+```text
+┌──────────────────────────────────────────────────┐
+│                Shared Memory Layout              │
+│                                                  │
+│  ┌────────────────────┐  ┌────────────────────┐  │
+│  │   Sensory Buffer   │  │   Action Buffer    │  │
+│  │   (client writes,  │  │   (brain writes,   │  │
+│  │    brain reads)    │  │    client reads)   │  │
+│  └────────────────────┘  └────────────────────┘  │
+│                                                  │
+│  ┌────────────────────┐                          │
+│  │   Control Block    │                          │
+│  │   (handshake,      │                          │
+│  │    tick sync,      │                          │
+│  │    protocol stage) │                          │
+│  └────────────────────┘                          │
+└──────────────────────────────────────────────────┘
+```
+
+The brain DLL/SO exports a minimal set of C-linkage functions that the client calls to pass
+shared memory pointers and lifecycle events. These are the **only** functions the brain needs
+to export — everything else is internal to the brain.
 
 ### Required Exports
 
 ```c
+/// Called once after loading. The client passes the shared memory interface.
+/// The brain stores these pointers for use during its lifetime.
+void tg_brain_init(const TgBrainInterface* interface);
+
 /// Called once when the brain's entity spawns into the world.
-/// The brain receives arena geometry and its own initial state.
-void on_spawn(const SpawnInfo* info);
+void tg_brain_spawn(const TgSpawnInfo* info);
 
 /// Called every simulation tick.
-/// The client fills `senses` with the current sensory data;
-/// the brain fills `actions` with its desired motor output.
-void on_tick(const SensoryPacket* senses, ActionPacket* actions);
+/// The brain reads from the sensory buffer and writes to the action buffer
+/// (both accessible through the interface passed in tg_brain_init).
+void tg_brain_tick(void);
 
 /// Called when the entity is derezzed (destroyed).
 /// The brain should clean up any internal state.
-void on_derez(void);
+void tg_brain_shutdown(void);
 ```
 
-### Optional Exports
+### Interface Structure
 
 ```c
-/// Called immediately after the library is loaded, before on_spawn.
-/// Returns the protocol stage the brain supports (0, 1, 2, or 3).
-/// If not exported, the client assumes Stage 0.
-uint8_t get_protocol_stage(void);
+/// Passed to the brain at init. Contains pointers to the shared memory regions
+/// and metadata about the interface. The brain stores this and uses it each tick.
+struct TgBrainInterface
+{
+    /// Protocol version (major, minor, patch).
+    uint8_t version[3];
 
-/// Called when the client wants to hot-reload the brain.
-/// The brain should serialise its internal state into the provided buffer.
-/// Returns the number of bytes written, or 0 if hot-reload is not supported.
-uint32_t serialise_state(void* buffer, uint32_t buffer_size);
+    /// Protocol stage (0 = scalar, 1 = directional, 2 = visual, 3 = full).
+    /// Determines which fields in the sensory buffer are populated.
+    uint8_t stage;
 
-/// Called after hot-reload, passing the previously serialised state.
-void deserialise_state(const void* buffer, uint32_t size);
+    /// Pointer to the sensory buffer (client writes, brain reads).
+    /// The layout depends on the protocol stage.
+    const void* sensory_buffer;
+
+    /// Size of the sensory buffer in bytes.
+    uint32_t sensory_buffer_size;
+
+    /// Pointer to the action buffer (brain writes, client reads).
+    void* action_buffer;
+
+    /// Size of the action buffer in bytes.
+    uint32_t action_buffer_size;
+};
 ```
 
-### Loading Sequence
+### Lifecycle
 
 ```text
-1. Client starts up, connects to server, receives spawn position
-2. Client loads brain DLL/SO (path from command line or config)
-3. Client calls get_protocol_stage() → determines which sensory subsystems to enable
-4. Client calls on_spawn() with arena geometry and initial state
-5. Main loop:
+1. User launches: trongrid --bot brain.dll
+2. Client starts in bot mode, connects to server, receives spawn position
+3. Client loads brain DLL/SO from the specified path
+4. Client allocates shared memory, calls tg_brain_init() with interface pointers
+5. Client calls tg_brain_spawn() with arena geometry and initial state
+6. Main loop:
    a. Client receives world update from server
-   b. Client samples world at entity's position → fills SensoryPacket
-   c. Client calls on_tick(&senses, &actions)
-   d. Client sends actions to server via standard network protocol
-6. On derez: client calls on_derez()
-7. On shutdown or hot-reload: client calls serialise_state() if exported
+   b. Client samples world at entity's position → writes into sensory buffer
+   c. Client calls tg_brain_tick()
+   d. Client reads actions from action buffer → sends to server
+7. On derez: client calls tg_brain_shutdown()
+8. Client unloads DLL/SO
 ```
 
 ---
 
 ## Stage 0: Scalar Sensory Channels
 
-At Stage 0, the client samples the world at the AI's position and delivers scalar readings.
-No rendering pipeline is involved — just field sampling and collision queries.
+At Stage 0, the client samples the world at the AI's position and writes scalar readings into
+the sensory buffer. No rendering pipeline is involved — just field sampling and collision queries.
 
-### Client → Brain: `SensoryPacket`
+### Sensory Buffer Layout (Stage 0)
 
 ```c
-#define MAX_SIGNATURE_CHANNELS 8
+#define TG_MAX_SIGNATURE_CHANNELS 8
 
-/// What the TronGrid client passes to the brain each tick.
-/// The client performs all world sampling; the brain never sees world state directly.
-struct SensoryPacket
+/// Sensory buffer layout at Stage 0.
+/// The client writes this each tick; the brain reads it.
+struct TgSensoryBuffer
 {
     /// Simulation tick counter (monotonically increasing).
     uint64_t tick;
@@ -119,7 +167,7 @@ struct SensoryPacket
     /// Readings from distinct energy or data signature types.
     /// Each channel represents a different detectable substance in the Grid
     /// (energy traces, programme signatures, data stream residue, etc.).
-    struct SignatureReading signature_channels[MAX_SIGNATURE_CHANNELS];
+    struct TgSignatureReading signature_channels[TG_MAX_SIGNATURE_CHANNELS];
     /// Number of active signature channels this tick.
     uint8_t num_signature_channels;
 
@@ -155,7 +203,7 @@ struct SensoryPacket
 };
 
 /// A single signature channel reading.
-struct SignatureReading
+struct TgSignatureReading
 {
     /// Signature intensity at the AI's sensing position (non-negative).
     double intensity;
@@ -169,17 +217,17 @@ struct SignatureReading
 };
 ```
 
-**Channel semantics:** Each `SignatureReading` represents a distinct detectable substance or
+**Channel semantics:** Each `TgSignatureReading` represents a distinct detectable substance or
 energy type in the Grid. Initial implementation uses a single channel (generic energy signature).
 Future stages add programme-type signatures, data stream traces, player residue, and sector
 identity markers.
 
-### Brain → Client: `ActionPacket`
+### Action Buffer Layout (Stage 0)
 
 ```c
-/// What the brain returns each tick.
-/// Stage 0 motor output: forward/backward movement and steering.
-struct ActionPacket
+/// Action buffer layout at Stage 0.
+/// The brain writes this each tick; the client reads it.
+struct TgActionBuffer
 {
     /// Forward velocity (m/s).
     /// Positive = forward movement, negative = retreat.
@@ -190,30 +238,28 @@ struct ActionPacket
 };
 ```
 
-Two doubles. At later stages, `ActionPacket` extends with interaction targets, look direction,
+Two doubles. At later stages, the action buffer extends with interaction targets, look direction,
 and emote signals — but Stage 0 needs only locomotion.
 
 ### Spawn Info
 
 ```c
-/// Passed to on_spawn() when the entity enters the world.
-struct SpawnInfo
+/// Passed to tg_brain_spawn() when the entity enters the world.
+struct TgSpawnInfo
 {
-    /// Protocol stage the client is operating at.
-    uint8_t stage;
     /// Tick rate in Hz (e.g. 1000 for 1 ms timestep).
     uint32_t tick_rate_hz;
     /// Number of active signature channels.
     uint8_t num_signature_channels;
     /// Arena geometry.
-    struct ArenaDescriptor arena;
+    struct TgArenaDescriptor arena;
 };
 
 /// Arena geometry descriptor.
-struct ArenaDescriptor
+struct TgArenaDescriptor
 {
-    enum Shape { ARENA_CIRCLE, ARENA_RECTANGLE, ARENA_SECTOR };
-    enum Shape shape;
+    enum TgArenaShape { TG_ARENA_CIRCLE, TG_ARENA_RECTANGLE, TG_ARENA_SECTOR };
+    enum TgArenaShape shape;
     double dimension_a;  // radius (circle) or width (rectangle) in metres
     double dimension_b;  // unused (circle) or height (rectangle) in metres
 };
@@ -224,13 +270,14 @@ struct ArenaDescriptor
 ## What the Client Computes
 
 The TronGrid client's responsibility is **sensory simulation** — sampling its local copy of the
-world state at the AI's position. At Stage 0, this involves:
+world state at the AI's position and writing results into the shared sensory buffer. At Stage 0,
+this involves:
 
 | Sensory channel | Client computation |
 |----------------|-------------------:|
-| `SignatureReading.intensity` | Sample energy/signature field at the AI's sensing position |
-| `SignatureReading.d_intensity_dt` | Temporal difference: `(intensity_now - intensity_prev) / dt` |
-| `SignatureReading.lateral_gradient` | Cross product of field gradient with heading vector |
+| `TgSignatureReading.intensity` | Sample energy/signature field at the AI's sensing position |
+| `TgSignatureReading.d_intensity_dt` | Temporal difference: `(intensity_now - intensity_prev) / dt` |
+| `TgSignatureReading.lateral_gradient` | Cross product of field gradient with heading vector |
 | `contact_front` / `contact_rear` | Physics collision detection at body endpoints |
 | `contact_lateral` | Lateral collision along body extent |
 | `energy_field` / `d_energy_dt` | Sample ambient energy field at position |
@@ -266,16 +313,15 @@ finite difference.
 ## Stage 2+: Vision and Audio
 
 At Stage 2, the client enables its Vulkan rendering pipeline in **off-screen mode**. Each tick,
-it renders the scene from the AI entity's viewpoint into a framebuffer and passes the pixel data
-directly to the brain — zero-copy via pointer.
+it renders the scene from the AI entity's viewpoint into a framebuffer and writes the pixel data
+into the shared sensory buffer.
 
 ```c
-/// Extended SensoryPacket fields at Stage 2+.
-/// These are appended to the base Stage 0 packet.
-struct VisionData
+/// Extended sensory buffer fields at Stage 2+.
+/// These are appended to the base Stage 0 layout.
+struct TgVisionData
 {
-    /// Pointer to the rendered RGBA8 framebuffer.
-    /// Valid only for the duration of the on_tick call.
+    /// Pointer to the rendered RGBA8 framebuffer within the shared memory region.
     const uint8_t* pixels;
     /// Frame dimensions.
     uint32_t width;
@@ -284,7 +330,7 @@ struct VisionData
     double fov_horizontal;
 };
 
-struct AudioEvent
+struct TgAudioEvent
 {
     /// Bearing to the sound source relative to entity heading (radians).
     double bearing;
@@ -296,10 +342,10 @@ struct AudioEvent
     uint32_t category;
 };
 
-struct AudioData
+struct TgAudioData
 {
     /// Array of spatial audio events this tick.
-    const struct AudioEvent* events;
+    const struct TgAudioEvent* events;
     /// Number of audio events.
     uint32_t num_events;
 };
@@ -311,16 +357,32 @@ sees exactly what a human would see from the same position.
 
 ---
 
+## Building a Bot
+
+To create an AI bot for TronGrid:
+
+1. **Include the interface header** — TronGrid will publish a standalone `tg_brain_interface.h`
+   containing all struct definitions and export function signatures. This header has no
+   dependencies on TronGrid internals
+2. **Implement the four exported functions** — `tg_brain_init`, `tg_brain_spawn`,
+   `tg_brain_tick`, `tg_brain_shutdown`
+3. **Build as a DLL/SO** — use any language that can produce a shared library with C-linkage
+   exports (C, C++, Rust, Zig, etc.)
+4. **Drop it next to the TronGrid client** — specify the path at launch
+
+The bot's internal architecture is entirely up to you. TronGrid does not care.
+
+---
+
 ## Determinism and Replay
 
 The protocol supports **deterministic replay** by design:
 
-1. **Record:** Log every `SensoryPacket` with its tick number during a session.
-2. **Replay:** Feed the logged packets to the brain DLL with the same initial state.
-3. **Verify:** The output `ActionPacket` sequence must be identical.
+1. **Record:** Log every sensory buffer snapshot with its tick number during a session.
+2. **Replay:** Feed the logged snapshots to the brain DLL with the same initial state.
+3. **Verify:** The output action buffer sequence must be identical.
 
-This is essential for debugging AI behaviour and for the training pipeline. The clean function
-call boundary makes replay trivial — just call `on_tick` with recorded data.
+This is essential for debugging AI behaviour and for the training pipeline.
 
 ---
 
@@ -328,10 +390,10 @@ call boundary makes replay trivial — just call `on_tick` with recorded data.
 
 | Aspect | Stage 0 (Scalar) | Stage 2 (Visual) | Stage 3 (Full) |
 |--------|-----------------|-------------------|----------------|
-| **SensoryPacket size** | ~120 bytes | +frame buffer (~32 MB at 4K) | +full audio stream |
-| **ActionPacket size** | 16 bytes (2 doubles) | ~32 bytes (+look direction) | ~64 bytes (+targets, emotes) |
+| **Sensory buffer size** | ~120 bytes | +frame buffer (~32 MB at 4K) | +full audio stream |
+| **Action buffer size** | 16 bytes (2 doubles) | ~32 bytes (+look direction) | ~64 bytes (+targets, emotes) |
 | **Client rendering** | None required | Off-screen Vulkan render | Full pipeline |
-| **Transfer method** | Struct copy | Zero-copy pointer | Zero-copy pointer |
+| **Transfer method** | Shared memory write | Shared memory write | Shared memory write |
 | **Visual data** | `light_level` scalar only | RGBA framebuffer | RGBA + depth |
 | **Audio data** | None | Spatial audio events | Full spatial audio |
 

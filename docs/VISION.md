@@ -93,9 +93,15 @@ The AI should look *different* from the geometric world around it:
 
 ## AI Embodiment
 
-Every player — human or AI — runs their own TronGrid client instance. All clients connect to a
-central authoritative server via standard MMO networking. The server cannot tell AI from human;
-it sees only clients.
+There is **one TronGrid client binary**. At launch, the user chooses the client mode:
+
+- **Human mode** — renders to screen, plays audio through speakers, reads keyboard/mouse input.
+  This is a traditional MMORPG game client
+- **Bot mode** — renders off-screen, routes all sensory output through the bot interface into
+  an AI brain DLL/SO, reads actions back from it
+
+The mode is a launch-time flag, not a compile-time difference. The same binary, the same
+renderer, the same network protocol. The only thing that changes is where I/O goes.
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐
@@ -107,43 +113,50 @@ it sees only clients.
        │     Standard MMO protocol (identical for all clients)
        │                  │                  │
 ┌──────┴──────┐   ┌───────┴───────┐   ┌──────┴──────┐
-│ Human Client│   │  AI Client    │   │  AI Client  │
+│ Human Mode  │   │   Bot Mode   │   │  Bot Mode   │
 │ (TronGrid)  │   │  (TronGrid)  │   │  (TronGrid) │
 │             │   │              │   │             │
 │ Screen → 👁 │   │  Offscreen → │   │ Offscreen → │
 │ Speakers→ 👂│   │   DLL/SO     │   │  DLL/SO     │
-│ Keyboard → ⌨│   │   plugin     │   │  plugin     │
+│ Keyboard → ⌨│   │   brain      │   │  brain      │
 │             │   │  Actions ←   │   │ Actions ←   │
 └─────────────┘   └──────────────┘   └─────────────┘
 ```
 
-The difference between a human client and an AI client is only where input comes from and where
-output goes:
-
-| Aspect | Human client | AI client |
-|--------|-------------|-----------|
-| **Vision** | Rendered to screen → human eyes | Rendered off-screen → DLL/SO buffer |
-| **Hearing** | Mixed to speakers → human ears | Spatial audio events → DLL/SO |
-| **Input** | Keyboard/mouse → actions | DLL/SO returns actions |
+| Aspect | Human mode | Bot mode |
+|--------|-----------|----------|
+| **Vision** | Rendered to screen → human eyes | Rendered off-screen → bot interface → DLL/SO |
+| **Hearing** | Mixed to speakers → human ears | Spatial audio events → bot interface → DLL/SO |
+| **Input** | Keyboard/mouse → actions | DLL/SO → bot interface → actions |
 | **To server** | Identical action packets | Identical action packets |
+| **Launch** | `trongrid` | `trongrid --bot brain.dll` |
 
-### AI Brains as Shared Libraries
+### AI Brains as Independent Shared Libraries
 
-The AI brain is a **DLL** (Windows) or **SO** (Linux) that the TronGrid client loads at startup.
-The engine calls into the library each tick, passing sensory data and receiving actions back.
-This is the most natural plugin interface: a clean C ABI boundary, zero-copy buffer passing,
-and no network overhead between brain and client.
+The AI brain is a **DLL** (Windows) or **SO** (Linux) — an **independent project**, built and
+maintained entirely outside of TronGrid. The brain's internal architecture is completely up to
+its author: neural network, rule-based system, LLM wrapper, hand-coded state machine — anything
+goes. TronGrid does not care what is inside the DLL. It only cares about the interface.
 
-```c
-// Exported by the AI brain DLL/SO — called by TronGrid client
-void on_spawn(const SpawnInfo* info);
-void on_tick(const SensoryPacket* senses, ActionPacket* actions);
-void on_derez(void);
+TronGrid publishes a **standardised bot interface** — a shared memory contract through which the
+client and the brain exchange sensory data and actions. The brain never links against TronGrid
+internals, never calls engine functions, and never touches world state. It reads from a sensory
+buffer and writes to an action buffer. That is the entire relationship.
+
+```text
+┌──────────────────────────┐       ┌──────────────────────────┐
+│   TronGrid Client        │       │   AI Brain (DLL/SO)      │
+│   (bot mode)             │       │   (independent project)  │
+│                          │       │                          │
+│  Renders off-screen ─────────►   │  Reads sensory buffer    │
+│  Samples world state     │ bot   │                          │
+│                          │ iface │  (user's own code —      │
+│  Reads action buffer ◄─────────  │   any architecture,      │
+│  Sends to server         │       │   any language, any AI)  │
+└──────────────────────────┘       └──────────────────────────┘
 ```
 
-The AI brain never touches world state, entity lists, or the network layer. It receives only
-what its senses provide — the same information a human gets through eyes and ears, just in
-structured form:
+The sensory data provided through the interface:
 
 - **Vision** — off-screen rendered RGBA frame from the creature's viewpoint
 - **Hearing** — spatial audio events with source direction and distance
@@ -155,29 +168,26 @@ structured form:
 No ground truth. No entity positions. No cheating. The AI knows only what it can sense — just
 like a human player knows only what they can see and hear. This is honest embodiment.
 
-### Why DLL/SO, Not a Separate Process?
+### Build Your Own Bot
 
-| Concern | DLL/SO plugin | Separate process |
-|---------|--------------|-----------------|
-| **Latency** | Function call (~nanoseconds) | IPC/network (~microseconds+) |
-| **Vision transfer** | Zero-copy pointer to render buffer | Serialise and transmit 50 KB+ frames |
-| **Tick coupling** | Engine calls `on_tick` directly | Clock synchronisation, packet ordering |
-| **Deployment** | Drop a `.dll`/`.so` next to the client | Run a separate service, manage IPC |
-| **Hot-reload** | Reload DLL without restarting engine | Restart process, reconnect |
-| **Crash isolation** | Brain crash can take down client | Process boundary protects client |
+Anyone can build an AI bot for TronGrid. The requirements are:
 
-The only trade-off is crash isolation, which matters less for a controlled environment where we
-author both sides. The simplicity and performance gains are overwhelming.
+1. **Produce a DLL/SO** that implements the standardised bot interface
+2. **Read sensory data** from the shared memory buffer TronGrid provides
+3. **Write actions** to the shared memory buffer TronGrid reads
+
+Everything else — the language, the framework, the AI approach, the training pipeline — is
+entirely up to the bot author. TronGrid is agnostic.
 
 ### Multiple AI Players
 
-Each AI player runs its own TronGrid client instance with its own DLL/SO loaded — exactly as
-if multiple human players each launched their own copy of the game. Different AI brains can use
-different DLLs (different species, different strategies). From the server's perspective, they
-are all just players.
+Each AI player runs its own TronGrid client instance in bot mode with its own DLL/SO loaded —
+exactly as if multiple human players each launched their own copy of the game. Different AI
+brains can use different DLLs (different species, different strategies). From the server's
+perspective, they are all just players.
 
-For the detailed sensory interface specification (packet structures, handshake, staged protocol),
-see [AI_INTERFACE.md](AI_INTERFACE.md).
+For the detailed bot interface specification (shared memory layout, staged protocol, packet
+structures), see [AI_INTERFACE.md](AI_INTERFACE.md).
 
 ## Target Hardware
 
