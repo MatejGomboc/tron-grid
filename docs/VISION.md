@@ -2,9 +2,9 @@
 
 ## The Idea
 
-TronGrid is the renderer for a digital world where AI creatures perceive and navigate through rendered images.
-AI brains are DLL/SO plugins loaded by TronGrid client instances — each AI runs its own client,
-just like a human player.
+TronGrid is a single-player game engine and renderer for a digital world where an AI creature
+perceives and navigates through rendered images. A single AI brain can be plugged in as a DLL/SO
+plugin — one brain per TronGrid instance.
 
 Think of it as building a terrarium, but digital: a self-contained world with its own geometry, lighting, and physics,
 observed entirely through the lens of a GPU-driven renderer.
@@ -22,19 +22,21 @@ that needs consistent, high-fidelity frames streamed at low latency. This means:
 ## Architecture at a Glance
 
 ```text
-┌──────────────────┐                ┌──────────────────┐
-│  TronGrid Server │◄── network ──►│  TronGrid Client  │
-│  (authoritative) │               │  + AI Brain DLL   │
-└──────────────────┘               └──────────────────┘
-      separate repo                       THIS REPO
+┌─────────────────────────────────┐
+│           TronGrid              │
+│                                 │
+│  ┌───────────┐  ┌────────────┐  │
+│  │ Renderer   │  │ Local World │  │
+│  │ Input      │◄►│ State      │  │
+│  │ AI brain   │  │ (in-process)│  │
+│  └───────────┘  └────────────┘  │
+└─────────────────────────────────┘
 ```
 
-**This repository is the TronGrid client** — the application that players (human or AI) run on
-their PCs. The authoritative MMORPG server is a separate project in its own repository.
-
-Each player runs a TronGrid client that connects to the central server.
-AI brains are DLL/SO plugins loaded by the client — the server sees all players identically.
-See [AI Embodiment](#ai-embodiment) below for the full architecture.
+TronGrid is currently a **single-player engine**. The world state lives in-process. One AI brain
+(DLL/SO) can be loaded per instance via the bot interface.
+See [AI Embodiment](#ai-embodiment) below and [Future: Multiplayer](#future-multiplayer) for the
+long-term MMO vision.
 
 ## The World: A Tron-Inspired Cyberspace
 
@@ -43,10 +45,9 @@ Three kinds of entity inhabit it:
 
 - **Programmes** — simple NPCs. Geometric wireframe shapes — cubes, pyramids, polyhedra made of glowing lines.
   Patrol bots, guardian systems, data couriers — all following their coded routines. Simple geometry, simple minds
-- **AI players** — persistent AI entities with memory and personality, each running their own
-  TronGrid client with a brain DLL/SO plugin. Visually distinct from the geometric world
-  (see [AI Visual Identity](#ai-visual-identity))
-- **Human players** — real people logging in as avatars, each with a unique visual signature
+- **The AI** — a persistent AI entity with memory and personality, loaded as a DLL/SO brain plugin.
+  Visually distinct from the geometric world (see [AI Visual Identity](#ai-visual-identity))
+- **The player** — a human controlling an avatar via keyboard/mouse, or absent in bot-only mode
 
 The world itself is built from:
 
@@ -97,34 +98,34 @@ The AI should look *different* from the geometric world around it:
 
 ## AI Embodiment
 
-There is **one TronGrid client binary**. At launch, the user chooses the client mode:
+There is **one TronGrid binary**. At launch, the user chooses the mode:
 
 - **Human mode** — renders to screen, plays audio through speakers, reads keyboard/mouse input.
-  This is a traditional MMORPG game client
+  A traditional single-player game experience
 - **Bot mode** — renders off-screen, routes all sensory output through the bot interface into
-  an AI brain DLL/SO, reads actions back from it
+  a single AI brain DLL/SO, reads actions back from it
 
 The mode is a launch-time flag, not a compile-time difference. The same binary, the same
-renderer, the same network protocol. The only thing that changes is where I/O goes.
+renderer, the same world. The only thing that changes is where I/O goes.
 
 ```text
-┌────────────────────────────────────────────────────────────────┐
-│                    TRONGRID SERVER                              │
-│  World State · Physics · Authority                             │
-│  (sees only "clients" — cannot distinguish AI from human)      │
-└──────┬──────────────────┬──────────────────┬───────────────────┘
-       │                  │                  │
-       │     Standard MMO protocol (identical for all clients)
-       │                  │                  │
-┌──────┴──────┐   ┌───────┴───────┐   ┌──────┴──────┐
-│ Human Mode  │   │   Bot Mode   │   │  Bot Mode   │
-│ (TronGrid)  │   │  (TronGrid)  │   │  (TronGrid) │
-│             │   │              │   │             │
-│ Screen → 👁 │   │  Offscreen → │   │ Offscreen → │
-│ Speakers→ 👂│   │   DLL/SO     │   │  DLL/SO     │
-│ Keyboard → ⌨│   │   brain      │   │  brain      │
-│             │   │  Actions ←   │   │ Actions ←   │
-└─────────────┘   └──────────────┘   └─────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       TronGrid                                │
+│              ┌──────────────────────┐                         │
+│              │   Local World State  │                         │
+│              │   Physics · NPCs     │                         │
+│              └──────────┬───────────┘                         │
+│                         │                                     │
+│          ┌──────────────┴──────────────┐                      │
+│          │                             │                      │
+│   ┌──────┴──────┐              ┌───────┴──────┐               │
+│   │ Human Mode  │              │  Bot Mode    │               │
+│   │             │              │              │               │
+│   │ Screen → 👁 │              │ Offscreen →  │               │
+│   │ Speakers→ 👂│              │  DLL/SO brain│               │
+│   │ Keyboard → ⌨│              │ Actions ←    │               │
+│   └─────────────┘              └──────────────┘               │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 | Aspect | Human mode | Bot mode |
@@ -132,7 +133,6 @@ renderer, the same network protocol. The only thing that changes is where I/O go
 | **Vision** | Rendered to screen → human eyes | Rendered off-screen → bot interface → DLL/SO |
 | **Hearing** | Mixed to speakers → human ears | Spatial audio events → bot interface → DLL/SO |
 | **Input** | Keyboard/mouse → actions | DLL/SO → bot interface → actions |
-| **To server** | Identical action packets | Identical action packets |
 | **Launch** | `trongrid` | `trongrid --bot brain.dll` |
 
 ### AI Brains as Independent Shared Libraries
@@ -143,20 +143,20 @@ its author: neural network, rule-based system, LLM wrapper, hand-coded state mac
 goes. TronGrid does not care what is inside the DLL. It only cares about the interface.
 
 TronGrid publishes a **standardised bot interface** — a shared memory contract through which the
-client and the brain exchange sensory data and actions. The brain never links against TronGrid
+engine and the brain exchange sensory data and actions. The brain never links against TronGrid
 internals, never calls engine functions, and never touches world state. It reads from a sensory
 buffer and writes to an action buffer. That is the entire relationship.
 
 ```text
 ┌──────────────────────────┐       ┌──────────────────────────┐
-│   TronGrid Client        │       │   AI Brain (DLL/SO)      │
+│   TronGrid               │       │   AI Brain (DLL/SO)      │
 │   (bot mode)             │       │   (independent project)  │
 │                          │       │                          │
 │  Renders off-screen ─────────►   │  Reads sensory buffer    │
 │  Samples world state     │ bot   │                          │
 │                          │ iface │  (user's own code —      │
 │  Reads action buffer ◄─────────  │   any architecture,      │
-│  Sends to server         │       │   any language, any AI)  │
+│                          │       │   any language, any AI)  │
 └──────────────────────────┘       └──────────────────────────┘
 ```
 
@@ -183,13 +183,6 @@ Anyone can build an AI bot for TronGrid. The requirements are:
 Everything else — the language, the framework, the AI approach, the training pipeline — is
 entirely up to the bot author. TronGrid is agnostic.
 
-### Multiple AI Players
-
-Each AI player runs its own TronGrid client instance in bot mode with its own DLL/SO loaded —
-exactly as if multiple human players each launched their own copy of the game. Different AI
-brains can use different DLLs (different species, different strategies). From the server's
-perspective, they are all just players.
-
 For the detailed bot interface specification (shared memory layout, staged protocol, packet
 structures), see [AI_INTERFACE.md](AI_INTERFACE.md).
 
@@ -208,6 +201,30 @@ structures), see [AI_INTERFACE.md](AI_INTERFACE.md).
 4. **Low latency.** MAILBOX present mode, minimal CPU-GPU synchronisation stalls.
 5. **Platform parity.** Windows (Win32) and Linux (X11) are first-class citizens. No macOS, no mobile.
 
+## Future: Multiplayer
+
+The long-term vision is an MMORPG where multiple human and AI players share a persistent world.
+The architecture is designed so that the transition from single-player to multiplayer is clean:
+
+1. **Extract world state** from in-process to a separate authoritative server (its own repository)
+2. **Replace direct calls** with network packets (standard MMO client-server protocol)
+3. **Add prediction + reconciliation** on the client side
+
+```text
+┌──────────────────┐                ┌──────────────────┐
+│  TronGrid Server │◄── network ──►│  TronGrid Client  │
+│  (authoritative) │               │  + AI Brain DLL   │
+└──────────────────┘               └──────────────────┘
+    future repo                          THIS REPO
+```
+
+In this future model, each player (human or AI) runs their own TronGrid instance. Multiple AI
+brains with different DLLs (different species, strategies) all appear as ordinary players. The
+server cannot distinguish AI from human — the bot interface and network protocol remain identical.
+
+Nothing about the bot interface, the renderer, or the AI brain DLL changes when multiplayer is
+added. The only thing that changes is where world state lives.
+
 ## Phased Roadmap
 
 The project is built incrementally. Each phase produces a working, demonstrable result.
@@ -224,7 +241,8 @@ The canonical task checklist lives in `TODO.md`.
 | 6 | Physically-based RT | Full RT lighting |
 | 7 | Post processing | Bloom, tonemapping |
 | 8 | Optimisation | 4K @ 60+ rock-solid |
-| 9 | AI integration | Frame streaming API for AI brain |
+| 9 | AI integration | Bot interface, single AI brain per instance |
+| 10 | Multiplayer | Authoritative server, MMO networking |
 
 Phases 3–4 and 5–6 can be developed in parallel after Phase 2.
 
@@ -233,5 +251,5 @@ Phase 0 --> 1 --> 2 --+--> 3 --> 4
                       |
                       +--> 5 --> 6
 
-3 + 6 --> 7 --> 8 --> 9
+3 + 6 --> 7 --> 8 --> 9 --> 10
 ```

@@ -7,11 +7,11 @@
 ## Overview
 
 The AI brain is a **shared library** (`.dll` on Windows, `.so` on Linux) — an independent
-project built entirely outside of TronGrid. When the TronGrid client is launched in **bot mode**
+project built entirely outside of TronGrid. When TronGrid is launched in **bot mode**
 (`trongrid --bot brain.dll`), it loads the brain library, renders off-screen, and routes all
-sensory output through the bot interface. The client and the brain communicate through **shared
-memory buffers** — the client writes sensory data, the brain reads it; the brain writes actions,
-the client reads them. The brain never links against TronGrid, never calls engine functions,
+sensory output through the bot interface. TronGrid and the brain communicate through **shared
+memory buffers** — TronGrid writes sensory data, the brain reads it; the brain writes actions,
+TronGrid reads them. The brain never links against TronGrid, never calls engine functions,
 and never sees raw world state.
 
 The brain's internal architecture is **completely agnostic** — neural network, rule-based,
@@ -50,8 +50,8 @@ remain valid at every subsequent stage.
 
 ## Shared Memory Interface
 
-The TronGrid client and the AI brain communicate through shared memory regions. The client owns
-and manages these regions; the brain receives access to them when loaded.
+TronGrid and the AI brain communicate through shared memory regions. TronGrid owns and manages
+these regions; the brain receives access to them when loaded.
 
 ```text
 ┌──────────────────────────────────────────────────┐
@@ -59,8 +59,8 @@ and manages these regions; the brain receives access to them when loaded.
 │                                                  │
 │  ┌────────────────────┐  ┌────────────────────┐  │
 │  │   Sensory Buffer   │  │   Action Buffer    │  │
-│  │   (client writes,  │  │   (brain writes,   │  │
-│  │    brain reads)    │  │    client reads)   │  │
+│  │  (TronGrid writes, │  │   (brain writes,   │  │
+│  │    brain reads)    │  │  TronGrid reads)   │  │
 │  └────────────────────┘  └────────────────────┘  │
 │                                                  │
 │  ┌────────────────────┐                          │
@@ -72,7 +72,7 @@ and manages these regions; the brain receives access to them when loaded.
 └──────────────────────────────────────────────────┘
 ```
 
-The brain DLL/SO exports a minimal set of C-linkage functions that the client calls to pass
+The brain DLL/SO exports a minimal set of C-linkage functions that TronGrid calls to pass
 shared memory pointers and lifecycle events. These are the **only** functions the brain needs
 to export — everything else is internal to the brain.
 
@@ -98,24 +98,24 @@ void tg_brain_shutdown(void);
 
 ### Brain Configuration
 
-The brain fills this struct during `tg_brain_init` to tell the client what it needs.
-The client reads it after the call and configures its subsystems accordingly.
+The brain fills this struct during `tg_brain_init` to tell TronGrid what it needs.
+TronGrid reads it after the call and configures its subsystems accordingly.
 
 ```c
 /// Filled by the brain during tg_brain_init.
-/// Tells the client what sensory capabilities the brain requires.
+/// Tells TronGrid what sensory capabilities the brain requires.
 struct TgBrainConfig
 {
     /// Protocol stage the brain supports (0 = scalar, 1 = directional, 2 = visual, 3 = full).
     uint8_t stage;
 
     /// Requested eye resolution for Stage 2+ vision.
-    /// Ignored at Stage 0/1. The client renders offscreen at this resolution.
+    /// Ignored at Stage 0/1. TronGrid renders offscreen at this resolution.
     uint32_t eye_width;
     uint32_t eye_height;
 
     /// Requested tick rate in Hz (e.g. 60 for 60 ticks/second).
-    /// The client will attempt to match this but may deliver a different rate.
+    /// TronGrid will attempt to match this but may deliver a different rate.
     uint32_t requested_tick_rate_hz;
 };
 ```
@@ -130,20 +130,20 @@ struct TgBrainInterface
     /// Protocol version (major, minor, patch).
     uint8_t version[3];
 
-    /// Actual protocol stage the client is operating at.
+    /// Actual protocol stage TronGrid is operating at.
     uint8_t stage;
 
-    /// Actual tick rate the client is providing (may differ from requested).
+    /// Actual tick rate TronGrid is providing (may differ from requested).
     uint32_t tick_rate_hz;
 
-    /// Pointer to the sensory buffer (client writes, brain reads).
+    /// Pointer to the sensory buffer (TronGrid writes, brain reads).
     /// The layout depends on the protocol stage.
     const void* sensory_buffer;
 
     /// Size of the sensory buffer in bytes.
     uint32_t sensory_buffer_size;
 
-    /// Pointer to the action buffer (brain writes, client reads).
+    /// Pointer to the action buffer (brain writes, TronGrid reads).
     void* action_buffer;
 
     /// Size of the action buffer in bytes.
@@ -155,27 +155,27 @@ struct TgBrainInterface
 
 ```text
 1. User launches: trongrid --bot brain.dll
-2. Client starts in bot mode, connects to server, receives spawn position
-3. Client loads brain DLL/SO from the specified path
-4. Client calls tg_brain_init() → brain fills TgBrainConfig (stage, eye resolution, tick rate)
-5. Client reads config, allocates shared memory, configures offscreen rendering at requested resolution
-6. Client calls tg_brain_spawn() with arena geometry and initial state
+2. TronGrid starts in bot mode, initialises local world state
+3. TronGrid loads brain DLL/SO from the specified path
+4. TronGrid calls tg_brain_init() → brain fills TgBrainConfig (stage, eye resolution, tick rate)
+5. TronGrid reads config, allocates shared memory, configures offscreen rendering at requested resolution
+6. TronGrid calls tg_brain_spawn() with arena geometry and initial state
 7. Main loop:
-   a. Client receives world update from server
-   b. Client samples world at entity's position → writes into sensory buffer
-   c. At Stage 2+: client renders offscreen, reads back to shared memory (triple-buffered)
-   d. Client calls tg_brain_tick()
-   e. Client reads actions from action buffer → sends to server
-8. On derez: client calls tg_brain_shutdown()
-9. Client unloads DLL/SO
+   a. TronGrid advances world simulation
+   b. TronGrid samples world at entity's position → writes into sensory buffer
+   c. At Stage 2+: TronGrid renders offscreen, reads back to shared memory (triple-buffered)
+   d. TronGrid calls tg_brain_tick()
+   e. TronGrid reads actions from action buffer → applies to world state
+8. On derez: TronGrid calls tg_brain_shutdown()
+9. TronGrid unloads DLL/SO
 ```
 
 ---
 
 ## Stage 0: Scalar Sensory Channels
 
-At Stage 0, the client samples the world at the AI's position and writes scalar readings into
-the sensory buffer. No rendering pipeline is involved — just field sampling and collision queries.
+At Stage 0, TronGrid samples the world at the AI's position and writes scalar readings into the
+sensory buffer. No rendering pipeline is involved — just field sampling and collision queries.
 
 ### Sensory Buffer Layout (Stage 0)
 
@@ -183,7 +183,7 @@ the sensory buffer. No rendering pipeline is involved — just field sampling an
 #define TG_MAX_SIGNATURE_CHANNELS 8
 
 /// Sensory buffer layout at Stage 0.
-/// The client writes this each tick; the brain reads it.
+/// TronGrid writes this each tick; the brain reads it.
 struct TgSensoryBuffer
 {
     /// Simulation tick counter (monotonically increasing).
@@ -254,7 +254,7 @@ identity markers.
 
 ```c
 /// Action buffer layout at Stage 0.
-/// The brain writes this each tick; the client reads it.
+/// The brain writes this each tick; TronGrid reads it.
 struct TgActionBuffer
 {
     /// Forward velocity (m/s).
@@ -295,13 +295,12 @@ struct TgArenaDescriptor
 
 ---
 
-## What the Client Computes
+## What TronGrid Computes
 
-The TronGrid client's responsibility is **sensory simulation** — sampling its local copy of the
-world state at the AI's position and writing results into the shared sensory buffer. At Stage 0,
-this involves:
+TronGrid's responsibility is **sensory simulation** — sampling the world state at the AI's
+position and writing results into the shared sensory buffer. At Stage 0, this involves:
 
-| Sensory channel | Client computation |
+| Sensory channel | TronGrid computation |
 |----------------|-------------------:|
 | `TgSignatureReading.intensity` | Sample energy/signature field at the AI's sensing position |
 | `TgSignatureReading.d_intensity_dt` | Temporal difference: `(intensity_now - intensity_prev) / dt` |
@@ -340,7 +339,7 @@ finite difference.
 
 ## Stage 2+: Vision and Audio
 
-At Stage 2, the client enables its Vulkan rendering pipeline in **off-screen mode**. Each tick,
+At Stage 2, TronGrid enables its Vulkan rendering pipeline in **off-screen mode**. Each tick,
 it renders the scene from the AI entity's viewpoint into an offscreen framebuffer and writes the
 pixel data into the shared sensory buffer.
 
@@ -385,7 +384,7 @@ struct TgVisionData
 
 ### GPU Readback Pipeline
 
-The client renders to a GPU-only `VkImage`, copies it to a staging buffer, and the brain reads
+TronGrid renders to a GPU-only `VkImage`, copies it to a staging buffer, and the brain reads
 from persistently mapped CPU-visible memory. Triple-buffered to avoid stalls:
 
 ```text
@@ -444,7 +443,7 @@ To create an AI bot for TronGrid:
    `tg_brain_tick`, `tg_brain_shutdown`
 3. **Build as a DLL/SO** — use any language that can produce a shared library with C-linkage
    exports (C, C++, Rust, Zig, etc.)
-4. **Drop it next to the TronGrid client** — specify the path at launch
+4. **Drop it next to the TronGrid binary** — specify the path at launch
 
 The bot's internal architecture is entirely up to you. TronGrid does not care.
 
@@ -468,14 +467,13 @@ This is essential for debugging AI behaviour and for the training pipeline.
 |--------|-----------------|-------------------|----------------|
 | **Sensory buffer size** | ~120 bytes | +frame buffer (brain-requested resolution) | +full audio stream |
 | **Action buffer size** | 16 bytes (2 doubles) | ~32 bytes (+look direction) | ~64 bytes (+targets, emotes) |
-| **Client rendering** | None required | Off-screen Vulkan render at brain's resolution | Full pipeline |
+| **Rendering** | None required | Off-screen Vulkan render at brain's resolution | Full pipeline |
 | **Transfer method** | Shared memory write | GPU readback → shared memory | GPU readback → shared memory |
 | **Visual data** | `light_level` scalar only | RGB + depth at requested resolution | RGB + depth |
 | **Audio data** | None | Spatial audio events | Full spatial audio |
 
-The protocol starts minimal and grows only as the brain's capabilities demand. The client
-enables more subsystems at each stage; the server never changes — it always sees just another
-player.
+The protocol starts minimal and grows only as the brain's capabilities demand. TronGrid
+enables more subsystems at each stage.
 
 ---
 

@@ -4,13 +4,11 @@
 
 See `docs/VISION.md` for the full architecture:
 
-TronGrid is the renderer for a digital world where AI creatures perceive and navigate through rendered images.
-AI brains are DLL/SO plugins loaded by TronGrid client instances — each AI runs its own client, just like a human player.
+TronGrid is a single-player game engine and renderer for a digital world where an AI creature
+perceives and navigates through rendered images. One AI brain (DLL/SO plugin) can be loaded per
+instance. Multiplayer (MMO) is a future goal — see `docs/VISION.md` § Future: Multiplayer.
 
 ## What Is This Project?
-
-**This repository is the TronGrid client** — the application that players run on their PCs.
-The authoritative MMORPG server is a separate project in its own repository.
 
 A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tracing on NVIDIA RTX 4090.
 

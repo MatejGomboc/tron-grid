@@ -414,5 +414,6 @@ Once the foundation is solid, the architecture will evolve towards:
 - **Bindless resources** — all textures and buffers accessible via descriptor indexing
 - **Mesh shading** — meshlet-based geometry processing, replacing the traditional vertex pipeline
 - **Ray tracing** — acceleration structures for shadows and full global illumination
-- **AI embodiment** — AI brains as DLL/SO plugins with staged sensory protocol (see [AI_INTERFACE.md](AI_INTERFACE.md))
+- **AI embodiment** — one AI brain per instance as a DLL/SO plugin with staged sensory protocol (see [AI_INTERFACE.md](AI_INTERFACE.md))
 - **Off-screen rendering** — rendering to framebuffer for AI vision at Stage 2+ (Phase 9)
+- **Multiplayer** — extract world state to a separate authoritative server, MMO networking (Phase 10)
