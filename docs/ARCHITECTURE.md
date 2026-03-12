@@ -14,26 +14,46 @@ The engine follows a **modular, component-based architecture** with RAII ownersh
 inter-system communication, and a rendergraph for pipeline orchestration.
 
 ```text
-┌────────────────────────────────────────────────────┐
-│                    Application                     │
-│  Window (Win32 / X11) · Input · Main loop          │
-├────────────────────────────────────────────────────┤
-│                   Engine Core                      │
-│  Components · Signals · Resource handles           │
-├────────────────────────────────────────────────────┤
-│                   Rendergraph                      │
-│  Pass DAG · Automatic synchronisation · Barriers   │
-├────────────────────────────────────────────────────┤
-│                Vulkan Backend (RAII)                │
-│  vk::raii wrappers · Swapchain · Command buffers   │
-├────────────────────────────────────────────────────┤
-│                   GPU Resources                    │
-│  Buffers · Images · Descriptors (bindless)         │
-├────────────────────────────────────────────────────┤
-│                  Volk (loader)                     │
-│  Dynamic Vulkan function pointer resolution        │
-└────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                        Application                             │
+│  Window (Win32 / X11) · Input · Main loop                      │
+├────────────────────────────────────────────────────────────────┤
+│                     Tightly-Coupled Engine Core                 │
+│  3D Rendering · 3D Physics · 3D Spatial Audio                  │
+│  (share Vulkan device, buffers, compute queues)                │
+│                                                                │
+│  Components · Signals · Resource handles                       │
+├────────────────────────────────────────────────────────────────┤
+│                       Rendergraph                              │
+│  Pass DAG · Automatic synchronisation · Barriers               │
+├────────────────────────────────────────────────────────────────┤
+│                    Vulkan Backend (RAII)                        │
+│  vk::raii wrappers · Swapchain · Command buffers               │
+├────────────────────────────────────────────────────────────────┤
+│                       GPU Resources                            │
+│  Buffers · Images · Descriptors (bindless)                     │
+├────────────────────────────────────────────────────────────────┤
+│                      Volk (loader)                             │
+│  Dynamic Vulkan function pointer resolution                    │
+└────────────────────────────────────────────────────────────────┘
+        ▲
+        │ shared memory interface only (bot mode)
+        ▼
+┌────────────────────────────────────────────────────────────────┐
+│  AI Brain (DLL/SO) — external, loosely coupled, independent    │
+└────────────────────────────────────────────────────────────────┘
 ```
+
+### Coupling Model
+
+The rendering, physics, and spatial audio engines are **tightly coupled** — they run in the
+same process, share the same Vulkan device, and can share GPU buffers, compute queues, and
+synchronisation primitives. This is deliberate: tight integration enables optimisations like
+GPU-driven physics, compute-based audio propagation, and unified memory management.
+
+The AI brain is the opposite — it is **loosely coupled** via a shared memory interface. The
+brain never touches Vulkan objects, engine internals, or world state directly. It reads sensory
+data from a buffer and writes actions to another. This boundary is strict and intentional.
 
 ---
 
@@ -56,6 +76,8 @@ inter-system communication, and a rendergraph for pipeline orchestration.
 | Meshlet size | 64 vertices, 124 triangles | NVIDIA optimal for mesh shaders |
 | Descriptor model | Fully bindless | No rebinding between draws; GPU-driven compatible |
 | Present mode | MAILBOX | Low latency, no tearing |
+| Engine subsystems | Tightly coupled (render, physics, audio) | Share Vulkan device, buffers, compute queues for efficiency |
+| AI brain interface | Loosely coupled (shared memory only) | Brain is an independent DLL/SO; no access to engine internals |
 
 ---
 

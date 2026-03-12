@@ -172,6 +172,14 @@ The sensory data provided through the interface:
 No ground truth. No entity positions. No cheating. The AI knows only what it can sense — just
 like a human player knows only what they can see and hear. This is honest embodiment.
 
+### Engine Coupling
+
+Inside TronGrid, the 3D rendering engine, 3D physics engine, and 3D spatial audio engine are
+**tightly coupled** — they share the same Vulkan device, GPU buffers, and compute queues for
+maximum efficiency. The AI brain is the opposite: **loosely coupled** via the shared memory bot
+interface, with no access to engine internals. See [ARCHITECTURE.md](ARCHITECTURE.md) § Coupling
+Model for details.
+
 ### Build Your Own Bot
 
 Anyone can build an AI bot for TronGrid. The requirements are:
