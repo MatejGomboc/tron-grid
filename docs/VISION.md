@@ -105,6 +105,8 @@ There is **one TronGrid binary**. At launch, the user chooses the mode:
   A traditional single-player game experience
 - **Bot mode** — renders off-screen, routes all sensory output through the bot interface into
   a single AI brain DLL/SO, reads actions back from it
+- **VR mode** (future) — renders to a VR headset, reads motion controller input. Same renderer,
+  different output target
 
 The mode is a launch-time flag, not a compile-time difference. The same binary, the same
 renderer, the same world. The only thing that changes is where I/O goes.
