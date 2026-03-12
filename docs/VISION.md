@@ -3,7 +3,8 @@
 ## The Idea
 
 TronGrid is the renderer for a digital world where AI creatures perceive and navigate through rendered images.
-The AI brain lives in a separate repository — TronGrid's job is to produce the frames that the AI sees.
+AI brains are DLL/SO plugins loaded by TronGrid client instances — each AI runs its own client,
+just like a human player.
 
 Think of it as building a terrarium, but digital: a self-contained world with its own geometry, lighting, and physics,
 observed entirely through the lens of a GPU-driven renderer.
@@ -21,16 +22,15 @@ that needs consistent, high-fidelity frames streamed at low latency. This means:
 ## Architecture at a Glance
 
 ```text
-┌─────────────┐       frames        ┌──────────────┐
-│  TronGrid   │ ──────────────────> │   AI Brain   │
-│  (renderer) │                     │ (separate    │
-│             │ <────────────────── │    repo)     │
-└─────────────┘    actions/state    └──────────────┘
+┌──────────────────┐                ┌──────────────────┐
+│  TronGrid Server │◄── network ──►│  TronGrid Client  │
+│  (authoritative) │               │  + AI Brain DLL   │
+└──────────────────┘               └──────────────────┘
 ```
 
-TronGrid produces rendered frames. The AI brain consumes them, decides on actions, and sends state updates back.
-The two communicate through a streaming API (Phase 9 on the roadmap).
-See [AI as Network Client](#ai-as-network-client) below for the full architecture.
+Each player (human or AI) runs a TronGrid client that connects to the central server.
+AI brains are DLL/SO plugins loaded by the client — the server sees all players identically.
+See [AI Embodiment](#ai-embodiment) below for the full architecture.
 
 ## The World: A Tron-Inspired Cyberspace
 
@@ -39,8 +39,9 @@ Three kinds of entity inhabit it:
 
 - **Programmes** — simple NPCs. Geometric wireframe shapes — cubes, pyramids, polyhedra made of glowing lines.
   Patrol bots, guardian systems, data couriers — all following their coded routines. Simple geometry, simple minds
-- **AI players** — persistent AI entities with memory and personality, connecting as network clients.
-  Visually distinct from the geometric world (see [AI Visual Identity](#ai-visual-identity))
+- **AI players** — persistent AI entities with memory and personality, each running their own
+  TronGrid client with a brain DLL/SO plugin. Visually distinct from the geometric world
+  (see [AI Visual Identity](#ai-visual-identity))
 - **Human players** — real people logging in as avatars, each with a unique visual signature
 
 The world itself is built from:
@@ -90,53 +91,93 @@ The AI should look *different* from the geometric world around it:
 - **Warm colour** (soft white/gold) versus cool cyan
 - **Pulsing** brightness that reflects emotional state
 
-## AI as Network Client
+## AI Embodiment
 
-The AI brain runs as a **separate process** that connects to TronGrid via a streaming protocol —
-just like a human player logging in. This gives complete separation with no FFI or shared memory.
+Every player — human or AI — runs their own TronGrid client instance. All clients connect to a
+central authoritative server via standard MMO networking. The server cannot tell AI from human;
+it sees only clients.
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                    TRONGRID (C++20)                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │   Renderer   │  │   Physics    │  │  World State │      │
-│  │  (Vulkan)    │  │              │  │              │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-│                    ┌──────────────┐                         │
-│                    │   Network    │◄────── Human Players    │
-│                    │   Protocol   │◄────── AI Brain (bot)   │
-│                    └──────────────┘                         │
-└─────────────────────────────────────────────────────────────┘
-                            ▲
-                            │ TCP / UDP / WebSocket
-                            │
-┌───────────────────────────┴─────────────────────────────────┐
-│              AI BRAIN (separate repository)                 │
-│              Connects as just another client                │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                    TRONGRID SERVER                              │
+│  World State · Physics · Authority                             │
+│  (sees only "clients" — cannot distinguish AI from human)      │
+└──────┬──────────────────┬──────────────────┬───────────────────┘
+       │                  │                  │
+       │     Standard MMO protocol (identical for all clients)
+       │                  │                  │
+┌──────┴──────┐   ┌───────┴───────┐   ┌──────┴──────┐
+│ Human Client│   │  AI Client    │   │  AI Client  │
+│ (TronGrid)  │   │  (TronGrid)  │   │  (TronGrid) │
+│             │   │              │   │             │
+│ Screen → 👁 │   │  Offscreen → │   │ Offscreen → │
+│ Speakers→ 👂│   │   DLL/SO     │   │  DLL/SO     │
+│ Keyboard → ⌨│   │   plugin     │   │  plugin     │
+│             │   │  Actions ←   │   │ Actions ←   │
+└─────────────┘   └──────────────┘   └─────────────┘
 ```
 
-Human players receive what any game client provides — a rendered image and spatial audio.
-Optionally, energy signatures from nearby entities can be overlaid on a 2D HUD.
+The difference between a human client and an AI client is only where input comes from and where
+output goes:
 
-The AI receives a richer sensory stream, designed to make it *feel* embodied in the Grid:
+| Aspect | Human client | AI client |
+|--------|-------------|-----------|
+| **Vision** | Rendered to screen → human eyes | Rendered off-screen → DLL/SO buffer |
+| **Hearing** | Mixed to speakers → human ears | Spatial audio events → DLL/SO |
+| **Input** | Keyboard/mouse → actions | DLL/SO returns actions |
+| **To server** | Identical action packets | Identical action packets |
 
-- **Vision** — rendered image from the AI's viewpoint
-- **Hearing** — precise sound events with source positions (not just an audio mix)
-- **Smell** — detection of energy signatures from programmes, players, and data structures
-- **Touch** — tactile feedback from collisions, surfaces, and interactions
-- **Temperature** — warmth near energy sources, cold in the void between sectors
-- **Pain** — damage sensations when attacked or when energy is depleted
-- **Ground truth** — raw entity data (positions, types, states) for training and learning
+### AI Brains as Shared Libraries
 
-The goal: a human sees the Grid on a screen; the AI *lives* inside it.
+The AI brain is a **DLL** (Windows) or **SO** (Linux) that the TronGrid client loads at startup.
+The engine calls into the library each tick, passing sensory data and receiving actions back.
+This is the most natural plugin interface: a clean C ABI boundary, zero-copy buffer passing,
+and no network overhead between brain and client.
 
-For the detailed protocol specification (packet formats, handshake, wire format), see
-[AI_INTERFACE.md](AI_INTERFACE.md).
+```c
+// Exported by the AI brain DLL/SO — called by TronGrid client
+void on_spawn(const SpawnInfo* info);
+void on_tick(const SensoryPacket* senses, ActionPacket* actions);
+void on_derez(void);
+```
 
-This is the same proven architecture that AAA studios use for MMO testing bots — automated clients
-that connect via the standard player protocol. The difference is that those bots are disposable QA
-tools, while this AI is a persistent entity with memory and personality that inhabits the world.
+The AI brain never touches world state, entity lists, or the network layer. It receives only
+what its senses provide — the same information a human gets through eyes and ears, just in
+structured form:
+
+- **Vision** — off-screen rendered RGBA frame from the creature's viewpoint
+- **Hearing** — spatial audio events with source direction and distance
+- **Smell** — energy signature gradients (detecting programmes, data streams, players nearby)
+- **Touch** — contact and collision feedback from surfaces and entities
+- **Temperature** — ambient energy field (warmth near sources, cold in the void)
+- **Pain** — damage intensity from attacks or energy depletion
+
+No ground truth. No entity positions. No cheating. The AI knows only what it can sense — just
+like a human player knows only what they can see and hear. This is honest embodiment.
+
+### Why DLL/SO, Not a Separate Process?
+
+| Concern | DLL/SO plugin | Separate process |
+|---------|--------------|-----------------|
+| **Latency** | Function call (~nanoseconds) | IPC/network (~microseconds+) |
+| **Vision transfer** | Zero-copy pointer to render buffer | Serialise and transmit 50 KB+ frames |
+| **Tick coupling** | Engine calls `on_tick` directly | Clock synchronisation, packet ordering |
+| **Deployment** | Drop a `.dll`/`.so` next to the client | Run a separate service, manage IPC |
+| **Hot-reload** | Reload DLL without restarting engine | Restart process, reconnect |
+| **Crash isolation** | Brain crash can take down client | Process boundary protects client |
+
+The only trade-off is crash isolation, which matters less for a controlled environment where we
+author both sides. The simplicity and performance gains are overwhelming.
+
+### Multiple AI Players
+
+Each AI player runs its own TronGrid client instance with its own DLL/SO loaded — exactly as
+if multiple human players each launched their own copy of the game. Different AI brains can use
+different DLLs (different species, different strategies). From the server's perspective, they
+are all just players.
+
+For the detailed sensory interface specification (packet structures, handshake, staged protocol),
+see [AI_INTERFACE.md](AI_INTERFACE.md).
 
 ## Target Hardware
 
