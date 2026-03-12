@@ -477,4 +477,43 @@ enables more subsystems at each stage.
 
 ---
 
+## Design Decisions and Scope
+
+### What TronGrid Provides
+
+- **Sensory debug view** — TronGrid can render what the AI "sees" and "feels" to a window,
+  so developers can observe the sensory stream. This is a TronGrid feature (visualising the
+  bot interface output)
+- **Simulation speed** — the simulation can run at multiple speeds (pause, 1x, 2x, fast-forward),
+  similar to The Sims. Essential for training and observation
+- **Headless mode** — bot mode with no window at all. No GPU presentation, just offscreen
+  rendering and sensory data. Useful for training at scale
+
+### What Is the Brain's Problem (Not TronGrid's)
+
+- **Brain internals visualisation** — if the brain wants to display what it's "thinking"
+  (neural activations, decision trees, internal state), it creates its own window. TronGrid
+  has no knowledge of the brain's architecture and cannot visualise it
+- **Logging** — the brain is responsible for its own debug output. TronGrid provides no
+  logging facility through the bot interface
+- **Hot-reload** — brains cannot be swapped at runtime. Restart TronGrid to load a different
+  DLL/SO. Hot-reload may be revisited in a future version
+
+### Crash Behaviour
+
+If the brain DLL crashes (segfault, unhandled exception), **TronGrid terminates**. The brain
+runs in-process — there is no sandboxing or crash isolation. Brain authors are responsible for
+the stability of their code.
+
+### Versioning
+
+The interface uses **breaking changes only** — there is no backwards compatibility guarantee
+at this stage. The `version[3]` field in `TgBrainInterface` identifies the protocol version;
+if the brain and TronGrid disagree on the version, TronGrid refuses to load the brain.
+
+A stability guarantee and deprecation policy will be introduced when the interface approaches
+maturity. Until then: if the interface changes, rebuild the brain.
+
+---
+
 *See also: [VISION.md](VISION.md) | [ARCHITECTURE.md](ARCHITECTURE.md)*

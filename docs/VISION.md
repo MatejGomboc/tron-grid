@@ -17,6 +17,7 @@ that needs consistent, high-fidelity frames streamed at low latency. This means:
 - **No editor, no GUI** — the renderer is headless-capable, driven by API calls
 - **Deterministic rendering** — same inputs produce same outputs, essential for training
 - **Frame streaming** — frames are captured and piped to the AI brain, not displayed for a human
+- **Variable simulation speed** — pause, 1x, fast-forward, essential for training and observation
 - **Full control** — every pipeline stage is ours to inspect, modify, and optimise
 
 ## Architecture at a Glance
