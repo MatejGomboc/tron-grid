@@ -79,9 +79,9 @@ to export — everything else is internal to the brain.
 ### Required Exports
 
 ```c
-/// Called once after loading. The client passes the shared memory interface.
-/// The brain stores these pointers for use during its lifetime.
-void tg_brain_init(const TgBrainInterface* interface);
+/// Called once after loading. The brain fills `config` with its requirements
+/// (e.g. requested eye resolution), then receives the shared memory interface.
+void tg_brain_init(const TgBrainInterface* interface, TgBrainConfig* config);
 
 /// Called once when the brain's entity spawns into the world.
 void tg_brain_spawn(const TgSpawnInfo* info);
@@ -96,6 +96,30 @@ void tg_brain_tick(void);
 void tg_brain_shutdown(void);
 ```
 
+### Brain Configuration
+
+The brain fills this struct during `tg_brain_init` to tell the client what it needs.
+The client reads it after the call and configures its subsystems accordingly.
+
+```c
+/// Filled by the brain during tg_brain_init.
+/// Tells the client what sensory capabilities the brain requires.
+struct TgBrainConfig
+{
+    /// Protocol stage the brain supports (0 = scalar, 1 = directional, 2 = visual, 3 = full).
+    uint8_t stage;
+
+    /// Requested eye resolution for Stage 2+ vision.
+    /// Ignored at Stage 0/1. The client renders offscreen at this resolution.
+    uint32_t eye_width;
+    uint32_t eye_height;
+
+    /// Requested tick rate in Hz (e.g. 60 for 60 ticks/second).
+    /// The client will attempt to match this but may deliver a different rate.
+    uint32_t requested_tick_rate_hz;
+};
+```
+
 ### Interface Structure
 
 ```c
@@ -106,9 +130,11 @@ struct TgBrainInterface
     /// Protocol version (major, minor, patch).
     uint8_t version[3];
 
-    /// Protocol stage (0 = scalar, 1 = directional, 2 = visual, 3 = full).
-    /// Determines which fields in the sensory buffer are populated.
+    /// Actual protocol stage the client is operating at.
     uint8_t stage;
+
+    /// Actual tick rate the client is providing (may differ from requested).
+    uint32_t tick_rate_hz;
 
     /// Pointer to the sensory buffer (client writes, brain reads).
     /// The layout depends on the protocol stage.
@@ -131,15 +157,17 @@ struct TgBrainInterface
 1. User launches: trongrid --bot brain.dll
 2. Client starts in bot mode, connects to server, receives spawn position
 3. Client loads brain DLL/SO from the specified path
-4. Client allocates shared memory, calls tg_brain_init() with interface pointers
-5. Client calls tg_brain_spawn() with arena geometry and initial state
-6. Main loop:
+4. Client calls tg_brain_init() → brain fills TgBrainConfig (stage, eye resolution, tick rate)
+5. Client reads config, allocates shared memory, configures offscreen rendering at requested resolution
+6. Client calls tg_brain_spawn() with arena geometry and initial state
+7. Main loop:
    a. Client receives world update from server
    b. Client samples world at entity's position → writes into sensory buffer
-   c. Client calls tg_brain_tick()
-   d. Client reads actions from action buffer → sends to server
-7. On derez: client calls tg_brain_shutdown()
-8. Client unloads DLL/SO
+   c. At Stage 2+: client renders offscreen, reads back to shared memory (triple-buffered)
+   d. Client calls tg_brain_tick()
+   e. Client reads actions from action buffer → sends to server
+8. On derez: client calls tg_brain_shutdown()
+9. Client unloads DLL/SO
 ```
 
 ---
@@ -313,23 +341,68 @@ finite difference.
 ## Stage 2+: Vision and Audio
 
 At Stage 2, the client enables its Vulkan rendering pipeline in **off-screen mode**. Each tick,
-it renders the scene from the AI entity's viewpoint into a framebuffer and writes the pixel data
-into the shared sensory buffer.
+it renders the scene from the AI entity's viewpoint into an offscreen framebuffer and writes the
+pixel data into the shared sensory buffer.
+
+### Brain-Requested Resolution
+
+The brain specifies its desired eye resolution at init time — **not** the engine. Different
+brains need different visual acuity. A primitive creature might need 8x8; a visually sophisticated
+one might request 256x256. TronGrid renders the offscreen pass at whatever resolution the brain
+asks for.
+
+| Resolution | Per-frame size (RGB + depth) | Use case |
+|-----------|----------------------------|----------|
+| 8 x 8 | ~0.4 KB | Light/dark sensing, phototaxis |
+| 32 x 32 | ~7 KB | Basic spatial awareness |
+| 64 x 64 | ~28 KB | Moderate visual recognition |
+| 128 x 128 | ~112 KB | Detailed visual processing |
+| 256 x 256 | ~448 KB | High-acuity vision |
+
+There is no reason to render at 4K for a brain that processes 64x64. The resolution is part of
+the brain's configuration, communicated during `tg_brain_init`.
+
+### Vision Data
 
 ```c
 /// Extended sensory buffer fields at Stage 2+.
 /// These are appended to the base Stage 0 layout.
 struct TgVisionData
 {
-    /// Pointer to the rendered RGBA8 framebuffer within the shared memory region.
-    const uint8_t* pixels;
-    /// Frame dimensions.
+    /// Pointer to the rendered RGB888 framebuffer within the shared memory region.
+    /// Row-major, top-to-bottom.
+    const uint8_t* rgb;
+    /// Pointer to the depth buffer (normalised [0.0, 1.0], float32).
+    /// Row-major, same dimensions as RGB.
+    const float* depth;
+    /// Frame dimensions (as requested by the brain at init).
     uint32_t width;
     uint32_t height;
     /// Horizontal field of view in radians.
     double fov_horizontal;
 };
+```
 
+### GPU Readback Pipeline
+
+The client renders to a GPU-only `VkImage`, copies it to a staging buffer, and the brain reads
+from persistently mapped CPU-visible memory. Triple-buffered to avoid stalls:
+
+```text
+GPU-only VkImage ──► vkCmdCopyImageToBuffer ──► Staging buffer (CPU-visible, persistently mapped)
+                                                        │
+                                                        ▼
+                                                  Brain reads from
+                                                  shared sensory buffer
+```
+
+The readback runs 2 frames behind rendering — at 60 FPS that is ~33 ms latency, comparable to
+biological visual processing delays. At small resolutions (64x64 = 28 KB) the bandwidth is
+trivial.
+
+### Audio Data
+
+```c
 struct TgAudioEvent
 {
     /// Bearing to the sound source relative to entity heading (radians).
@@ -351,9 +424,12 @@ struct TgAudioData
 };
 ```
 
+### Visual Fidelity
+
 The vision buffer is rendered by the same Vulkan pipeline that renders for human players — the
-only difference is that it targets an off-screen framebuffer instead of the swapchain. The AI
-sees exactly what a human would see from the same position.
+only difference is that it targets an offscreen framebuffer at the brain's requested resolution
+instead of the swapchain. The AI sees exactly what a human would see from the same position,
+just at a different pixel count.
 
 ---
 
@@ -390,11 +466,11 @@ This is essential for debugging AI behaviour and for the training pipeline.
 
 | Aspect | Stage 0 (Scalar) | Stage 2 (Visual) | Stage 3 (Full) |
 |--------|-----------------|-------------------|----------------|
-| **Sensory buffer size** | ~120 bytes | +frame buffer (~32 MB at 4K) | +full audio stream |
+| **Sensory buffer size** | ~120 bytes | +frame buffer (brain-requested resolution) | +full audio stream |
 | **Action buffer size** | 16 bytes (2 doubles) | ~32 bytes (+look direction) | ~64 bytes (+targets, emotes) |
-| **Client rendering** | None required | Off-screen Vulkan render | Full pipeline |
-| **Transfer method** | Shared memory write | Shared memory write | Shared memory write |
-| **Visual data** | `light_level` scalar only | RGBA framebuffer | RGBA + depth |
+| **Client rendering** | None required | Off-screen Vulkan render at brain's resolution | Full pipeline |
+| **Transfer method** | Shared memory write | GPU readback → shared memory | GPU readback → shared memory |
+| **Visual data** | `light_level` scalar only | RGB + depth at requested resolution | RGB + depth |
 | **Audio data** | None | Spatial audio events | Full spatial audio |
 
 The protocol starts minimal and grows only as the brain's capabilities demand. The client
