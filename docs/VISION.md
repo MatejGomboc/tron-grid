@@ -26,9 +26,13 @@ that needs consistent, high-fidelity frames streamed at low latency. This means:
 │  TronGrid Server │◄── network ──►│  TronGrid Client  │
 │  (authoritative) │               │  + AI Brain DLL   │
 └──────────────────┘               └──────────────────┘
+      separate repo                       THIS REPO
 ```
 
-Each player (human or AI) runs a TronGrid client that connects to the central server.
+**This repository is the TronGrid client** — the application that players (human or AI) run on
+their PCs. The authoritative MMORPG server is a separate project in its own repository.
+
+Each player runs a TronGrid client that connects to the central server.
 AI brains are DLL/SO plugins loaded by the client — the server sees all players identically.
 See [AI Embodiment](#ai-embodiment) below for the full architecture.
 

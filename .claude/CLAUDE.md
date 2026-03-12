@@ -9,6 +9,9 @@ AI brains are DLL/SO plugins loaded by TronGrid client instances — each AI run
 
 ## What Is This Project?
 
+**This repository is the TronGrid client** — the application that players run on their PCs.
+The authoritative MMORPG server is a separate project in its own repository.
+
 A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tracing on NVIDIA RTX 4090.
 
 ## Quick Reference
