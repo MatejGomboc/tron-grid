@@ -14,26 +14,26 @@
 namespace signals
 {
 
-    /// Thread-safe, typed message queue for inter-system communication.
-    ///
-    /// Ownership model:
-    /// - Receiver owns: std::shared_ptr<Signal<T>>
-    /// - Sender holds:  std::weak_ptr<Signal<T>>
-    ///
-    /// When the receiver is destroyed, the shared_ptr dies, the weak_ptr expires,
-    /// and the sender knows to stop — no dangling pointers, no manual unregistration.
+    //! thread-safe, typed message queue for inter-system communication.
+    //!
+    //! ownership model:
+    //! - receiver owns: std::shared_ptr<Signal<T>>
+    //! - sender holds:  std::weak_ptr<Signal<T>>
+    //!
+    //! when the receiver is destroyed, the shared_ptr dies, the weak_ptr expires,
+    //! and the sender knows to stop — no dangling pointers, no manual unregistration.
     template <typename T> struct Signal {
-        std::queue<T> pending;
-        mutable std::mutex mutex;
+        std::queue<T> pending; //!< queued messages
+        mutable std::mutex mutex; //!< protects the queue
 
-        /// Thread-safe enqueue.
+        //! thread-safe enqueue.
         void emit(const T& data)
         {
             std::lock_guard<std::mutex> lock(mutex);
             pending.push(data);
         }
 
-        /// Thread-safe dequeue. Returns true if a value was consumed.
+        //! thread-safe dequeue. returns true if a value was consumed.
         bool consume(T& out)
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -45,14 +45,14 @@ namespace signals
             return true;
         }
 
-        /// Returns true if the queue is empty.
+        //! returns true if the queue is empty.
         bool empty() const
         {
             std::lock_guard<std::mutex> lock(mutex);
             return pending.empty();
         }
 
-        /// Returns the number of pending messages.
+        //! returns the number of pending messages.
         std::size_t size() const
         {
             std::lock_guard<std::mutex> lock(mutex);

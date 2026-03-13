@@ -16,13 +16,13 @@
 namespace gpu
 {
 
-    /// Owns the Vulkan instance and (in debug) the validation debug messenger.
-    /// Destruction order is handled by vk::raii — no manual cleanup needed.
+    //! owns the Vulkan instance and (in debug) the validation debug messenger.
+    //! destruction order is handled by vk::raii — no manual cleanup needed.
     class Instance {
     public:
-        /// Create a Vulkan instance with the given surface extensions.
-        /// If enable_validation is true, enables VK_LAYER_KHRONOS_validation
-        /// and VK_EXT_debug_utils with a stderr callback.
+        //! create a Vulkan instance with the given surface extensions.
+        //! if enable_validation is true, enables VK_LAYER_KHRONOS_validation
+        //! and VK_EXT_debug_utils with a stderr callback.
         Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions);
 
         // Non-copyable, movable
@@ -31,21 +31,22 @@ namespace gpu
         Instance(Instance&&) = default;
         Instance& operator=(Instance&&) = default;
 
-        /// Raw VkInstance handle (for surface creation, etc.)
+        //! raw VkInstance handle (for surface creation, etc.)
         VkInstance handle() const
         {
             return *instance_;
         }
 
+        //! RAII instance reference.
         const vk::raii::Instance& get() const
         {
             return instance_;
         }
 
     private:
-        vk::raii::Context context_;
-        vk::raii::Instance instance_{nullptr};
-        vk::raii::DebugUtilsMessengerEXT debug_messenger_{nullptr};
+        vk::raii::Context context_; //!< Vulkan context (loader bootstrap)
+        vk::raii::Instance instance_{nullptr}; //!< Vulkan instance handle
+        vk::raii::DebugUtilsMessengerEXT debug_messenger_{nullptr}; //!< validation debug messenger (debug only)
     };
 
 } // namespace gpu

@@ -17,14 +17,14 @@
 namespace gpu
 {
 
-    /// Required device extensions.
+    //! required device extensions.
     static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     };
 
     struct QueueFamilyIndices {
-        uint32_t graphics = UINT32_MAX;
-        uint32_t present = UINT32_MAX;
+        uint32_t graphics = UINT32_MAX; //!< graphics queue family index
+        uint32_t present = UINT32_MAX; //!< present queue family index
 
         bool is_complete() const
         {
