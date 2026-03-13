@@ -6,10 +6,11 @@ Technical architecture of the TronGrid renderer.
 
 ## Overview
 
-TronGrid is a Vulkan-based engine written in C++20. All core subsystems — 3D rendering, 3D physics,
-3D spatial audio, and 3D environment sensory (energy signatures) — are written in-house with no
-third-party libraries. This enables deep optimisation: shared spatial data structures, fused GPU
-passes, and a single scene traversal serving all subsystems.
+TronGrid is a Vulkan-based engine written in C++20, targeting modern discrete GPUs with full ray
+tracing support. All core subsystems — 3D rendering, 3D physics, 3D spatial audio, and 3D
+environment sensory (energy signatures) — are written in-house with no third-party libraries. This
+enables deep optimisation: shared spatial data structures, fused GPU passes, and a single scene
+traversal serving all subsystems.
 
 External dependencies are minimal: Vulkan SDK, Volk (dynamic loader), vulkan-hpp (`vk::raii`),
 VMA (AMD Vulkan Memory Allocator), and Slang (shader compiler). Nothing else.
