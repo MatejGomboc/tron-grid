@@ -60,4 +60,4 @@ namespace signals
         }
     };
 
-} // namespace signalss
+} // namespace signals

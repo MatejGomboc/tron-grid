@@ -1,19 +1,48 @@
+/*
+ * TronGrid — entry point
+ * Copyright (C) 2026 Matej Gomboc
+ * SPDX-Licence-Identifier: GPL-3.0-or-later
+ */
+
+#include "gpu_device.hpp"
+#include "gpu_instance.hpp"
+#include "gpu_surface.hpp"
+
 #include <window/window.hpp>
+
 #include <chrono>
 #include <iostream>
 #include <thread>
+#include <vector>
 
 int main()
 {
     try {
+        // Create window
         WindowConfig config;
         config.title = "TRON Grid Renderer";
         config.width = 1280;
         config.height = 720;
 
         auto window = window::create(config);
-
         std::cout << "Window created: " << config.width << "x" << config.height << "\n";
+
+        // Vulkan initialisation
+#ifdef NDEBUG
+        bool enable_validation = false;
+#else
+        bool enable_validation = true;
+#endif
+
+        gpu::Instance instance(enable_validation, gpu::required_surface_extensions());
+
+        // Create Vulkan surface from the window's native handles
+        auto surface = gpu::create_surface(instance.get(), *window);
+
+        // Select GPU and create logical device
+        gpu::Device device(instance, *surface);
+
+        std::cout << "Vulkan ready - GPU: " << device.name() << "\n";
         std::cout << "Press ESC to close\n";
 
         // Main loop
@@ -32,13 +61,7 @@ int main()
                     break;
 
                 case WindowEvent::Type::KeyDown:
-                    std::cout << "Key down: " << ev.key.keycode;
-                    if (ev.key.repeat) {
-                        std::cout << " (repeat)";
-                    }
-                    std::cout << "\n";
-
-// ESC to close (Win32: 27, X11: 9)
+                    // ESC to close (Win32: 27, X11: 9)
 #ifdef _WIN32
                     if (ev.key.keycode == 27) {
                         window->request_close();
@@ -50,44 +73,24 @@ int main()
 #endif
                     break;
 
-                case WindowEvent::Type::KeyUp:
-                    std::cout << "Key up: " << ev.key.keycode << "\n";
-                    break;
-
-                case WindowEvent::Type::MouseMove:
-                    // Uncomment for verbose mouse tracking:
-                    // std::cout << "Mouse: " << ev.mouse_move.x << ", " << ev.mouse_move.y
-                    //           << " (delta: " << ev.mouse_move.dx << ", " << ev.mouse_move.dy << ")\n";
-                    break;
-
-                case WindowEvent::Type::MouseButtonDown:
-                    std::cout << "Mouse button down: " << (int)ev.mouse_button.button << " at (" << ev.mouse_button.x << ", " << ev.mouse_button.y << ")\n";
-                    break;
-
-                case WindowEvent::Type::MouseButtonUp:
-                    std::cout << "Mouse button up: " << (int)ev.mouse_button.button << " at (" << ev.mouse_button.x << ", " << ev.mouse_button.y << ")\n";
-                    break;
-
-                case WindowEvent::Type::Focus:
-                    std::cout << "Window focused\n";
-                    break;
-
-                case WindowEvent::Type::Blur:
-                    std::cout << "Window lost focus\n";
-                    break;
-
                 default:
                     break;
                 }
             }
 
-            // Here you would: render frame, present, etc.
+            // Here: render frame, present, etc.
             // For now, just yield to avoid busy loop
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
+        // Wait for GPU to finish before destroying resources
+        device.get().waitIdle();
+
         std::cout << "Shutting down\n";
 
+    } catch (const vk::SystemError& e) {
+        std::cerr << "Vulkan error: " << e.what() << "\n";
+        return 1;
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << "\n";
         return 1;

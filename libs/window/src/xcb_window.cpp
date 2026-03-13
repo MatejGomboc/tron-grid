@@ -223,10 +223,15 @@ void XcbWindow::handle_event(xcb_generic_event_t* event)
     }
 }
 
-VkSurfaceKHR XcbWindow::create_surface(VkInstance /*instance*/)
+void* XcbWindow::native_handle() const
 {
-    // TODO(etape-2): implement with Volk once Vulkan loading is integrated
-    throw std::runtime_error("Vulkan surface creation not yet implemented (requires Volk)");
+    // xcb_window_t is a uint32_t — cast to void* for platform-agnostic API
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(window_));
+}
+
+void* XcbWindow::native_display() const
+{
+    return static_cast<void*>(connection_);
 }
 
 #endif // __linux__

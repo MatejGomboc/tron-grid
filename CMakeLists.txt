@@ -17,6 +17,20 @@ if(NOT (WIN32 OR (UNIX AND NOT APPLE)))
     message(FATAL_ERROR "Unsupported platform. Only Windows and Linux are supported.")
 endif()
 
+# Vulkan SDK — provides Volk, vulkan-hpp, and validation layers
+find_package(Vulkan REQUIRED)
+
+# Never link Vulkan statically — Volk handles dynamic loading
+add_compile_definitions(VK_NO_PROTOTYPES)
+add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
+
+# Platform surface extensions for Vulkan
+if(WIN32)
+    add_compile_definitions(VK_USE_PLATFORM_WIN32_KHR)
+else()
+    add_compile_definitions(VK_USE_PLATFORM_XCB_KHR)
+endif()
+
 enable_testing()
 
 add_subdirectory(libs)

@@ -91,10 +91,14 @@ void Win32Window::pump_events()
     }
 }
 
-VkSurfaceKHR Win32Window::create_surface(VkInstance /*instance*/)
+void* Win32Window::native_handle() const
 {
-    // TODO(etape-2): implement with Volk once Vulkan loading is integrated
-    throw std::runtime_error("Vulkan surface creation not yet implemented (requires Volk)");
+    return static_cast<void*>(hwnd_);
+}
+
+void* Win32Window::native_display() const
+{
+    return static_cast<void*>(hinstance_);
 }
 
 LRESULT CALLBACK Win32Window::wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
