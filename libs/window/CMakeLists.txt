@@ -9,11 +9,13 @@ elseif(UNIX)
 endif()
 
 add_library(window STATIC
+    src/window.cpp
     ${PLATFORM_SOURCES}
 )
 
 target_include_directories(window
-    PUBLIC include/
+    PUBLIC  include/
+    PRIVATE src/
 )
 
 target_compile_features(window PUBLIC cxx_std_20)

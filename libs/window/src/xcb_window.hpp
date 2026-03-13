@@ -8,7 +8,7 @@
 
 #ifdef __linux__
 
-#include "window.hpp"
+#include "window/window.hpp"
 #include <xcb/xcb.h>
 
 class XcbWindow : public Window {

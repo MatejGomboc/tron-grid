@@ -6,7 +6,7 @@
 
 #ifdef _WIN32
 
-#include "window/win32_window.hpp"
+#include "win32_window.hpp"
 #include <stdexcept>
 
 bool Win32Window::class_registered_ = false;

@@ -6,7 +6,7 @@
 
 #ifdef __linux__
 
-#include "window/xcb_window.hpp"
+#include "xcb_window.hpp"
 #include <cstring>
 #include <stdexcept>
 

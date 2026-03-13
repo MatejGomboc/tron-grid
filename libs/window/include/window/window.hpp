@@ -7,6 +7,7 @@
 #pragma once
 
 #include "window_event.hpp"
+#include <memory>
 #include <queue>
 #include <string>
 #include <cstdint>
@@ -83,3 +84,10 @@ protected:
 private:
     std::queue<WindowEvent> event_queue_;
 };
+
+namespace window
+{
+    // Factory — creates the platform-appropriate window (Win32 or XCB).
+    // Consumers never need to include platform headers.
+    std::unique_ptr<Window> create(const WindowConfig& config);
+} // namespace window
