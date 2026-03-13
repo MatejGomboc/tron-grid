@@ -4,8 +4,9 @@
 
 See `docs/VISION.md` for the full architecture:
 
-TronGrid is the renderer for a digital world where AI creatures perceive and navigate through rendered images.
-The AI brain lives in a separate repository — TronGrid produces the frames that the AI sees.
+TronGrid is a single-player game engine and renderer for a digital world where an AI creature
+perceives and navigates through rendered images. One AI brain (DLL/SO plugin) can be loaded per
+instance. Multiplayer (MMO) is a future goal — see `docs/VISION.md` § Future: Multiplayer.
 
 ## What Is This Project?
 
@@ -17,8 +18,21 @@ A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tra
 |----------|----------|
 | Vision | `docs/VISION.md` |
 | Architecture | `docs/ARCHITECTURE.md` |
+| AI interface spec | `docs/AI_INTERFACE.md` |
 | Style guide | `STYLE.md` |
 | Contributing | `CONTRIBUTING.md` |
+
+## Architecture Reference (Vulkan Tutorial)
+
+When implementing engine systems, consult the official Vulkan tutorial series:
+
+| Topic | URL |
+|-------|-----|
+| Architectural patterns | <https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/02_architectural_patterns.html> |
+| Component systems | <https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/03_component_systems.html> |
+| Resource management | <https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.html> |
+| Rendering pipeline | <https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/05_render_pipeline.html> |
+| Event systems | <https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/06_event_systems.html> |
 
 ## Critical Rules
 
@@ -30,6 +44,9 @@ A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tra
 4. **NEVER use American spelling** — British English everywhere (colour, optimise, metres)
 5. **NEVER push to main** — use feature branches and PRs
 6. **NEVER over-engineer** — no abstractions until there's a concrete second use case
+7. **NEVER use non-RAII vulkan-hpp types for ownership** — use `vk::raii` namespace only
+8. **NEVER use VkRenderPass / VkFramebuffer** — use dynamic rendering (`VK_KHR_dynamic_rendering`)
+9. **NEVER call manual `vkDestroy*` / `device.destroy*`** — RAII handles all cleanup
 
 ### ALWAYS Do These
 
@@ -38,6 +55,9 @@ A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tra
 3. **Use `.clang-format`** — Allman braces for functions/namespaces, 4-space indent, 170 col
 4. **Use British spelling** in documentation, comments, and user-facing strings
 5. **Use GPL v3-or-later** licence headers
+6. **Use `vk::raii`** for all Vulkan object ownership
+7. **Use `Signal<T>`** for inter-system communication (see `src/signal.hpp`)
+8. **Use dynamic rendering** instead of traditional render passes
 
 ## Project Structure
 
@@ -96,6 +116,11 @@ cmake --build build/linux-x11-gcc --config Debug
 
 | Decision | Choice | Why |
 |----------|--------|-----|
+| Vulkan C++ bindings | vulkan-hpp `vk::raii` | RAII ownership, type safety, no manual destroy |
+| Rendering model | Dynamic rendering | No VkRenderPass/VkFramebuffer boilerplate |
+| Entity model | Component-based | Composition over inheritance |
+| Inter-system comms | `Signal<T>` queues | Thread-safe, lifetime-safe via weak_ptr |
+| Render orchestration | Rendergraph (DAG) | Automatic pass ordering and synchronisation |
 | Coordinate system | Right-handed, Y-up | Matches glTF, most tools |
 | Units | Metres | Physically-based lighting |
 | Colour space | Linear internal, sRGB output | Correct blending |

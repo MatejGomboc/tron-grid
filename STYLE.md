@@ -71,6 +71,30 @@ Key settings:
 
 C++20. No exceptions (the language feature — the word "exceptions" here refers to C++ exception handling, which we avoid).
 
+### Vulkan C++ Bindings
+
+Use **vulkan-hpp** with the `vk::raii` namespace for all Vulkan objects. RAII wrappers own their
+handles and destroy them automatically — no manual `vkDestroy*` or `device.destroy*` calls.
+
+```cpp
+// Correct — vk::raii owns the handle
+vk::raii::Image image = device.createImage(image_info);
+
+// Forbidden — non-RAII type used for ownership
+vk::Image image = device.createImage(image_info);
+```
+
+Non-RAII types (`vk::Image`, `vk::Device`, etc.) are acceptable only as transient parameters
+to API calls that don't transfer ownership.
+
+See `docs/ARCHITECTURE.md` § Vulkan Resource Management for the full ownership hierarchy.
+
+### Resource Ownership
+
+RAII everywhere. Use `vk::raii` for Vulkan objects, `std::unique_ptr` for single-owner heap
+objects, and `std::shared_ptr` / `std::weak_ptr` only for signal ownership (see
+`docs/ARCHITECTURE.md` § Signal-Based Communication).
+
 ---
 
 ## YAML (GitHub Actions)
