@@ -14,7 +14,7 @@ observed entirely through the lens of a GPU-driven renderer.
 Off-the-shelf engines (Unreal, Unity, Godot) optimise for human players. TronGrid optimises for a different consumer: an AI model
 that needs consistent, high-fidelity frames streamed at low latency. This means:
 
-- **No editor, no GUI** — the renderer is headless-capable, driven by API calls
+- **No editor, no GUI** — in bot mode, TronGrid runs as a console application with no window
 - **Deterministic rendering** — same inputs produce same outputs, essential for training
 - **Frame streaming** — frames are captured and piped to the AI brain, not displayed for a human
 - **Variable simulation speed** — pause, 1x, fast-forward, essential for training and observation
@@ -123,7 +123,7 @@ renderer, the same world. The only thing that changes is where I/O goes.
 │          │                             │                      │
 │   ┌──────┴──────┐              ┌───────┴──────┐               │
 │   │ Human Mode  │              │  Bot Mode    │               │
-│   │             │              │              │               │
+│   │             │              │  (no window) │               │
 │   │ Screen → 👁 │              │ Offscreen →  │               │
 │   │ Speakers→ 👂│              │  DLL/SO brain│               │
 │   │ Keyboard → ⌨│              │ Actions ←    │               │
@@ -131,9 +131,13 @@ renderer, the same world. The only thing that changes is where I/O goes.
 └──────────────────────────────────────────────────────────────┘
 ```
 
+TronGrid always starts as a console application. In human mode, it creates a window and
+discards the console. In bot mode, it remains a console application with no window.
+
 | Aspect | Human mode | Bot mode |
 |--------|-----------|----------|
-| **Vision** | Rendered to screen → human eyes | Rendered off-screen → bot interface → DLL/SO |
+| **Startup** | Console → creates window, discards console | Stays in console, no window |
+| **Vision** | Rendered to screen → human eyes | Rendered offscreen → bot interface → DLL/SO |
 | **Hearing** | Mixed to speakers → human ears | Spatial audio events → bot interface → DLL/SO |
 | **Input** | Keyboard/mouse → actions | DLL/SO → bot interface → actions |
 | **Launch** | `trongrid` | `trongrid --bot brain.dll` |
