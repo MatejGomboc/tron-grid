@@ -54,24 +54,24 @@ namespace test_fixture
         return failed > 0 ? 1 : 0;
     }
 
-    [[noreturn]] void check_failed(std::string_view expr, std::string_view file, int line)
+    [[noreturn]] void check_failed(std::string_view expr, std::source_location loc)
     {
         std::string msg;
-        msg += file;
+        msg += loc.file_name();
         msg += ":";
-        msg += std::to_string(line);
+        msg += std::to_string(loc.line());
         msg += ": check failed: ";
         msg += expr;
         throw CheckFailure(msg);
     }
 
-    [[noreturn]] void check_equal_failed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val, std::string_view file,
-        int line)
+    [[noreturn]] void check_equal_failed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val,
+        std::source_location loc)
     {
         std::string msg;
-        msg += file;
+        msg += loc.file_name();
         msg += ":";
-        msg += std::to_string(line);
+        msg += std::to_string(loc.line());
         msg += ": check equal failed: ";
         msg += lhs_expr;
         msg += " == ";

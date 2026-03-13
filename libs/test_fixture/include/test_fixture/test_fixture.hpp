@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -31,55 +32,77 @@ namespace test_fixture
     int run_all();
 
     /// Reports a check failure. Throws to abort the current test.
-    [[noreturn]] void check_failed(std::string_view expr, std::string_view file, int line);
+    [[noreturn]] void check_failed(std::string_view expr, std::source_location loc = std::source_location::current());
 
     /// Reports an equality check failure. Throws to abort the current test.
-    [[noreturn]] void check_equal_failed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val, std::string_view file,
-        int line);
+    [[noreturn]] void check_equal_failed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val,
+        std::source_location loc = std::source_location::current());
+
+    // ---------------------------------------------------------------------------
+    // Template helpers — real logic lives here, not in macros
+    // ---------------------------------------------------------------------------
+
+    /// Converts a value to a string for diagnostics.
+    template <typename T> std::string to_string(const T& v)
+    {
+        if constexpr (std::is_convertible_v<T, std::string>) {
+            return std::string(v);
+        } else if constexpr (std::is_arithmetic_v<std::decay_t<T>>) {
+            return std::to_string(v);
+        } else {
+            return "<?>";
+        }
+    }
+
+    /// Checks that two values are equal; reports failure with stringified expressions and values.
+    template <typename A, typename B>
+    void check_equal(const A& lhs, const B& rhs, std::string_view lhs_expr, std::string_view rhs_expr, std::source_location loc = std::source_location::current())
+    {
+        if (!(lhs == rhs)) {
+            check_equal_failed(lhs_expr, rhs_expr, to_string(lhs), to_string(rhs), loc);
+        }
+    }
+
+    /// Checks that a callable throws any exception.
+    template <typename Fn> void check_throws(Fn&& fn, std::string_view expr, std::source_location loc = std::source_location::current())
+    {
+        bool threw = false;
+        try {
+            fn();
+        } catch (...) {
+            threw = true;
+        }
+        if (!threw) {
+            std::string msg(expr);
+            msg += " did not throw";
+            check_failed(msg, loc);
+        }
+    }
 
 } // namespace test_fixture
 
 // ---------------------------------------------------------------------------
-// Macros
+// Thin macros — only used for expression stringification (#expr)
 // ---------------------------------------------------------------------------
 
 /// Fails with file, line, and stringified expression if `expr` is false.
-#define TEST_CHECK(expr)                                             \
-    do {                                                             \
-        if (!(expr))                                                 \
-            ::test_fixture::check_failed(#expr, __FILE__, __LINE__); \
+#define TEST_CHECK(expr)                         \
+    do {                                         \
+        if (!(expr)) {                           \
+            ::test_fixture::check_failed(#expr); \
+        }                                        \
     } while (false)
 
 /// Fails showing both values if `a != b`.
-#define TEST_CHECK_EQUAL(a, b)                                                                            \
-    do {                                                                                                  \
-        const auto& lhs_ = (a);                                                                           \
-        const auto& rhs_ = (b);                                                                           \
-        if (!(lhs_ == rhs_)) {                                                                            \
-            auto to_str_ = [](const auto& v) -> std::string {                                             \
-                if constexpr (std::is_convertible_v<decltype(v), std::string>)                            \
-                    return std::string(v);                                                                \
-                else if constexpr (std::is_arithmetic_v<std::decay_t<decltype(v)>>)                       \
-                    return std::to_string(v);                                                             \
-                else                                                                                      \
-                    return "<?>";                                                                         \
-            };                                                                                            \
-            ::test_fixture::check_equal_failed(#a, #b, to_str_(lhs_), to_str_(rhs_), __FILE__, __LINE__); \
-        }                                                                                                 \
-    } while (false)
+#define TEST_CHECK_EQUAL(a, b) ::test_fixture::check_equal((a), (b), #a, #b)
 
 /// Fails if `expr` does not throw.
-#define TEST_CHECK_THROWS(expr)                                                       \
-    do {                                                                              \
-        bool threw_ = false;                                                          \
-        try {                                                                         \
-            (void)(expr);                                                             \
-        } catch (...) {                                                               \
-            threw_ = true;                                                            \
-        }                                                                             \
-        if (!threw_)                                                                  \
-            ::test_fixture::check_failed(#expr " did not throw", __FILE__, __LINE__); \
-    } while (false)
+#define TEST_CHECK_THROWS(expr)   \
+    ::test_fixture::check_throws( \
+        [&] {                     \
+            (void)(expr);         \
+        },                        \
+        #expr)
 
 /// Defines and auto-registers a test case.
 #define TEST_CASE(test_name)                                          \
