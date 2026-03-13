@@ -34,7 +34,7 @@ namespace signals
         }
 
         //! thread-safe dequeue. returns true if a value was consumed.
-        bool consume(T& out)
+        [[nodiscard]] bool consume(T& out)
         {
             std::lock_guard<std::mutex> lock(mutex);
             if (pending.empty()) {
@@ -46,14 +46,14 @@ namespace signals
         }
 
         //! returns true if the queue is empty.
-        bool empty() const
+        [[nodiscard]] bool empty() const
         {
             std::lock_guard<std::mutex> lock(mutex);
             return pending.empty();
         }
 
         //! returns the number of pending messages.
-        std::size_t size() const
+        [[nodiscard]] std::size_t size() const
         {
             std::lock_guard<std::mutex> lock(mutex);
             return pending.size();

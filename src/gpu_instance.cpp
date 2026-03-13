@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <iostream>
+#include <ranges>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 // Storage for the vulkan-hpp dynamic dispatcher (exactly one translation unit)
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -33,15 +35,15 @@ namespace gpu
 
     static bool is_layer_available(const std::vector<vk::LayerProperties>& available, const char* name)
     {
-        return std::any_of(available.begin(), available.end(), [name](const vk::LayerProperties& layer) {
-            return std::string(layer.layerName.data()) == name;
+        return std::ranges::any_of(available, [name](const vk::LayerProperties& layer) {
+            return std::string_view(layer.layerName.data()) == name;
         });
     }
 
     static bool is_extension_available(const std::vector<vk::ExtensionProperties>& available, const char* name)
     {
-        return std::any_of(available.begin(), available.end(), [name](const vk::ExtensionProperties& ext) {
-            return std::string(ext.extensionName.data()) == name;
+        return std::ranges::any_of(available, [name](const vk::ExtensionProperties& ext) {
+            return std::string_view(ext.extensionName.data()) == name;
         });
     }
 

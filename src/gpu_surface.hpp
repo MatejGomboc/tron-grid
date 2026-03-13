@@ -18,9 +18,9 @@ namespace gpu
 {
 
     //! create a vk::raii::SurfaceKHR from the platform-native window handles.
-    vk::raii::SurfaceKHR create_surface(const vk::raii::Instance& instance, const Window& window);
+    [[nodiscard]] vk::raii::SurfaceKHR create_surface(const vk::raii::Instance& instance, const Window& window);
 
     //! required surface extensions for the current platform.
-    std::vector<const char*> required_surface_extensions();
+    [[nodiscard]] std::vector<const char*> required_surface_extensions();
 
 } // namespace gpu

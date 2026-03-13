@@ -32,13 +32,13 @@ namespace gpu
         Instance& operator=(Instance&&) = default;
 
         //! raw VkInstance handle (for surface creation, etc.)
-        VkInstance handle() const
+        [[nodiscard]] VkInstance handle() const
         {
             return *instance_;
         }
 
         //! RAII instance reference.
-        const vk::raii::Instance& get() const
+        [[nodiscard]] const vk::raii::Instance& get() const
         {
             return instance_;
         }

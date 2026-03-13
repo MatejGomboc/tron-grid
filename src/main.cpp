@@ -20,22 +20,24 @@ int main()
 {
     try {
         // Create window
-        WindowConfig config;
-        config.title = "TRON Grid Renderer";
-        config.width = 1280;
-        config.height = 720;
+        WindowConfig config{
+            .title = "TRON Grid Renderer",
+            .width = 1280,
+            .height = 720,
+        };
 
         std::unique_ptr<Window> window = window::create(config);
         std::cout << "Window created: " << config.width << "x" << config.height << "\n";
 
         // Vulkan initialisation
+        constexpr bool ENABLE_VALIDATION =
 #ifdef NDEBUG
-        bool enable_validation = false;
+            false;
 #else
-        bool enable_validation = true;
+            true;
 #endif
 
-        gpu::Instance instance(enable_validation, gpu::required_surface_extensions());
+        gpu::Instance instance(ENABLE_VALIDATION, gpu::required_surface_extensions());
 
         // Create Vulkan surface from the window's native handles
         vk::raii::SurfaceKHR surface = gpu::create_surface(instance.get(), *window);
@@ -51,6 +53,11 @@ int main()
             window->pump_events();
 
             WindowEvent ev;
+#ifdef _WIN32
+            constexpr uint32_t ESC_KEYCODE = 27; // Win32 virtual key code
+#else
+            constexpr uint32_t ESC_KEYCODE = 9; // X11 keycode
+#endif
             while (window->poll_event(ev)) {
                 switch (ev.type) {
                 case WindowEvent::Type::Close:
@@ -62,16 +69,9 @@ int main()
                     break;
 
                 case WindowEvent::Type::KeyDown:
-                    // ESC to close (Win32: 27, X11: 9)
-#ifdef _WIN32
-                    if (ev.key.keycode == 27) {
+                    if (ev.key.keycode == ESC_KEYCODE) {
                         window->request_close();
                     }
-#else
-                    if (ev.key.keycode == 9) {
-                        window->request_close();
-                    }
-#endif
                     break;
 
                 default:

@@ -33,37 +33,37 @@ namespace gpu
         Device& operator=(Device&&) = default;
 
         //! RAII device reference.
-        const vk::raii::Device& get() const
+        [[nodiscard]] const vk::raii::Device& get() const
         {
             return device_;
         }
 
         //! graphics queue handle.
-        const vk::raii::Queue& graphics_queue() const
+        [[nodiscard]] const vk::raii::Queue& graphics_queue() const
         {
             return graphics_queue_;
         }
 
         //! present queue handle.
-        const vk::raii::Queue& present_queue() const
+        [[nodiscard]] const vk::raii::Queue& present_queue() const
         {
             return present_queue_;
         }
 
         //! graphics queue family index.
-        uint32_t graphics_family_index() const
+        [[nodiscard]] uint32_t graphics_family_index() const
         {
             return graphics_family_index_;
         }
 
         //! present queue family index.
-        uint32_t present_family_index() const
+        [[nodiscard]] uint32_t present_family_index() const
         {
             return present_family_index_;
         }
 
         //! human-readable GPU name.
-        const std::string& name() const
+        [[nodiscard]] const std::string& name() const
         {
             return device_name_;
         }

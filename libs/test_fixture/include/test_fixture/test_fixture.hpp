@@ -29,7 +29,7 @@ namespace test_fixture
     void register_test(std::string_view name, std::function<void()> fn);
 
     //! runs all registered tests. returns 0 if all pass, 1 if any fail.
-    int run_all();
+    [[nodiscard]] int run_all();
 
     //! reports a check failure. throws to abort the current test.
     [[noreturn]] void check_failed(std::string_view expr, std::source_location loc = std::source_location::current());

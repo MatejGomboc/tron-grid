@@ -9,9 +9,11 @@
 
 #include <algorithm>
 #include <iostream>
+#include <ranges>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace gpu
@@ -26,7 +28,7 @@ namespace gpu
         uint32_t graphics = UINT32_MAX; //!< graphics queue family index
         uint32_t present = UINT32_MAX; //!< present queue family index
 
-        bool is_complete() const
+        [[nodiscard]] bool is_complete() const
         {
             return graphics != UINT32_MAX && present != UINT32_MAX;
         }
@@ -37,7 +39,7 @@ namespace gpu
         QueueFamilyIndices indices;
         std::vector<vk::QueueFamilyProperties> families = device.getQueueFamilyProperties();
 
-        for (uint32_t i = 0; i < families.size(); ++i) {
+        for (uint32_t i = 0; i < static_cast<uint32_t>(families.size()); ++i) {
             // Graphics support
             if (families[i].queueFlags & vk::QueueFlagBits::eGraphics) {
                 indices.graphics = i;
@@ -63,8 +65,8 @@ namespace gpu
         std::vector<vk::ExtensionProperties> available = device.enumerateDeviceExtensionProperties();
 
         for (const char* required : REQUIRED_DEVICE_EXTENSIONS) {
-            bool found = std::any_of(available.begin(), available.end(), [required](const vk::ExtensionProperties& ext) {
-                return std::string(ext.extensionName.data()) == required;
+            bool found = std::ranges::any_of(available, [required](const vk::ExtensionProperties& ext) {
+                return std::string_view(ext.extensionName.data()) == required;
             });
             if (!found) {
                 return false;
@@ -139,7 +141,7 @@ namespace gpu
         present_family_index_ = indices.present;
 
         // Step 4: Create logical device
-        float queue_priority = 1.0f;
+        constexpr float QUEUE_PRIORITY = 1.0f;
         std::vector<vk::DeviceQueueCreateInfo> queue_create_infos;
 
         // Deduplicate queue family indices
@@ -148,7 +150,7 @@ namespace gpu
             vk::DeviceQueueCreateInfo queue_info{};
             queue_info.queueFamilyIndex = family;
             queue_info.queueCount = 1;
-            queue_info.pQueuePriorities = &queue_priority;
+            queue_info.pQueuePriorities = &QUEUE_PRIORITY;
             queue_create_infos.push_back(queue_info);
         }
 
