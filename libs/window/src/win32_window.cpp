@@ -1,7 +1,12 @@
+/*
+ * TronGrid — Win32 window implementation
+ * Copyright (C) 2026 Matej Gomboc
+ * SPDX-Licence-Identifier: GPL-3.0-or-later
+ */
+
 #ifdef _WIN32
 
-#include "win32_window.hpp"
-#include <volk/volk.h>
+#include "window/win32_window.hpp"
 #include <stdexcept>
 
 bool Win32Window::class_registered_ = false;
@@ -86,20 +91,10 @@ void Win32Window::pump_events()
     }
 }
 
-VkSurfaceKHR Win32Window::create_surface(VkInstance instance)
+VkSurfaceKHR Win32Window::create_surface(VkInstance /*instance*/)
 {
-    VkWin32SurfaceCreateInfoKHR create_info = {};
-    create_info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-    create_info.hinstance = hinstance_;
-    create_info.hwnd = hwnd_;
-
-    VkSurfaceKHR surface;
-    VkResult result = vkCreateWin32SurfaceKHR(instance, &create_info, nullptr, &surface);
-    if (result != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create Vulkan Win32 surface");
-    }
-
-    return surface;
+    // TODO(etape-2): implement with Volk once Vulkan loading is integrated
+    throw std::runtime_error("Vulkan surface creation not yet implemented (requires Volk)");
 }
 
 LRESULT CALLBACK Win32Window::wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -116,13 +111,13 @@ LRESULT CALLBACK Win32Window::wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam
     }
 
     if (self) {
-        return self->wnd_proc(msg, wparam, lparam);
+        return self->wnd_proc(hwnd, msg, wparam, lparam);
     }
 
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-LRESULT Win32Window::wnd_proc(UINT msg, WPARAM wparam, LPARAM lparam)
+LRESULT Win32Window::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg) {
     case WM_CLOSE: {
@@ -216,7 +211,7 @@ LRESULT Win32Window::wnd_proc(UINT msg, WPARAM wparam, LPARAM lparam)
     }
     }
 
-    return DefWindowProcW(hwnd_, msg, wparam, lparam);
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 #endif // _WIN32

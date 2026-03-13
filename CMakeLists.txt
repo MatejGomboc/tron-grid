@@ -8,8 +8,16 @@ project(TronGrid
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Enable exception handling for MSVC (suppresses C4530 warning)
+if(MSVC)
+    add_compile_options(/EHsc)
+endif()
+
 if(NOT (WIN32 OR (UNIX AND NOT APPLE)))
     message(FATAL_ERROR "Unsupported platform. Only Windows and Linux are supported.")
 endif()
 
+enable_testing()
+
+add_subdirectory(libs)
 add_subdirectory(src)
