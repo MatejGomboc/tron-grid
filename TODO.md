@@ -16,198 +16,167 @@ Completed 2026-03-13. PR #18 merged.
 
 ---
 
-## Current Etape: 2 — Vulkan Instance, Validation, and Device
+## Etape 2 — Vulkan Instance, Validation, and Device ✅
 
-**Branch:** create from `main`, name `feat/vulkan-init`
+Completed 2026-03-13. PR #20 merged.
 
-**Goal:** Integrate Volk for dynamic Vulkan loading, create a Vulkan instance with validation
-layers, set up a debug messenger, query physical devices, select the best GPU, create a logical
-device with graphics + present queues, and wire up Vulkan surface creation in the window library.
-After this etape, the application prints the selected GPU name and validation layer messages
-appear in Debug builds.
+- Volk from Vulkan SDK for dynamic loading (`src/volk.cpp`)
+- `gpu::Instance` with validation layers + debug messenger (debug builds)
+- `gpu::Device` with GPU scoring (discrete preferred), graphics + present queues, dynamic rendering
+- `gpu::create_surface` for platform surface (Win32/XCB) via vulkan-hpp
+- Window library made Vulkan-agnostic (`native_handle()` / `native_display()`)
+- C++20 best practices: `[[nodiscard]]`, `constexpr`, `std::ranges`, designated initialisers
+- `//!` Qt-style doxygen comments across entire codebase
 
-**Read before starting:** `docs/ARCHITECTURE.md`, `STYLE.md`, `.clang-format`,
-`CLAUDE.md` § Critical Rules (especially: `VK_NO_PROTOTYPES`, `vk::raii`, no manual destroy,
-dynamic rendering extensions)
+---
 
-**Reference:** User's prior Vulkan project for the logical flow:
-`github.com/MatejGomboc/Vulkan3DSimulator/blob/main/renderer.cpp`
+## Current Etape: 3 — Swapchain, Command Buffers, and Clear Screen
 
-### Dependencies to fetch
+**Branch:** create from `main`, name `feat/swapchain`
 
-| Library | Purpose | Integration |
-|---------|---------|-------------|
-| Volk | Dynamic Vulkan function loading | `add_subdirectory`, define `VK_NO_PROTOTYPES` globally |
-| vulkan-hpp | C++ Vulkan bindings with `vk::raii` | Header-only, from Vulkan SDK or fetched |
+**Goal:** Create a swapchain with MAILBOX present mode, set up command buffers and frame
+synchronisation, and run a basic render loop that clears the screen to a colour. After this
+etape, the window shows a solid colour (not black) and handles resize correctly.
+
+**Note:** VMA (Vulkan Memory Allocator) is **deferred to Etape 4** — swapchain images are
+managed by the presentation engine and require no manual memory allocation.
+
+**Read before starting:** `docs/ARCHITECTURE.md` § Frame Synchronisation, § Dynamic Rendering,
+and § Key Design Decisions (MAILBOX present mode, sRGB output, 16-bit float HDR)
 
 ### Steps (do in order)
 
-#### 1. Integrate Volk
+#### 1. `gpu::Swapchain` — swapchain + image views
 
-- Fetch Volk via CMake `FetchContent` (or git submodule) into a known location
-- Create `libs/volk/CMakeLists.txt` or add at root level — single `.cpp` with
-  `#define VOLK_IMPLEMENTATION` + `#include <volk/volk.h>`
-- Define `VK_NO_PROTOTYPES` as a **global** compile definition in root `CMakeLists.txt`
-- Verify: project still compiles (Volk linked but not yet called)
-
-#### 2. Integrate vulkan-hpp
-
-- Fetch `vulkan-hpp` headers (from Vulkan SDK or `FetchContent`)
-- Ensure `<vulkan/vulkan_raii.hpp>` is available as an include path
-- Configure for dispatcher mode compatible with Volk (no static dispatcher — Volk provides
-  the function pointers)
-
-#### 3. Create `libs/gpu/` — the Vulkan initialisation brick
-
-Create a new LEGO brick that owns the Vulkan instance and device.
-
-```text
-libs/gpu/
-├── CMakeLists.txt                  # add_library(gpu STATIC ...)
-├── include/gpu/
-│   ├── instance.hpp                # gpu::Instance — Vulkan instance + debug messenger
-│   └── device.hpp                  # gpu::Device — physical + logical device
-├── src/
-│   ├── instance.cpp                # volkInitialize, instance creation, debug messenger
-│   └── device.cpp                  # physical device selection, logical device creation
-└── tests/
-    ├── CMakeLists.txt
-    └── gpu_tests.cpp               # instance creation, device enumeration (headless)
-```
-
-Namespace: `gpu::`. Links: `volk`, `vulkan-hpp`.
-
-#### 4. `gpu::Instance` — Vulkan instance + debug messenger
+Create `src/gpu_swapchain.hpp` and `src/gpu_swapchain.cpp`.
 
 ```cpp
 namespace gpu {
-class Instance {
-    vk::raii::Context context_;          // Vulkan function loader
-    vk::raii::Instance instance_;        // Vulkan instance (RAII)
-    vk::raii::DebugUtilsMessengerEXT debug_messenger_;  // Debug only
+class Swapchain {
+    vk::raii::SwapchainKHR swapchain_;
+    std::vector<vk::Image> images_;           // non-owning (managed by swapchain)
+    std::vector<vk::raii::ImageView> views_;  // RAII image views
+    vk::SurfaceFormatKHR format_;
+    vk::Extent2D extent_;
+    vk::PresentModeKHR present_mode_;
 };
 }
 ```
 
 Init sequence:
 
-1. `volkInitialize()` — find Vulkan loader on the system
-2. Check Vulkan version ≥ 1.3
-3. Enumerate and verify required instance extensions:
-   - `VK_KHR_surface`
-   - `VK_KHR_win32_surface` (Windows) or `VK_KHR_xcb_surface` (Linux)
-   - `VK_EXT_debug_utils` (Debug builds only)
-4. Enumerate and verify validation layer: `VK_LAYER_KHRONOS_validation` (Debug only)
-5. Create `vk::raii::Instance` with app info (API version 1.3, engine name "TronGrid")
-6. `volkLoadInstance(instance)` — load instance-level function pointers
-7. Create `vk::raii::DebugUtilsMessengerEXT` with callback that prints to `std::cerr`
-   (severity: warning + error; types: general + validation + performance)
+1. Query surface capabilities via `physical_device.getSurfaceCapabilitiesKHR(surface)`
+2. Choose surface format:
+   - Prefer `B8G8R8A8_SRGB` with `VK_COLOR_SPACE_SRGB_NONLINEAR_KHR`
+   - Fall back to the first available format
+3. Choose present mode:
+   - Prefer `MAILBOX` (low latency, no tearing)
+   - Fall back to `FIFO` (always available, guaranteed by spec)
+4. Choose extent:
+   - Use `currentExtent` from surface capabilities if not `0xFFFFFFFF`
+   - Otherwise use the window dimensions, clamped to `minImageExtent` / `maxImageExtent`
+5. Choose image count:
+   - `minImageCount + 1` (for triple buffering headroom)
+   - Clamp to `maxImageCount` if non-zero
+6. Create `vk::raii::SwapchainKHR`:
+   - `imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT`
+   - If graphics and present families differ: `imageSharingMode = CONCURRENT`
+   - Otherwise: `imageSharingMode = EXCLUSIVE`
+   - `preTransform = currentTransform`
+   - `compositeAlpha = OPAQUE`
+   - `clipped = true`
+7. Retrieve swapchain images via `swapchain.getImages()`
+8. Create one `vk::raii::ImageView` per image:
+   - `viewType = 2D`, `format = chosen surface format`
+   - `subresourceRange = { COLOUR, mipLevel 0, 1 level, arrayLayer 0, 1 layer }`
 
-Use CMake generator expression for Debug detection — no `#ifdef DEBUG` in source code.
-Instead, pass a `bool enable_validation` parameter to the constructor, and set it from
-`CMakeLists.txt` or from `main()` based on build type.
+Provide a `recreate(uint32_t width, uint32_t height)` method that destroys and rebuilds
+the swapchain + image views (reusing the old swapchain handle for smoother transitions).
 
-#### 5. `gpu::Device` — physical + logical device
+#### 2. Frame synchronisation objects
 
-```cpp
-namespace gpu {
-class Device {
-    vk::raii::PhysicalDevice physical_device_;
-    vk::raii::Device device_;            // Logical device (RAII)
-    vk::raii::Queue graphics_queue_;
-    vk::raii::Queue present_queue_;
-    uint32_t graphics_family_index_;
-    uint32_t present_family_index_;
-};
-}
+Add frame-in-flight management to `src/main.cpp` or a small `gpu::FrameSync` helper struct.
+
+For double buffering (`MAX_FRAMES_IN_FLIGHT = 2`):
+
+- `std::vector<vk::raii::Semaphore> image_available_semaphores_` — one per frame in flight
+- `std::vector<vk::raii::Semaphore> render_finished_semaphores_` — one per frame in flight
+- `std::vector<vk::raii::Fence> in_flight_fences_` — one per frame in flight (start signalled)
+- `uint32_t current_frame_ = 0` — index cycling `0..MAX_FRAMES_IN_FLIGHT-1`
+
+#### 3. Command pool + command buffers
+
+Create `vk::raii::CommandPool` for the graphics queue family, then allocate one
+`vk::raii::CommandBuffer` per frame in flight.
+
+#### 4. Basic render loop — clear screen to a colour
+
+The main loop becomes:
+
+```text
+1. Wait for in_flight_fence[current_frame]
+2. Acquire next swapchain image (image_available_semaphore[current_frame])
+   - If OUT_OF_DATE: recreate swapchain, continue
+3. Reset in_flight_fence[current_frame]
+4. Reset + begin command buffer[current_frame]
+5. Transition swapchain image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (pipeline barrier)
+6. vkCmdBeginRendering with clear colour (e.g., dark teal: 0.0, 0.1, 0.15, 1.0)
+7. vkCmdEndRendering
+8. Transition swapchain image: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC (pipeline barrier)
+9. End + submit command buffer (wait: image_available, signal: render_finished)
+10. Present (wait: render_finished)
+    - If OUT_OF_DATE or SUBOPTIMAL: recreate swapchain
+11. current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT
 ```
 
-Physical device selection:
+Use `vkCmdBeginRendering` / `vkCmdEndRendering` (dynamic rendering) — **no VkRenderPass**.
+Use `vkCmdPipelineBarrier2` for image layout transitions.
 
-1. Enumerate physical devices via `instance.enumeratePhysicalDevices()`
-2. For each device, find queue families supporting graphics (`VK_QUEUE_GRAPHICS_BIT`)
-   and present (`vkGetPhysicalDeviceSurfaceSupportKHR`)
-3. Prefer a single queue family that supports both (better performance)
-4. Prefer discrete GPU over integrated
-5. Reject devices that lack required extensions:
-   - `VK_KHR_swapchain`
-   - `VK_KHR_dynamic_rendering` (or Vulkan 1.3 core)
-6. Print selected device name to stdout
+#### 5. Handle window resize
 
-Logical device creation:
+- On `WindowEvent::Type::Resize`: set a `framebuffer_resized` flag
+- After present (or on OUT_OF_DATE / SUBOPTIMAL): call `swapchain.recreate(new_width, new_height)`
+- Skip frames while minimised (extent 0×0)
 
-1. Create queue create infos (graphics + present — may be same family)
-2. Enable required device extensions: `VK_KHR_swapchain`, `VK_KHR_dynamic_rendering`
-3. Enable `VkPhysicalDeviceDynamicRenderingFeatures` in the pNext chain
-4. Create `vk::raii::Device`
-5. `volkLoadDevice(device)` — load device-level function pointers
-6. Retrieve `vk::raii::Queue` handles for graphics and present
+#### 6. Update `src/CMakeLists.txt`
 
-#### 6. Wire up Vulkan surface creation in `libs/window/`
+Add `gpu_swapchain.cpp` to the source list.
 
-- Un-stub `Window::create_surface()` — now that Volk is available
-- `win32_window.cpp`: call `vkCreateWin32SurfaceKHR` via Volk
-- `xcb_window.cpp`: call `vkCreateXcbSurfaceKHR` via Volk
-- The window library now links Volk (for the surface creation functions)
-- Return a `VkSurfaceKHR` that the caller wraps in `vk::raii::SurfaceKHR`
-
-#### 7. Update `src/main.cpp`
-
-Wire everything together:
-
-```cpp
-auto window = window::create(config);
-gpu::Instance instance(enable_validation, window_extensions);
-auto surface = window->create_surface(*instance);  // VkSurfaceKHR
-gpu::Device device(instance, surface);
-std::cout << "GPU: " << device.name() << "\n";
-// ... existing event loop ...
-```
-
-The exact API shape may vary — keep it clean and minimal.
-
-#### 8. Run clang-format, build, test, commit, and PR
+#### 7. Run clang-format, build, test, commit, and PR
 
 - `clang-format -i` on all changed C++ files
 - `cmake --preset windows-msvc && cmake --build build/windows-msvc --config Debug`
-- `ctest --preset windows-msvc-debug` — all tests pass (including new gpu_tests)
-- Branch: `feat/vulkan-init`
+- `ctest --test-dir build/windows-msvc -C Debug` — all existing tests still pass
+- Manual verification: window opens with a solid colour, handles resize, ESC closes
+- Branch: `feat/swapchain`
 - PR against `main`
 
 ### Acceptance Criteria
 
-- [ ] `VK_NO_PROTOTYPES` defined globally
-- [ ] Volk loads Vulkan dynamically — no static Vulkan linking
-- [ ] `vk::raii` used for all Vulkan objects — no manual `vkDestroy*`
-- [ ] Vulkan instance created with API version 1.3
-- [ ] Validation layers active in Debug builds, silent in Release
-- [ ] Debug messenger prints validation warnings/errors to stderr
-- [ ] Physical device selected (prefer discrete GPU)
-- [ ] Logical device created with graphics + present queues
-- [ ] `VK_KHR_dynamic_rendering` enabled on the device
-- [ ] Vulkan surface created from the window (Win32 / XCB)
-- [ ] Selected GPU name printed to stdout
-- [ ] `gpu_tests` pass (at minimum: instance creation in headless mode)
+- [ ] Swapchain created with MAILBOX present mode (FIFO fallback)
+- [ ] Surface format: sRGB preferred (B8G8R8A8_SRGB)
+- [ ] Image views created for all swapchain images
+- [ ] Command pool + per-frame command buffers allocated
+- [ ] Frame sync: semaphores + fences for double-buffered rendering
+- [ ] Render loop clears screen to a visible colour (not black)
+- [ ] Dynamic rendering used (`vkCmdBeginRendering`) — no VkRenderPass
+- [ ] Image layout transitions via pipeline barriers
+- [ ] Swapchain recreated on window resize and OUT_OF_DATE
+- [ ] Minimised window handled gracefully (no crash, no busy loop)
+- [ ] `vk::raii` for all new Vulkan objects — no manual destroy
+- [ ] `[[nodiscard]]`, `constexpr`, explicit types, `//!` doxygen
 - [ ] Code follows `.clang-format` and `STYLE.md`
 - [ ] British spelling in all comments and documentation
-- [ ] No `#ifdef DEBUG` in source — use runtime `enable_validation` flag
+- [ ] All existing tests still pass
 
 ---
 
-## Phase 0 — Remaining Etapes (after Etape 2)
-
-### Etape 3 — Swapchain
-
-- VMA integration for memory allocation
-- Swapchain setup (MAILBOX present mode, surface format selection)
-- Swapchain image views
-- Swapchain recreation on window resize
+## Phase 0 — Remaining Etapes (after Etape 3)
 
 ### Etape 4 — Triangle on screen
 
+- VMA integration for vertex buffer memory allocation
 - Graphics pipeline with `VkPipelineRenderingCreateInfo` (dynamic rendering, no VkRenderPass)
-- Command buffer recording with `vkCmdBeginRendering` / `vkCmdEndRendering`
-- Frame synchronisation (fences + semaphores, double/triple buffering)
 - Hardcoded colourful triangle (vertex + fragment shaders via Slang)
 - Triangle on screen — Phase 0 complete
 
