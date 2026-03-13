@@ -1,12 +1,32 @@
 # TronGrid
 
-A modern Vulkan-based rendering engine optimised for the Tron aesthetic — clean geometry, emissive materials, reflective surfaces, neon glow.
+A single-player Vulkan game engine and renderer for a digital world where AI creatures perceive and
+navigate through rendered images. One AI brain (DLL/SO plugin) can be loaded per instance.
 
-Designed as the visual foundation for a digital world where AI creatures perceive and navigate through rendered images rather than direct scene graph access.
+Built from the ground up in C++20 with the Tron aesthetic — clean geometry, emissive materials,
+reflective surfaces, neon glow. All core subsystems (3D rendering, physics, spatial audio, environment
+sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-Early development. Currently building Vulkan infrastructure (Phase 0).
+Early development — currently building Vulkan infrastructure (Phase 0: triangle on screen).
+
+See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
+
+---
+
+## How It Works
+
+TronGrid always starts as a console application. Two launch-time modes:
+
+| Mode | Launch | Behaviour |
+|------|--------|-----------|
+| **Human** | `trongrid` | Creates a window, renders to screen, audio to speakers, keyboard/mouse input |
+| **Bot** | `trongrid --bot brain.dll` | Stays in console, renders offscreen, routes senses through shared memory to the AI brain |
+
+The AI brain is a DLL (Windows) or SO (Linux) — an independent project with its own architecture.
+TronGrid provides a standalone C-linkage interface header; the brain's internals are none of
+TronGrid's business. See [docs/AI_INTERFACE.md](docs/AI_INTERFACE.md) for the full specification.
 
 ---
 
@@ -31,7 +51,7 @@ Early development. Currently building Vulkan infrastructure (Phase 0).
 | CPU | Intel Core i9-14900HX (24 cores / 32 threads) |
 | GPU | NVIDIA GeForce RTX 4090 Laptop GPU (Ada Lovelace) |
 | VRAM | 16 GB GDDR6 |
-| RAM | 64 GB DDR5-5600 (2 × 32 GB) |
+| RAM | 64 GB DDR5-5600 (2 x 32 GB) |
 | Storage | ~10 GB NVMe |
 | OS | Windows 11 / Ubuntu 24.04 LTS |
 | Vulkan | 1.4.335.0+ |
@@ -83,45 +103,12 @@ cmake --build build/linux-x11-clang --config Debug
 
 ## Design Principles
 
-1. **GPU-Driven** — Minimal CPU involvement in rendering decisions
-2. **Bindless** — No per-draw descriptor rebinding
-3. **Procedural** — Geometry defined mathematically, tessellated on GPU
-4. **Physically-Based** — Ray traced lighting, no manual tricks
-5. **Modular** — Clean separation of concerns for maintainability
-6. **Incremental** — Every phase produces visible results
-
-## Architecture
-
-```text
-APPLICATION LAYER
-  Scene Graph, Entity System, Camera, Input, AI Interface
-                              |
-                              v
-SCENE REPRESENTATION
-  Procedural Defs (NURBS, CSG, SDF)  |  Materials (PBR)  |  Lights (point, line, area)
-                              |
-                              v
-GEOMETRY PROCESSING  (Compute Shaders)
-  Tessellation --> Meshlet Builder --> GPU Scene Database
-                              |
-                   +----------+----------+
-                   v                     v
-        ACCELERATION STRUCTURES    VISIBILITY PASS
-          BLAS/TLAS (async)       Task/Mesh/Fragment Shaders
-                   |                     |
-                   +----------+----------+
-                              v
-                    RAY TRACING PASS
-          Shadows, Reflections, Emissive, Ambient GI
-                              |
-                              v
-                     POST PROCESSING
-           Bloom, Tonemapping, Chromatic Aberration
-                              |
-                              v
-                       PRESENTATION
-              Swapchain acquire --> Blit --> Present
-```
+1. **Don't over-engineer** — no abstractions until there's a concrete second use case
+2. **Write everything ourselves** — rendering, physics, audio, sensory — all in-house
+3. **Minimal external dependencies** — Vulkan SDK, Volk, vulkan-hpp, VMA, Slang — nothing else
+4. **GPU-driven** — minimal CPU involvement in rendering decisions
+5. **Physically based** — ray traced lighting, real-world units (metres), correct light transport
+6. **Incremental** — every phase produces visible, demonstrable results
 
 ## Key Design Decisions
 
@@ -131,49 +118,25 @@ GEOMETRY PROCESSING  (Compute Shaders)
 | Units | Metres | Physically-based lighting |
 | Colour space | Linear internal, sRGB output | Correct blending |
 | HDR range | 16-bit float | Emissive glow needs headroom |
-| Meshlet size | 64 verts, 124 triangles | Nvidia optimal |
+| Meshlet size | 64 verts, 124 triangles | NVIDIA optimal |
 | Descriptor model | Fully bindless | No rebinding, GPU-driven |
 | Present mode | MAILBOX | Low latency, no tearing |
 | Shader language | Slang | Modern, modular, multi-target |
 | Vulkan loader | Volk | Dynamic loading, no link dependency |
+| Vulkan C++ bindings | vulkan-hpp (`vk::raii`) | RAII ownership, type safety |
+| Rendering model | Dynamic rendering | No VkRenderPass/VkFramebuffer |
+| Internal libraries | Static libs under `libs/` | Self-contained LEGO bricks, future submodule-ready |
 
-## Build Plan
+## Documentation
 
-| Phase | Goal | Milestone |
-|-------|------|-----------|
-| 0 - Foundation | Prove the toolchain | Triangle on screen |
-| 1 - Infrastructure | Solid foundation | Fly through cubes |
-| 2 - Bindless | GPU-driven resources | 1000 objects, 1 draw call |
-| 3 - Mesh Shaders | Replace vertex pipeline | Meshlet rendering |
-| 4 - Compute Geometry | Procedural geometry | Tron-style CSG scene |
-| 5 - RT Setup | Acceleration structures | Hard shadows |
-| 6 - RT Lighting | Physically-based lighting | Full RT lighting |
-| 7 - Post Processing | The Tron *look* | Bloom, tonemapping |
-| 8 - Optimisation | 4K@60+ performance | Rock-solid renderer |
-| 9 - AI Prep | AI vision interface | Frame streaming API |
-
-```text
-Phase 0 --> Phase 1 --> Phase 2 --+--> Phase 3 --> Phase 4
-                                  |
-                                  +--> Phase 5 --> Phase 6
-
-Phase 3 + Phase 6 --> Phase 7 --> Phase 8 --> Phase 9
-```
-
-Phases 3-4 (Mesh Shaders / Geometry) and Phases 5-6 (RT) can be developed in parallel.
-
----
-
-## Frame Data Flow
-
-```text
-1. UPDATE      Scene changes, camera update
-2. GEOMETRY    Re-tessellate dirty objects, update meshlet buffers
-3. CULL/DRAW   Task shader culls, mesh shader emits, fragment writes vis buffer
-4. BUILD AS    Update BLAS for moved objects, rebuild TLAS
-5. TRACE       Shadow rays, reflection rays, shade and accumulate
-6. POST        Bloom, tonemap, output to swapchain
-```
+| Document | Purpose |
+|----------|---------|
+| [docs/VISION.md](docs/VISION.md) | Project vision, phased roadmap (single source of truth) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture and engine design |
+| [docs/AI_INTERFACE.md](docs/AI_INTERFACE.md) | AI brain plugin interface specification |
+| [STYLE.md](STYLE.md) | Code style conventions |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines |
+| [TODO.md](TODO.md) | Active tasks and development journal |
 
 ---
 
