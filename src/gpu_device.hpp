@@ -57,7 +57,7 @@ namespace gpu
             return present_family_index_;
         }
 
-        std::string name() const
+        const std::string& name() const
         {
             return device_name_;
         }

@@ -35,7 +35,7 @@ namespace gpu
     static QueueFamilyIndices find_queue_families(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
     {
         QueueFamilyIndices indices;
-        auto families = device.getQueueFamilyProperties();
+        std::vector<vk::QueueFamilyProperties> families = device.getQueueFamilyProperties();
 
         for (uint32_t i = 0; i < families.size(); ++i) {
             // Graphics support
@@ -44,8 +44,7 @@ namespace gpu
             }
 
             // Present support
-            VkBool32 present_support = VK_FALSE;
-            vkGetPhysicalDeviceSurfaceSupportKHR(*device, i, surface, &present_support);
+            vk::Bool32 present_support = device.getSurfaceSupportKHR(i, surface);
             if (present_support) {
                 indices.present = i;
             }
@@ -61,7 +60,7 @@ namespace gpu
 
     static bool has_required_extensions(const vk::raii::PhysicalDevice& device)
     {
-        auto available = device.enumerateDeviceExtensionProperties();
+        std::vector<vk::ExtensionProperties> available = device.enumerateDeviceExtensionProperties();
 
         for (const char* required : REQUIRED_DEVICE_EXTENSIONS) {
             bool found = std::any_of(available.begin(), available.end(), [required](const vk::ExtensionProperties& ext) {
@@ -77,8 +76,8 @@ namespace gpu
 
     static int rate_device(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
     {
-        auto properties = device.getProperties();
-        auto indices = find_queue_families(device, surface);
+        vk::PhysicalDeviceProperties properties = device.getProperties();
+        QueueFamilyIndices indices = find_queue_families(device, surface);
 
         // Must have graphics + present queues and required extensions
         if (!indices.is_complete() || !has_required_extensions(device)) {
@@ -105,7 +104,7 @@ namespace gpu
     Device::Device(const Instance& instance, VkSurfaceKHR surface)
     {
         // Step 1: Enumerate physical devices
-        auto physical_devices = instance.get().enumeratePhysicalDevices();
+        std::vector<vk::raii::PhysicalDevice> physical_devices = instance.get().enumeratePhysicalDevices();
         if (physical_devices.empty()) {
             throw std::runtime_error("No Vulkan-capable GPU found");
         }
@@ -116,7 +115,7 @@ namespace gpu
 
         for (size_t i = 0; i < physical_devices.size(); ++i) {
             int score = rate_device(physical_devices[i], surface);
-            auto props = physical_devices[i].getProperties();
+            vk::PhysicalDeviceProperties props = physical_devices[i].getProperties();
             std::cerr << "[TronGrid] GPU " << i << ": " << props.deviceName.data() << " (score: " << score << ")\n";
 
             if (score > best_score) {
@@ -130,12 +129,12 @@ namespace gpu
         }
 
         physical_device_ = std::move(physical_devices[best_index]);
-        auto properties = physical_device_.getProperties();
+        vk::PhysicalDeviceProperties properties = physical_device_.getProperties();
         device_name_ = properties.deviceName.data();
         std::cout << "Selected GPU: " << device_name_ << "\n";
 
         // Step 3: Find queue families
-        auto indices = find_queue_families(physical_device_, surface);
+        QueueFamilyIndices indices = find_queue_families(physical_device_, surface);
         graphics_family_index_ = indices.graphics;
         present_family_index_ = indices.present;
 

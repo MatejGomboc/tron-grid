@@ -70,7 +70,7 @@ namespace gpu
         }
 
         // Verify all extensions are available
-        auto available_extensions = vk::enumerateInstanceExtensionProperties();
+        std::vector<vk::ExtensionProperties> available_extensions = vk::enumerateInstanceExtensionProperties();
         for (const char* ext : extensions) {
             if (!is_extension_available(available_extensions, ext)) {
                 throw std::runtime_error(std::string("Required Vulkan instance extension not available: ") + ext);
@@ -80,7 +80,7 @@ namespace gpu
         // Step 4: Validation layers (debug only)
         std::vector<const char*> layers;
         if (enable_validation) {
-            auto available_layers = vk::enumerateInstanceLayerProperties();
+            std::vector<vk::LayerProperties> available_layers = vk::enumerateInstanceLayerProperties();
             if (is_layer_available(available_layers, "VK_LAYER_KHRONOS_validation")) {
                 layers.push_back("VK_LAYER_KHRONOS_validation");
             } else {

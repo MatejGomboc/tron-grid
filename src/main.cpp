@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -24,7 +25,7 @@ int main()
         config.width = 1280;
         config.height = 720;
 
-        auto window = window::create(config);
+        std::unique_ptr<Window> window = window::create(config);
         std::cout << "Window created: " << config.width << "x" << config.height << "\n";
 
         // Vulkan initialisation
@@ -37,7 +38,7 @@ int main()
         gpu::Instance instance(enable_validation, gpu::required_surface_extensions());
 
         // Create Vulkan surface from the window's native handles
-        auto surface = gpu::create_surface(instance.get(), *window);
+        vk::raii::SurfaceKHR surface = gpu::create_surface(instance.get(), *window);
 
         // Select GPU and create logical device
         gpu::Device device(instance, *surface);
