@@ -51,7 +51,7 @@ When submitting:
 We welcome feature suggestions! Before submitting:
 
 1. Check [existing issues](https://github.com/MatejGomboc/tron-grid/issues) and [discussions](https://github.com/MatejGomboc/tron-grid/discussions) for similar ideas
-2. Consider how the feature fits the project's phased roadmap
+2. Consider how the feature fits the project's [phased roadmap](docs/VISION.md#phased-roadmap)
 3. Think about backwards compatibility
 
 When submitting:
@@ -225,7 +225,8 @@ chore: update Vulkan SDK to 1.4.335.0
 | `STYLE.md` | Code style conventions |
 | `CHANGELOG.md` | User-facing change history |
 | `docs/ARCHITECTURE.md` | Technical architecture |
-| `docs/VISION.md` | Project vision and roadmap |
+| `docs/VISION.md` | Project vision and roadmap (single source of truth) |
+| `docs/AI_INTERFACE.md` | AI brain plugin interface specification |
 
 ### Updating Documentation
 

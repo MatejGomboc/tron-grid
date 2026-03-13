@@ -1,6 +1,10 @@
 # Architecture
 
-Technical architecture of the TronGrid renderer.
+Technical architecture of TronGrid.
+
+> **Note:** This document describes the **target architecture** — the design all implementation
+> work converges towards. Sections marked *(implemented)* exist in the codebase today; everything
+> else is the blueprint for upcoming phases. See `TODO.md` for current progress.
 
 ---
 
@@ -174,7 +178,7 @@ by C++ member destruction order (reverse of declaration). Plan struct layouts ac
 
 ---
 
-## Component-Based Entity Model
+## Component-Based Entity Model *(target design)*
 
 Entities in TronGrid are **containers of components**, not nodes in an inheritance hierarchy.
 Each component has a single responsibility. Components are added, removed, and queried by type.
@@ -208,7 +212,7 @@ auto* transform = entity.get_component<TransformComponent>(); // O(1) hash looku
 
 ---
 
-## Signal-Based Communication
+## Signal-Based Communication *(implemented — `src/signal.hpp`)*
 
 Systems communicate through `Signal<T>` — a thread-safe, typed message queue. This avoids tight
 coupling between systems that don't need to know about each other.
@@ -323,7 +327,7 @@ pipeline_info.setPNext(&rendering_create_info);
 
 ---
 
-## Rendergraph
+## Rendergraph *(target design)*
 
 The render pipeline is orchestrated as a **directed acyclic graph (DAG)** of render passes.
 Each pass declares its input and output resources. The rendergraph compiler:
@@ -375,7 +379,7 @@ rendergraph.compile(); // topological sort, barrier insertion, resource allocati
 
 ---
 
-## Resource Handles
+## Resource Handles *(target design)*
 
 Engine-level resources (meshes, textures, shaders, materials) are managed through indirected
 handles rather than raw pointers. A `ResourceHandle<T>` points into a `ResourceManager` by ID,
@@ -436,8 +440,9 @@ tron_grid/
 ├── .claude/             ← project instructions
 ├── .github/             ← CI workflows, templates, Vulkan SDK actions
 ├── docs/                ← extended documentation (you are here)
-├── src/                 ← C++ source files
-├── CMakeLists.txt       ← build configuration
+├── libs/                ← internal static libraries (LEGO bricks)
+├── src/                 ← main application source
+├── CMakeLists.txt       ← root build configuration
 ├── CMakePresets.json    ← compiler/platform presets
 ├── .clang-format        ← code formatting rules
 └── .editorconfig        ← editor settings
