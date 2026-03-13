@@ -211,10 +211,17 @@ structures), see [AI_INTERFACE.md](AI_INTERFACE.md).
 ## Design Principles
 
 1. **Don't over-engineer.** No abstractions until there's a concrete second use case.
-2. **GPU-driven.** Let the GPU make decisions — bindless descriptors, indirect draws, mesh shaders.
-3. **Physically based.** Linear colour space, real-world units (metres), correct light transport.
-4. **Low latency.** MAILBOX present mode, minimal CPU-GPU synchronisation stalls.
-5. **Platform parity.** Windows (Win32) and Linux (X11) are first-class citizens. No macOS, no mobile.
+2. **Write everything ourselves.** 3D rendering, 3D physics, 3D spatial audio, and 3D environment
+   sensory (smell / energy signatures) are all written in-house. No third-party physics libraries
+   (e.g. PhysX), no third-party audio libraries. Full ownership enables deep optimisation —
+   shared spatial data structures, fused GPU passes, single scene traversal for all subsystems.
+3. **Minimal external dependencies.** The only Vulkan-related dependencies are: Vulkan SDK, Volk
+   (dynamic loader), vulkan-hpp (`vk::raii`), VMA (AMD Vulkan Memory Allocator), and Slang
+   (shader compiler). Nothing else.
+4. **GPU-driven.** Let the GPU make decisions — bindless descriptors, indirect draws, mesh shaders.
+5. **Physically based.** Linear colour space, real-world units (metres), correct light transport.
+6. **Low latency.** MAILBOX present mode, minimal CPU-GPU synchronisation stalls.
+7. **Platform parity.** Windows (Win32) and Linux (X11) are first-class citizens. No macOS, no mobile.
 
 ## Future: Multiplayer
 

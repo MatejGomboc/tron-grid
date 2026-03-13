@@ -47,6 +47,7 @@ When implementing engine systems, consult the official Vulkan tutorial series:
 7. **NEVER use non-RAII vulkan-hpp types for ownership** — use `vk::raii` namespace only
 8. **NEVER use VkRenderPass / VkFramebuffer** — use dynamic rendering (`VK_KHR_dynamic_rendering`)
 9. **NEVER call manual `vkDestroy*` / `device.destroy*`** — RAII handles all cleanup
+10. **NEVER add third-party physics, audio, or sensory libraries** — all core subsystems are written in-house (no PhysX, no FMOD, no OpenAL, etc.)
 
 ### ALWAYS Do These
 
@@ -128,6 +129,8 @@ cmake --build build/linux-x11-gcc --config Debug
 | Meshlet size | 64 verts, 124 triangles | NVIDIA optimal |
 | Descriptor model | Fully bindless | No rebinding, GPU-driven |
 | Present mode | MAILBOX | Low latency, no tearing |
+| Core subsystems | All in-house | 3D rendering, physics, audio, sensory — no third-party libs |
+| External deps | Minimal | Vulkan SDK, Volk, vulkan-hpp, VMA, Slang — nothing else |
 
 ## Current Status
 
