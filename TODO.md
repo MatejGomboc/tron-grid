@@ -4,38 +4,141 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 
 ---
 
-## Active Tasks
+## Current Etape: 1 — Internal Library Scaffolding
 
-<!-- Add tasks here as they come up. Mark with [x] when done. -->
+**Branch:** create from `main`, name `feat/libs-scaffolding`
 
-### Phase 0 — Foundation (see `docs/VISION.md` § Phased Roadmap)
+**Goal:** Establish the `libs/` LEGO brick structure with the `test`, `signal`, and `window`
+libraries. After this etape, `cmake --preset <name>` builds everything, `ctest` runs all tests,
+and the existing window + main loop still works exactly as before.
 
-**Goal:** Triangle on screen — prove the toolchain end-to-end.
+**Read before starting:** `docs/ARCHITECTURE.md` § Internal Libraries, `STYLE.md`, `.clang-format`
 
-#### Internal libraries (`libs/`)
+### Steps (do in order)
 
-- [ ] Create `libs/` directory structure and root `libs/CMakeLists.txt`
-- [ ] Implement `test` library (TEST_CHECK, TEST_CHECK_EQUAL, TEST_CHECK_THROWS)
-- [ ] Move `src/signal.hpp` → `libs/signal/` as a proper static library
-- [ ] Move `src/window/` → `libs/window/` as a proper static library
-- [ ] Wire up CTest so `ctest` runs all library tests
+#### 1. Create `libs/test/` — the test framework
 
-#### Vulkan infrastructure
+Create the foundation brick that all other libraries' tests depend on.
 
-- [ ] Integrate Volk for dynamic Vulkan loading (`VK_NO_PROTOTYPES`)
-- [ ] Vulkan instance creation + debug messenger
-- [ ] Physical device selection (prefer discrete GPU)
-- [ ] Logical device + queue creation (graphics + present)
-- [ ] VMA integration for memory allocation
-- [ ] Swapchain setup (MAILBOX present mode)
+```text
+libs/
+├── CMakeLists.txt              # add_subdirectory for each lib
+└── test/
+    ├── CMakeLists.txt           # add_library(test STATIC src/test.cpp)
+    ├── include/test/test.hpp    # public header
+    └── src/test.cpp             # implementation
+```
 
-#### Rendering (dynamic rendering — no VkRenderPass)
+The test library provides:
 
-- [ ] Graphics pipeline with `VkPipelineRenderingCreateInfo` (no render pass)
-- [ ] Command buffer recording with `vkCmdBeginRendering` / `vkCmdEndRendering`
-- [ ] Frame synchronisation (fences + semaphores, double/triple buffering)
-- [ ] Hardcoded triangle (vertex + fragment shaders via Slang)
-- [ ] Triangle on screen
+- `TEST_CHECK(expr)` — fails with file, line, and stringified expression
+- `TEST_CHECK_EQUAL(a, b)` — fails showing both values
+- `TEST_CHECK_THROWS(expr)` — fails if expr does not throw
+- `test::register_test(name, fn)` — registers a test case
+- `test::run_all()` — runs all registered tests, returns 0 on success, 1 on failure
+- `TEST_CASE(name)` macro for auto-registration
+
+Namespace: `test::`. No TronGrid prefixes. Header-only macros, compiled implementation.
+
+Write a self-test: `libs/test/tests/CMakeLists.txt` + `libs/test/tests/test_self_tests.cpp`
+that exercises all three macros (passing and failing cases). Wire into CTest.
+
+#### 2. Create `libs/signal/` — move `src/signal.hpp`
+
+Move the existing `src/signal.hpp` into a proper library brick.
+
+```text
+libs/signal/
+├── CMakeLists.txt                  # header-only or STATIC lib
+├── include/signal/signal.hpp       # moved from src/signal.hpp
+└── tests/
+    ├── CMakeLists.txt              # links: signal + test
+    └── signal_tests.cpp            # emit/consume, thread safety, weak_ptr expiry
+```
+
+Namespace: `signal::` (rename `Signal<T>` → `signal::Signal<T>` or keep as-is — minimal change).
+Update `src/main.cpp` include path if it references signal.hpp (currently it doesn't, so just
+ensure the library compiles and tests pass).
+
+#### 3. Create `libs/window/` — move `src/window/`
+
+Move the existing window implementation into a library brick.
+
+```text
+libs/window/
+├── CMakeLists.txt                  # add_library(window STATIC ...)
+├── include/window/
+│   ├── window.hpp                  # moved from src/window/window.hpp
+│   ├── window_event.hpp            # moved from src/window/window_event.hpp
+│   ├── win32_window.hpp            # moved from src/window/win32_window.hpp (Windows only)
+│   └── xcb_window.hpp              # moved from src/window/xcb_window.hpp (Linux only)
+├── src/
+│   ├── win32_window.cpp            # moved from src/window/win32_window.cpp (Windows only)
+│   └── xcb_window.cpp              # moved from src/window/xcb_window.cpp (Linux only)
+└── tests/
+    ├── CMakeLists.txt              # links: window + test
+    └── window_tests.cpp            # basic construction/destruction, event queue
+```
+
+The window library handles platform detection internally via its own CMakeLists.txt.
+Platform libs (XCB) are linked by the window library, not by the main app.
+
+#### 4. Update root CMake and `src/CMakeLists.txt`
+
+- Root `CMakeLists.txt`: add `add_subdirectory(libs)` before `add_subdirectory(src)`
+- `src/CMakeLists.txt`: remove `window/*.cpp` sources, remove window include dirs, add
+  `target_link_libraries(${PROJECT_NAME} PRIVATE window signal)` — CMake transitivity
+  handles the rest
+- Remove `volk.cpp` reference from `src/CMakeLists.txt` (it doesn't exist — Volk integration
+  is a separate etape)
+- Verify: `cmake --preset windows-msvc && cmake --build build/windows-msvc --config Debug`
+  still produces a working executable
+- Verify: `ctest --test-dir build/windows-msvc --config Debug` runs all library tests
+
+#### 5. Commit and PR
+
+- Branch: `feat/libs-scaffolding`
+- One commit per logical step, or squash into one — either is fine
+- PR against `main` using the project's PR template
+- Mark completed tasks in this file
+
+### Acceptance Criteria
+
+- [ ] `libs/test/`, `libs/signal/`, `libs/window/` exist with proper structure
+- [ ] All three libraries have CMakeLists.txt and compile as STATIC libraries
+- [ ] `test` library self-tests pass
+- [ ] `signal` library tests pass (emit, consume, empty, thread safety)
+- [ ] `window` library tests pass (basic construction/destruction)
+- [ ] `src/main.cpp` still compiles and runs (window + event loop works)
+- [ ] `ctest` runs all test suites
+- [ ] No `src/window/` directory remains (moved to `libs/window/`)
+- [ ] No `src/signal.hpp` remains (moved to `libs/signal/`)
+- [ ] Code follows `.clang-format` and `STYLE.md`
+- [ ] British spelling in all comments and documentation
+
+---
+
+## Phase 0 — Remaining Etapes (after Etape 1)
+
+### Etape 2 — Volk + Vulkan instance
+
+- Integrate Volk for dynamic Vulkan loading (`VK_NO_PROTOTYPES`)
+- Vulkan instance creation + debug messenger (validation layers in Debug)
+- Physical device selection (prefer discrete GPU)
+
+### Etape 3 — Device + swapchain
+
+- Logical device + queue creation (graphics + present)
+- VMA integration for memory allocation
+- Swapchain setup (MAILBOX present mode)
+
+### Etape 4 — Triangle on screen
+
+- Graphics pipeline with `VkPipelineRenderingCreateInfo` (dynamic rendering, no VkRenderPass)
+- Command buffer recording with `vkCmdBeginRendering` / `vkCmdEndRendering`
+- Frame synchronisation (fences + semaphores, double/triple buffering)
+- Hardcoded triangle (vertex + fragment shaders via Slang)
+- Triangle on screen — Phase 0 complete
 
 ---
 
