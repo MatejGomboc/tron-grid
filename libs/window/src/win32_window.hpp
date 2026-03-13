@@ -24,16 +24,8 @@ public:
     ~Win32Window() override;
 
     void pump_events() override;
-    VkSurfaceKHR create_surface(VkInstance instance) override;
-
-    HWND handle() const
-    {
-        return hwnd_;
-    }
-    HINSTANCE instance() const
-    {
-        return hinstance_;
-    }
+    void* native_handle() const override;
+    void* native_display() const override;
 
 private:
     static LRESULT CALLBACK wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

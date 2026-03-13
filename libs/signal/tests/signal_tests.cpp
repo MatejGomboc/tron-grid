@@ -36,11 +36,11 @@ TEST_CASE(fifo_order)
     sig.emit(3);
 
     int value = 0;
-    sig.consume(value);
+    (void)sig.consume(value);
     TEST_CHECK_EQUAL(value, 1);
-    sig.consume(value);
+    (void)sig.consume(value);
     TEST_CHECK_EQUAL(value, 2);
-    sig.consume(value);
+    (void)sig.consume(value);
     TEST_CHECK_EQUAL(value, 3);
 }
 

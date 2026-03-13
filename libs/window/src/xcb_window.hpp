@@ -17,16 +17,8 @@ public:
     ~XcbWindow() override;
 
     void pump_events() override;
-    VkSurfaceKHR create_surface(VkInstance instance) override;
-
-    xcb_connection_t* connection() const
-    {
-        return connection_;
-    }
-    xcb_window_t handle() const
-    {
-        return window_;
-    }
+    void* native_handle() const override;
+    void* native_display() const override;
 
 private:
     void handle_event(xcb_generic_event_t* event);

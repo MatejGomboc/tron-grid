@@ -12,10 +12,6 @@
 #include <string>
 #include <cstdint>
 
-// Forward declare Vulkan types to avoid including vulkan.h here
-typedef struct VkInstance_T* VkInstance;
-typedef struct VkSurfaceKHR_T* VkSurfaceKHR;
-
 struct WindowConfig {
     std::string title = "TRON Grid Renderer";
     uint32_t width = 1920;
@@ -37,8 +33,11 @@ public:
     // Process pending platform events into the event queue
     virtual void pump_events() = 0;
 
-    // Create Vulkan surface for this window
-    virtual VkSurfaceKHR create_surface(VkInstance instance) = 0;
+    // Platform-native window handle (HWND on Win32, xcb_window_t via void* on XCB)
+    virtual void* native_handle() const = 0;
+
+    // Platform-native display/instance (HINSTANCE on Win32, xcb_connection_t* on XCB)
+    virtual void* native_display() const = 0;
 
     // Poll next event from queue (returns false if empty)
     bool poll_event(WindowEvent& out)
