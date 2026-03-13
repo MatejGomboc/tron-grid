@@ -1,11 +1,21 @@
+/*
+ * TronGrid — Win32 window implementation
+ * Copyright (C) 2026 Matej Gomboc
+ * SPDX-Licence-Identifier: GPL-3.0-or-later
+ */
+
 #pragma once
 
 #ifdef _WIN32
 
-#include "window.hpp"
+#include "window/window.hpp"
 // Lean and mean Windows
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <Windows.h>
 
 class Win32Window : public Window {
@@ -27,7 +37,7 @@ public:
 
 private:
     static LRESULT CALLBACK wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-    LRESULT wnd_proc(UINT msg, WPARAM wparam, LPARAM lparam);
+    LRESULT wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
     HWND hwnd_ = nullptr;
     HINSTANCE hinstance_ = nullptr;

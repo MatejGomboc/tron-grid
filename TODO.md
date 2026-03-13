@@ -16,7 +16,7 @@ and the existing window + main loop still works exactly as before.
 
 ### Steps (do in order)
 
-#### 1. Create `libs/test/` — the test framework
+#### 1. Create `libs/test_fixture/` — the test framework
 
 Create the foundation brick that all other libraries' tests depend on.
 
@@ -40,7 +40,7 @@ The test library provides:
 
 Namespace: `test::`. No TronGrid prefixes. Header-only macros, compiled implementation.
 
-Write a self-test: `libs/test/tests/CMakeLists.txt` + `libs/test/tests/test_self_tests.cpp`
+Write a self-test: `libs/test_fixture/tests/CMakeLists.txt` + `libs/test_fixture/tests/test_self_tests.cpp`
 that exercises all three macros (passing and failing cases). Wire into CTest.
 
 #### 2. Create `libs/signal/` — move `src/signal.hpp`
@@ -104,9 +104,9 @@ Platform libs (XCB) are linked by the window library, not by the main app.
 
 ### Acceptance Criteria
 
-- [ ] `libs/test/`, `libs/signal/`, `libs/window/` exist with proper structure
+- [ ] `libs/test_fixture/`, `libs/signal/`, `libs/window/` exist with proper structure
 - [ ] All three libraries have CMakeLists.txt and compile as STATIC libraries
-- [ ] `test` library self-tests pass
+- [ ] `test_fixture` library self-tests pass
 - [ ] `signal` library tests pass (emit, consume, empty, thread safety)
 - [ ] `window` library tests pass (basic construction/destruction)
 - [ ] `src/main.cpp` still compiles and runs (window + event loop works)

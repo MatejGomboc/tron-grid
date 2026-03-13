@@ -1,6 +1,13 @@
+/*
+ * TronGrid — abstract window interface
+ * Copyright (C) 2026 Matej Gomboc
+ * SPDX-Licence-Identifier: GPL-3.0-or-later
+ */
+
 #pragma once
 
 #include "window_event.hpp"
+#include <memory>
 #include <queue>
 #include <string>
 #include <cstdint>
@@ -36,8 +43,9 @@ public:
     // Poll next event from queue (returns false if empty)
     bool poll_event(WindowEvent& out)
     {
-        if (event_queue_.empty())
+        if (event_queue_.empty()) {
             return false;
+        }
         out = event_queue_.front();
         event_queue_.pop();
         return true;
@@ -77,3 +85,10 @@ protected:
 private:
     std::queue<WindowEvent> event_queue_;
 };
+
+namespace window
+{
+    // Factory — creates the platform-appropriate window (Win32 or XCB).
+    // Consumers never need to include platform headers.
+    std::unique_ptr<Window> create(const WindowConfig& config);
+} // namespace window

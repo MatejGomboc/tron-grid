@@ -1,8 +1,14 @@
+/*
+ * TronGrid — XCB window implementation
+ * Copyright (C) 2026 Matej Gomboc
+ * SPDX-Licence-Identifier: GPL-3.0-or-later
+ */
+
 #pragma once
 
 #ifdef __linux__
 
-#include "window.hpp"
+#include "window/window.hpp"
 #include <xcb/xcb.h>
 
 class XcbWindow : public Window {

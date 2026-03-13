@@ -1,7 +1,12 @@
+/*
+ * TronGrid — XCB window implementation
+ * Copyright (C) 2026 Matej Gomboc
+ * SPDX-Licence-Identifier: GPL-3.0-or-later
+ */
+
 #ifdef __linux__
 
 #include "xcb_window.hpp"
-#include <volk/volk.h>
 #include <cstring>
 #include <stdexcept>
 
@@ -218,20 +223,10 @@ void XcbWindow::handle_event(xcb_generic_event_t* event)
     }
 }
 
-VkSurfaceKHR XcbWindow::create_surface(VkInstance instance)
+VkSurfaceKHR XcbWindow::create_surface(VkInstance /*instance*/)
 {
-    VkXcbSurfaceCreateInfoKHR create_info = {};
-    create_info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-    create_info.connection = connection_;
-    create_info.window = window_;
-
-    VkSurfaceKHR surface;
-    VkResult result = vkCreateXcbSurfaceKHR(instance, &create_info, nullptr, &surface);
-    if (result != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create Vulkan XCB surface");
-    }
-
-    return surface;
+    // TODO(etape-2): implement with Volk once Vulkan loading is integrated
+    throw std::runtime_error("Vulkan surface creation not yet implemented (requires Volk)");
 }
 
 #endif // __linux__

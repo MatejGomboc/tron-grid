@@ -1,22 +1,7 @@
-#include "window.hpp"
-#ifdef _WIN32
-#include "win32_window.hpp"
-#elif defined(__linux__)
-#include "xcb_window.hpp"
-#endif
+#include <window/window.hpp>
+#include <chrono>
 #include <iostream>
-#include <memory>
-
-std::unique_ptr<Window> create_window(const WindowConfig& config)
-{
-#ifdef _WIN32
-    return std::make_unique<Win32Window>(config);
-#elif defined(__linux__)
-    return std::make_unique<XcbWindow>(config);
-#else
-#error "Unsupported platform"
-#endif
-}
+#include <thread>
 
 int main()
 {
@@ -26,7 +11,7 @@ int main()
         config.width = 1280;
         config.height = 720;
 
-        auto window = create_window(config);
+        auto window = window::create(config);
 
         std::cout << "Window created: " << config.width << "x" << config.height << "\n";
         std::cout << "Press ESC to close\n";
@@ -48,17 +33,20 @@ int main()
 
                 case WindowEvent::Type::KeyDown:
                     std::cout << "Key down: " << ev.key.keycode;
-                    if (ev.key.repeat)
+                    if (ev.key.repeat) {
                         std::cout << " (repeat)";
+                    }
                     std::cout << "\n";
 
 // ESC to close (Win32: 27, X11: 9)
 #ifdef _WIN32
-                    if (ev.key.keycode == 27)
+                    if (ev.key.keycode == 27) {
                         window->request_close();
+                    }
 #else
-                    if (ev.key.keycode == 9)
+                    if (ev.key.keycode == 9) {
                         window->request_close();
+                    }
 #endif
                     break;
 
@@ -93,13 +81,9 @@ int main()
                 }
             }
 
-// Here you would: render frame, present, etc.
-// For now, just yield to avoid busy loop
-#ifdef _WIN32
-            Sleep(1);
-#else
-            usleep(1000);
-#endif
+            // Here you would: render frame, present, etc.
+            // For now, just yield to avoid busy loop
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
         std::cout << "Shutting down\n";
