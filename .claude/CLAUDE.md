@@ -82,6 +82,8 @@ tron_grid/
 ├── libs/                 # Internal static libraries (LEGO bricks)
 │   ├── test/             # Test framework (foundation brick)
 │   ├── json/             # JSON parser/creator
+│   ├── signal/           # Thread-safe Signal<T> message queues
+│   ├── window/           # Platform windowing (Win32 / XCB)
 │   └── .../              # math, physics, audio, etc.
 ├── src/                  # C++ source files (main application)
 │   ├── CMakeLists.txt    # Target definition, platform detection
