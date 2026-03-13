@@ -4,140 +4,211 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 
 ---
 
-## Current Etape: 1 — Internal Library Scaffolding
+## Etape 1 — Internal Library Scaffolding ✅
 
-**Branch:** create from `main`, name `feat/libs-scaffolding`
+Completed 2026-03-13. PR #18 merged.
 
-**Goal:** Establish the `libs/` LEGO brick structure with the `test`, `signal`, and `window`
-libraries. After this etape, `cmake --preset <name>` builds everything, `ctest` runs all tests,
-and the existing window + main loop still works exactly as before.
-
-**Read before starting:** `docs/ARCHITECTURE.md` § Internal Libraries, `STYLE.md`, `.clang-format`
-
-### Steps (do in order)
-
-#### 1. Create `libs/test_fixture/` — the test framework
-
-Create the foundation brick that all other libraries' tests depend on.
-
-```text
-libs/
-├── CMakeLists.txt              # add_subdirectory for each lib
-└── test/
-    ├── CMakeLists.txt           # add_library(test STATIC src/test.cpp)
-    ├── include/test/test.hpp    # public header
-    └── src/test.cpp             # implementation
-```
-
-The test library provides:
-
-- `TEST_CHECK(expr)` — fails with file, line, and stringified expression
-- `TEST_CHECK_EQUAL(a, b)` — fails showing both values
-- `TEST_CHECK_THROWS(expr)` — fails if expr does not throw
-- `test::register_test(name, fn)` — registers a test case
-- `test::run_all()` — runs all registered tests, returns 0 on success, 1 on failure
-- `TEST_CASE(name)` macro for auto-registration
-
-Namespace: `test::`. No TronGrid prefixes. Header-only macros, compiled implementation.
-
-Write a self-test: `libs/test_fixture/tests/CMakeLists.txt` + `libs/test_fixture/tests/test_self_tests.cpp`
-that exercises all three macros (passing and failing cases). Wire into CTest.
-
-#### 2. Create `libs/signal/` — move `src/signal.hpp`
-
-Move the existing `src/signal.hpp` into a proper library brick.
-
-```text
-libs/signal/
-├── CMakeLists.txt                  # header-only or STATIC lib
-├── include/signal/signal.hpp       # moved from src/signal.hpp
-└── tests/
-    ├── CMakeLists.txt              # links: signal + test
-    └── signal_tests.cpp            # emit/consume, thread safety, weak_ptr expiry
-```
-
-Namespace: `signal::` (rename `Signal<T>` → `signal::Signal<T>` or keep as-is — minimal change).
-Update `src/main.cpp` include path if it references signal.hpp (currently it doesn't, so just
-ensure the library compiles and tests pass).
-
-#### 3. Create `libs/window/` — move `src/window/`
-
-Move the existing window implementation into a library brick.
-
-```text
-libs/window/
-├── CMakeLists.txt                  # add_library(window STATIC ...)
-├── include/window/
-│   ├── window.hpp                  # moved from src/window/window.hpp
-│   ├── window_event.hpp            # moved from src/window/window_event.hpp
-│   ├── win32_window.hpp            # moved from src/window/win32_window.hpp (Windows only)
-│   └── xcb_window.hpp              # moved from src/window/xcb_window.hpp (Linux only)
-├── src/
-│   ├── win32_window.cpp            # moved from src/window/win32_window.cpp (Windows only)
-│   └── xcb_window.cpp              # moved from src/window/xcb_window.cpp (Linux only)
-└── tests/
-    ├── CMakeLists.txt              # links: window + test
-    └── window_tests.cpp            # basic construction/destruction, event queue
-```
-
-The window library handles platform detection internally via its own CMakeLists.txt.
-Platform libs (XCB) are linked by the window library, not by the main app.
-
-#### 4. Update root CMake and `src/CMakeLists.txt`
-
-- Root `CMakeLists.txt`: add `add_subdirectory(libs)` before `add_subdirectory(src)`
-- `src/CMakeLists.txt`: remove `window/*.cpp` sources, remove window include dirs, add
-  `target_link_libraries(${PROJECT_NAME} PRIVATE window signal)` — CMake transitivity
-  handles the rest
-- Remove `volk.cpp` reference from `src/CMakeLists.txt` (it doesn't exist — Volk integration
-  is a separate etape)
-- Verify: `cmake --preset windows-msvc && cmake --build build/windows-msvc --config Debug`
-  still produces a working executable
-- Verify: `ctest --test-dir build/windows-msvc --config Debug` runs all library tests
-
-#### 5. Commit and PR
-
-- Branch: `feat/libs-scaffolding`
-- One commit per logical step, or squash into one — either is fine
-- PR against `main` using the project's PR template
-- Mark completed tasks in this file
-
-### Acceptance Criteria
-
-- [ ] `libs/test_fixture/`, `libs/signal/`, `libs/window/` exist with proper structure
-- [ ] All three libraries have CMakeLists.txt and compile as STATIC libraries
-- [ ] `test_fixture` library self-tests pass
-- [ ] `signal` library tests pass (emit, consume, empty, thread safety)
-- [ ] `window` library tests pass (basic construction/destruction)
-- [ ] `src/main.cpp` still compiles and runs (window + event loop works)
-- [ ] `ctest` runs all test suites
-- [ ] No `src/window/` directory remains (moved to `libs/window/`)
-- [ ] No `src/signal.hpp` remains (moved to `libs/signal/`)
-- [ ] Code follows `.clang-format` and `STYLE.md`
-- [ ] British spelling in all comments and documentation
+- `libs/test_fixture/` — custom test framework with C++20 `std::source_location` + templates
+- `libs/signal/` — header-only `signals::Signal<T>` thread-safe message queue
+- `libs/window/` — platform windowing with hidden platform headers, `window::create()` factory
+- All 3 libraries have CTest suites (3/3 pass)
+- `CMakePresets.json` fully fleshed out with test + workflow presets
 
 ---
 
-## Phase 0 — Remaining Etapes (after Etape 1)
+## Current Etape: 2 — Vulkan Instance, Validation, and Device
 
-### Etape 2 — Volk + Vulkan instance
+**Branch:** create from `main`, name `feat/vulkan-init`
 
-- Integrate Volk for dynamic Vulkan loading (`VK_NO_PROTOTYPES`)
-- Vulkan instance creation + debug messenger (validation layers in Debug)
-- Physical device selection (prefer discrete GPU)
+**Goal:** Integrate Volk for dynamic Vulkan loading, create a Vulkan instance with validation
+layers, set up a debug messenger, query physical devices, select the best GPU, create a logical
+device with graphics + present queues, and wire up Vulkan surface creation in the window library.
+After this etape, the application prints the selected GPU name and validation layer messages
+appear in Debug builds.
 
-### Etape 3 — Device + swapchain
+**Read before starting:** `docs/ARCHITECTURE.md`, `STYLE.md`, `.clang-format`,
+`CLAUDE.md` § Critical Rules (especially: `VK_NO_PROTOTYPES`, `vk::raii`, no manual destroy,
+dynamic rendering extensions)
 
-- Logical device + queue creation (graphics + present)
+**Reference:** User's prior Vulkan project for the logical flow:
+`github.com/MatejGomboc/Vulkan3DSimulator/blob/main/renderer.cpp`
+
+### Dependencies to fetch
+
+| Library | Purpose | Integration |
+|---------|---------|-------------|
+| Volk | Dynamic Vulkan function loading | `add_subdirectory`, define `VK_NO_PROTOTYPES` globally |
+| vulkan-hpp | C++ Vulkan bindings with `vk::raii` | Header-only, from Vulkan SDK or fetched |
+
+### Steps (do in order)
+
+#### 1. Integrate Volk
+
+- Fetch Volk via CMake `FetchContent` (or git submodule) into a known location
+- Create `libs/volk/CMakeLists.txt` or add at root level — single `.cpp` with
+  `#define VOLK_IMPLEMENTATION` + `#include <volk/volk.h>`
+- Define `VK_NO_PROTOTYPES` as a **global** compile definition in root `CMakeLists.txt`
+- Verify: project still compiles (Volk linked but not yet called)
+
+#### 2. Integrate vulkan-hpp
+
+- Fetch `vulkan-hpp` headers (from Vulkan SDK or `FetchContent`)
+- Ensure `<vulkan/vulkan_raii.hpp>` is available as an include path
+- Configure for dispatcher mode compatible with Volk (no static dispatcher — Volk provides
+  the function pointers)
+
+#### 3. Create `libs/gpu/` — the Vulkan initialisation brick
+
+Create a new LEGO brick that owns the Vulkan instance and device.
+
+```text
+libs/gpu/
+├── CMakeLists.txt                  # add_library(gpu STATIC ...)
+├── include/gpu/
+│   ├── instance.hpp                # gpu::Instance — Vulkan instance + debug messenger
+│   └── device.hpp                  # gpu::Device — physical + logical device
+├── src/
+│   ├── instance.cpp                # volkInitialize, instance creation, debug messenger
+│   └── device.cpp                  # physical device selection, logical device creation
+└── tests/
+    ├── CMakeLists.txt
+    └── gpu_tests.cpp               # instance creation, device enumeration (headless)
+```
+
+Namespace: `gpu::`. Links: `volk`, `vulkan-hpp`.
+
+#### 4. `gpu::Instance` — Vulkan instance + debug messenger
+
+```cpp
+namespace gpu {
+class Instance {
+    vk::raii::Context context_;          // Vulkan function loader
+    vk::raii::Instance instance_;        // Vulkan instance (RAII)
+    vk::raii::DebugUtilsMessengerEXT debug_messenger_;  // Debug only
+};
+}
+```
+
+Init sequence:
+
+1. `volkInitialize()` — find Vulkan loader on the system
+2. Check Vulkan version ≥ 1.3
+3. Enumerate and verify required instance extensions:
+   - `VK_KHR_surface`
+   - `VK_KHR_win32_surface` (Windows) or `VK_KHR_xcb_surface` (Linux)
+   - `VK_EXT_debug_utils` (Debug builds only)
+4. Enumerate and verify validation layer: `VK_LAYER_KHRONOS_validation` (Debug only)
+5. Create `vk::raii::Instance` with app info (API version 1.3, engine name "TronGrid")
+6. `volkLoadInstance(instance)` — load instance-level function pointers
+7. Create `vk::raii::DebugUtilsMessengerEXT` with callback that prints to `std::cerr`
+   (severity: warning + error; types: general + validation + performance)
+
+Use CMake generator expression for Debug detection — no `#ifdef DEBUG` in source code.
+Instead, pass a `bool enable_validation` parameter to the constructor, and set it from
+`CMakeLists.txt` or from `main()` based on build type.
+
+#### 5. `gpu::Device` — physical + logical device
+
+```cpp
+namespace gpu {
+class Device {
+    vk::raii::PhysicalDevice physical_device_;
+    vk::raii::Device device_;            // Logical device (RAII)
+    vk::raii::Queue graphics_queue_;
+    vk::raii::Queue present_queue_;
+    uint32_t graphics_family_index_;
+    uint32_t present_family_index_;
+};
+}
+```
+
+Physical device selection:
+
+1. Enumerate physical devices via `instance.enumeratePhysicalDevices()`
+2. For each device, find queue families supporting graphics (`VK_QUEUE_GRAPHICS_BIT`)
+   and present (`vkGetPhysicalDeviceSurfaceSupportKHR`)
+3. Prefer a single queue family that supports both (better performance)
+4. Prefer discrete GPU over integrated
+5. Reject devices that lack required extensions:
+   - `VK_KHR_swapchain`
+   - `VK_KHR_dynamic_rendering` (or Vulkan 1.3 core)
+6. Print selected device name to stdout
+
+Logical device creation:
+
+1. Create queue create infos (graphics + present — may be same family)
+2. Enable required device extensions: `VK_KHR_swapchain`, `VK_KHR_dynamic_rendering`
+3. Enable `VkPhysicalDeviceDynamicRenderingFeatures` in the pNext chain
+4. Create `vk::raii::Device`
+5. `volkLoadDevice(device)` — load device-level function pointers
+6. Retrieve `vk::raii::Queue` handles for graphics and present
+
+#### 6. Wire up Vulkan surface creation in `libs/window/`
+
+- Un-stub `Window::create_surface()` — now that Volk is available
+- `win32_window.cpp`: call `vkCreateWin32SurfaceKHR` via Volk
+- `xcb_window.cpp`: call `vkCreateXcbSurfaceKHR` via Volk
+- The window library now links Volk (for the surface creation functions)
+- Return a `VkSurfaceKHR` that the caller wraps in `vk::raii::SurfaceKHR`
+
+#### 7. Update `src/main.cpp`
+
+Wire everything together:
+
+```cpp
+auto window = window::create(config);
+gpu::Instance instance(enable_validation, window_extensions);
+auto surface = window->create_surface(*instance);  // VkSurfaceKHR
+gpu::Device device(instance, surface);
+std::cout << "GPU: " << device.name() << "\n";
+// ... existing event loop ...
+```
+
+The exact API shape may vary — keep it clean and minimal.
+
+#### 8. Run clang-format, build, test, commit, and PR
+
+- `clang-format -i` on all changed C++ files
+- `cmake --preset windows-msvc && cmake --build build/windows-msvc --config Debug`
+- `ctest --preset windows-msvc-debug` — all tests pass (including new gpu_tests)
+- Branch: `feat/vulkan-init`
+- PR against `main`
+
+### Acceptance Criteria
+
+- [ ] `VK_NO_PROTOTYPES` defined globally
+- [ ] Volk loads Vulkan dynamically — no static Vulkan linking
+- [ ] `vk::raii` used for all Vulkan objects — no manual `vkDestroy*`
+- [ ] Vulkan instance created with API version 1.3
+- [ ] Validation layers active in Debug builds, silent in Release
+- [ ] Debug messenger prints validation warnings/errors to stderr
+- [ ] Physical device selected (prefer discrete GPU)
+- [ ] Logical device created with graphics + present queues
+- [ ] `VK_KHR_dynamic_rendering` enabled on the device
+- [ ] Vulkan surface created from the window (Win32 / XCB)
+- [ ] Selected GPU name printed to stdout
+- [ ] `gpu_tests` pass (at minimum: instance creation in headless mode)
+- [ ] Code follows `.clang-format` and `STYLE.md`
+- [ ] British spelling in all comments and documentation
+- [ ] No `#ifdef DEBUG` in source — use runtime `enable_validation` flag
+
+---
+
+## Phase 0 — Remaining Etapes (after Etape 2)
+
+### Etape 3 — Swapchain
+
 - VMA integration for memory allocation
-- Swapchain setup (MAILBOX present mode)
+- Swapchain setup (MAILBOX present mode, surface format selection)
+- Swapchain image views
+- Swapchain recreation on window resize
 
 ### Etape 4 — Triangle on screen
 
 - Graphics pipeline with `VkPipelineRenderingCreateInfo` (dynamic rendering, no VkRenderPass)
 - Command buffer recording with `vkCmdBeginRendering` / `vkCmdEndRendering`
 - Frame synchronisation (fences + semaphores, double/triple buffering)
-- Hardcoded triangle (vertex + fragment shaders via Slang)
+- Hardcoded colourful triangle (vertex + fragment shaders via Slang)
 - Triangle on screen — Phase 0 complete
 
 ---
