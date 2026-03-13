@@ -73,16 +73,18 @@ TEST_CASE(thread_safety)
     constexpr int count = 1000;
 
     std::thread producer([&] {
-        for (int i = 0; i < count; ++i)
+        for (int i = 0; i < count; ++i) {
             sig.emit(i);
+        }
     });
 
     std::thread consumer([&] {
         int consumed = 0;
         while (consumed < count) {
             int value = 0;
-            if (sig.consume(value))
+            if (sig.consume(value)) {
                 ++consumed;
+            }
         }
     });
 

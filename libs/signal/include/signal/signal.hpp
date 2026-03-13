@@ -37,8 +37,9 @@ namespace signal
         bool consume(T& out)
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (pending.empty())
+            if (pending.empty()) {
                 return false;
+            }
             out = std::move(pending.front());
             pending.pop();
             return true;

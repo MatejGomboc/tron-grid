@@ -54,6 +54,7 @@ Key settings:
 | Indent | 4 spaces |
 | Column limit | 170 |
 | Pointer alignment | Left (`int* ptr`) |
+| Braces on bodies | Always — even single-line `if`/`else`/`for`/`while` (`InsertBraces: true`) |
 
 ### Naming Conventions
 

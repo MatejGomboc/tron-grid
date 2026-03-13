@@ -33,17 +33,20 @@ int main()
 
                 case WindowEvent::Type::KeyDown:
                     std::cout << "Key down: " << ev.key.keycode;
-                    if (ev.key.repeat)
+                    if (ev.key.repeat) {
                         std::cout << " (repeat)";
+                    }
                     std::cout << "\n";
 
 // ESC to close (Win32: 27, X11: 9)
 #ifdef _WIN32
-                    if (ev.key.keycode == 27)
+                    if (ev.key.keycode == 27) {
                         window->request_close();
+                    }
 #else
-                    if (ev.key.keycode == 9)
+                    if (ev.key.keycode == 9) {
                         window->request_close();
+                    }
 #endif
                     break;
 

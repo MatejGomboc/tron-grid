@@ -43,8 +43,9 @@ public:
     // Poll next event from queue (returns false if empty)
     bool poll_event(WindowEvent& out)
     {
-        if (event_queue_.empty())
+        if (event_queue_.empty()) {
             return false;
+        }
         out = event_queue_.front();
         event_queue_.pop();
         return true;
