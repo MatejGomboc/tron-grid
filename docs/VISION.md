@@ -14,7 +14,7 @@ observed entirely through the lens of a GPU-driven renderer.
 Off-the-shelf engines (Unreal, Unity, Godot) optimise for human players. TronGrid optimises for a different consumer: an AI model
 that needs consistent, high-fidelity frames streamed at low latency. This means:
 
-- **No editor, no GUI** — the renderer is headless-capable, driven by API calls
+- **No editor, no GUI** — in bot mode, TronGrid runs as a console application with no window
 - **Deterministic rendering** — same inputs produce same outputs, essential for training
 - **Frame streaming** — frames are captured and piped to the AI brain, not displayed for a human
 - **Variable simulation speed** — pause, 1x, fast-forward, essential for training and observation
@@ -123,7 +123,7 @@ renderer, the same world. The only thing that changes is where I/O goes.
 │          │                             │                      │
 │   ┌──────┴──────┐              ┌───────┴──────┐               │
 │   │ Human Mode  │              │  Bot Mode    │               │
-│   │             │              │              │               │
+│   │             │              │  (no window) │               │
 │   │ Screen → 👁 │              │ Offscreen →  │               │
 │   │ Speakers→ 👂│              │  DLL/SO brain│               │
 │   │ Keyboard → ⌨│              │ Actions ←    │               │
@@ -131,9 +131,13 @@ renderer, the same world. The only thing that changes is where I/O goes.
 └──────────────────────────────────────────────────────────────┘
 ```
 
+TronGrid always starts as a console application. In human mode, it creates a window and
+discards the console. In bot mode, it remains a console application with no window.
+
 | Aspect | Human mode | Bot mode |
 |--------|-----------|----------|
-| **Vision** | Rendered to screen → human eyes | Rendered off-screen → bot interface → DLL/SO |
+| **Startup** | Console → creates window, discards console | Stays in console, no window |
+| **Vision** | Rendered to screen → human eyes | Rendered offscreen → bot interface → DLL/SO |
 | **Hearing** | Mixed to speakers → human ears | Spatial audio events → bot interface → DLL/SO |
 | **Input** | Keyboard/mouse → actions | DLL/SO → bot interface → actions |
 | **Launch** | `trongrid` | `trongrid --bot brain.dll` |
@@ -207,10 +211,17 @@ structures), see [AI_INTERFACE.md](AI_INTERFACE.md).
 ## Design Principles
 
 1. **Don't over-engineer.** No abstractions until there's a concrete second use case.
-2. **GPU-driven.** Let the GPU make decisions — bindless descriptors, indirect draws, mesh shaders.
-3. **Physically based.** Linear colour space, real-world units (metres), correct light transport.
-4. **Low latency.** MAILBOX present mode, minimal CPU-GPU synchronisation stalls.
-5. **Platform parity.** Windows (Win32) and Linux (X11) are first-class citizens. No macOS, no mobile.
+2. **Write everything ourselves.** 3D rendering, 3D physics, 3D spatial audio, and 3D environment
+   sensory (smell / energy signatures) are all written in-house. No third-party physics libraries
+   (e.g. PhysX), no third-party audio libraries. Full ownership enables deep optimisation —
+   shared spatial data structures, fused GPU passes, single scene traversal for all subsystems.
+3. **Minimal external dependencies.** The only Vulkan-related dependencies are: Vulkan SDK, Volk
+   (dynamic loader), vulkan-hpp (`vk::raii`), VMA (AMD Vulkan Memory Allocator), and Slang
+   (shader compiler). Nothing else.
+4. **GPU-driven.** Let the GPU make decisions — bindless descriptors, indirect draws, mesh shaders.
+5. **Physically based.** Linear colour space, real-world units (metres), correct light transport.
+6. **Low latency.** MAILBOX present mode, minimal CPU-GPU synchronisation stalls.
+7. **Platform parity.** Windows (Win32) and Linux (X11) are first-class citizens. No macOS, no mobile.
 
 ## Future: Multiplayer
 

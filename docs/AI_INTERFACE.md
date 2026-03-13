@@ -481,19 +481,18 @@ enables more subsystems at each stage.
 
 ### What TronGrid Provides
 
-- **Sensory debug view** — TronGrid can render what the AI "sees" and "feels" to a window,
-  so developers can observe the sensory stream. This is a TronGrid feature (visualising the
-  bot interface output)
 - **Simulation speed** — the simulation can run at multiple speeds (pause, 1x, 2x, fast-forward),
   similar to The Sims. Essential for training and observation
-- **Headless mode** — bot mode with no window at all. No GPU presentation, just offscreen
-  rendering and sensory data. Useful for training at scale
+- **Console-only bot mode** — TronGrid always starts as a console application. In human mode,
+  it creates a window and discards the console. In bot mode, it stays in the console with no
+  window, rendering offscreen for the AI brain's sensory data only
 
 ### What Is the Brain's Problem (Not TronGrid's)
 
-- **Brain internals visualisation** — if the brain wants to display what it's "thinking"
-  (neural activations, decision trees, internal state), it creates its own window. TronGrid
-  has no knowledge of the brain's architecture and cannot visualise it
+- **All visualisation** — if the brain wants to display what it sees, feels, or thinks
+  (sensory debug views, neural activations, decision trees, internal state), it creates its
+  own window. TronGrid has no knowledge of the brain's architecture and provides no
+  diagnostic display in bot mode
 - **Logging** — the brain is responsible for its own debug output. TronGrid provides no
   logging facility through the bot interface
 - **Hot-reload** — brains cannot be swapped at runtime. Restart TronGrid to load a different

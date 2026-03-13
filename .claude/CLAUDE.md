@@ -47,6 +47,7 @@ When implementing engine systems, consult the official Vulkan tutorial series:
 7. **NEVER use non-RAII vulkan-hpp types for ownership** — use `vk::raii` namespace only
 8. **NEVER use VkRenderPass / VkFramebuffer** — use dynamic rendering (`VK_KHR_dynamic_rendering`)
 9. **NEVER call manual `vkDestroy*` / `device.destroy*`** — RAII handles all cleanup
+10. **NEVER add third-party physics, audio, or sensory libraries** — all core subsystems are written in-house (no PhysX, no FMOD, no OpenAL, etc.)
 
 ### ALWAYS Do These
 
@@ -78,7 +79,11 @@ tron_grid/
 ├── docs/                 # Extended documentation
 │   ├── ARCHITECTURE.md   # Technical architecture
 │   └── VISION.md         # Project vision and roadmap
-├── src/                  # C++ source files
+├── libs/                 # Internal static libraries (LEGO bricks)
+│   ├── test/             # Test framework (foundation brick)
+│   ├── json/             # JSON parser/creator
+│   └── .../              # math, physics, audio, etc.
+├── src/                  # C++ source files (main application)
 │   ├── CMakeLists.txt    # Target definition, platform detection
 │   └── main.cpp          # Entry point (currently hello world)
 ├── .clang-format         # LLVM-based, Allman braces, 170 col
@@ -128,6 +133,10 @@ cmake --build build/linux-x11-gcc --config Debug
 | Meshlet size | 64 verts, 124 triangles | NVIDIA optimal |
 | Descriptor model | Fully bindless | No rebinding, GPU-driven |
 | Present mode | MAILBOX | Low latency, no tearing |
+| Core subsystems | All in-house | 3D rendering, physics, audio, sensory — no third-party libs |
+| External deps | Minimal | Vulkan SDK, Volk, vulkan-hpp, VMA, Slang — nothing else |
+| Internal libraries | `libs/` static libs | Self-contained LEGO bricks, plain namespaces, future submodule-ready |
+| Test framework | Own `test` library | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
 
 ## Current Status
 
