@@ -49,6 +49,41 @@ inter-system communication, and a rendergraph for pipeline orchestration.
 └────────────────────────────────────────────────────────────────┘
 ```
 
+### Internal Libraries (`libs/`)
+
+The project is built from self-contained static libraries — LEGO bricks that snap together via
+CMake `target_link_libraries`. Each library has its own include directory, source, and test suite.
+
+```text
+libs/
+├── test/                       # test framework (foundation brick)
+│   ├── CMakeLists.txt          # add_library(test STATIC ...)
+│   ├── include/test/test.hpp   # #include <test/test.hpp>
+│   └── src/test.cpp
+├── json/                       # JSON parser/creator
+│   ├── CMakeLists.txt          # add_library(json STATIC ...)
+│   ├── include/json/json.hpp   # #include <json/json.hpp>
+│   ├── src/json.cpp
+│   └── tests/
+│       ├── CMakeLists.txt      # links: json + test
+│       └── json_tests.cpp
+├── math/
+│   └── ...
+└── ...
+```
+
+**Rules:**
+
+- **No TronGrid namespacing** — libraries use their own plain namespaces (`json::`, `math::`,
+  `test::`), not `tg::`. They are general-purpose and could be extracted into separate
+  repositories as git submodules later
+- **Each library is self-contained** — own `CMakeLists.txt`, own `include/<lib>/` directory,
+  own `tests/` directory with unit tests linking the `test` library
+- **Plain CMake target names** — `test`, `json`, `math`, not prefixed
+- **Static libraries only** — linked into the final TronGrid executable
+- **Test framework is itself a library** — `test` is the foundation brick; all other libraries'
+  tests link against it. Macros: `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS`
+
 ### Coupling Model
 
 The rendering, physics, and spatial audio engines are **tightly coupled** — they run in the

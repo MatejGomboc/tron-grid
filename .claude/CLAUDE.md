@@ -79,7 +79,11 @@ tron_grid/
 ├── docs/                 # Extended documentation
 │   ├── ARCHITECTURE.md   # Technical architecture
 │   └── VISION.md         # Project vision and roadmap
-├── src/                  # C++ source files
+├── libs/                 # Internal static libraries (LEGO bricks)
+│   ├── test/             # Test framework (foundation brick)
+│   ├── json/             # JSON parser/creator
+│   └── .../              # math, physics, audio, etc.
+├── src/                  # C++ source files (main application)
 │   ├── CMakeLists.txt    # Target definition, platform detection
 │   └── main.cpp          # Entry point (currently hello world)
 ├── .clang-format         # LLVM-based, Allman braces, 170 col
@@ -131,6 +135,8 @@ cmake --build build/linux-x11-gcc --config Debug
 | Present mode | MAILBOX | Low latency, no tearing |
 | Core subsystems | All in-house | 3D rendering, physics, audio, sensory — no third-party libs |
 | External deps | Minimal | Vulkan SDK, Volk, vulkan-hpp, VMA, Slang — nothing else |
+| Internal libraries | `libs/` static libs | Self-contained LEGO bricks, plain namespaces, future submodule-ready |
+| Test framework | Own `test` library | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
 
 ## Current Status
 
