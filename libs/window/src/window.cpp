@@ -17,15 +17,15 @@
 namespace window
 {
 
-std::unique_ptr<Window> create(const WindowConfig& config)
-{
+    std::unique_ptr<Window> create(const WindowConfig& config)
+    {
 #ifdef _WIN32
-    return std::make_unique<Win32Window>(config);
+        return std::make_unique<Win32Window>(config);
 #elif defined(__linux__)
-    return std::make_unique<XcbWindow>(config);
+        return std::make_unique<XcbWindow>(config);
 #else
-    throw std::runtime_error("Unsupported platform");
+        throw std::runtime_error("Unsupported platform");
 #endif
-}
+    }
 
 } // namespace window

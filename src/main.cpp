@@ -78,8 +78,8 @@ int main()
                 }
             }
 
-// Here you would: render frame, present, etc.
-// For now, just yield to avoid busy loop
+            // Here you would: render frame, present, etc.
+            // For now, just yield to avoid busy loop
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 

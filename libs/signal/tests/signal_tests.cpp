@@ -79,8 +79,7 @@ TEST_CASE(thread_safety)
 
     std::thread consumer([&] {
         int consumed = 0;
-        while (consumed < count)
-        {
+        while (consumed < count) {
             int value = 0;
             if (sig.consume(value))
                 ++consumed;
