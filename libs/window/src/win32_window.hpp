@@ -10,8 +10,12 @@
 
 #include "window/window.hpp"
 // Lean and mean Windows
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <Windows.h>
 
 class Win32Window : public Window {

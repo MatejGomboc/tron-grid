@@ -11,7 +11,7 @@
 #include <mutex>
 #include <queue>
 
-namespace signal
+namespace signals
 {
 
     /// Thread-safe, typed message queue for inter-system communication.
@@ -60,4 +60,4 @@ namespace signal
         }
     };
 
-} // namespace signal
+} // namespace signalss
