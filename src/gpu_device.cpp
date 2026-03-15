@@ -154,9 +154,14 @@ namespace gpu
             queue_create_infos.push_back(queue_info);
         }
 
+        // Enable synchronization2 (Vulkan 1.3 core)
+        vk::PhysicalDeviceSynchronization2Features sync2_features{};
+        sync2_features.synchronization2 = VK_TRUE;
+
         // Enable dynamic rendering (Vulkan 1.3 core)
         vk::PhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
         dynamic_rendering_features.dynamicRendering = VK_TRUE;
+        dynamic_rendering_features.pNext = &sync2_features;
 
         vk::PhysicalDeviceFeatures2 features2{};
         features2.pNext = &dynamic_rendering_features;
