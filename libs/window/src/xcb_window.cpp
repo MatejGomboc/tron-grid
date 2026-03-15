@@ -24,6 +24,9 @@ static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
     return atom;
 }
 
+namespace WindowLib
+{
+
 XcbWindow::XcbWindow(const WindowConfig& config)
 {
     // Connect to X server
@@ -237,5 +240,7 @@ void* XcbWindow::nativeDisplay() const
 {
     return static_cast<void*>(m_connection);
 }
+
+} // namespace WindowLib
 
 #endif // __linux__

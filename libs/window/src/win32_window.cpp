@@ -10,6 +10,9 @@
 #include <cstdlib>
 #include <iostream>
 
+namespace WindowLib
+{
+
 bool Win32Window::m_class_registered = false;
 
 Win32Window::Win32Window(const WindowConfig& config)
@@ -224,5 +227,7 @@ LRESULT Win32Window::wndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
+
+} // namespace WindowLib
 
 #endif // _WIN32

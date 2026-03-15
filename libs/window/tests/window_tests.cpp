@@ -9,19 +9,19 @@
 
 TEST_CASE(default_event_is_none)
 {
-    WindowEvent ev;
-    TEST_CHECK(ev.type == WindowEvent::Type::None);
+    WindowLib::WindowEvent ev;
+    TEST_CHECK(ev.type == WindowLib::WindowEvent::Type::None);
 }
 
 TEST_CASE(explicit_event_type)
 {
-    WindowEvent ev(WindowEvent::Type::Close);
-    TEST_CHECK(ev.type == WindowEvent::Type::Close);
+    WindowLib::WindowEvent ev(WindowLib::WindowEvent::Type::Close);
+    TEST_CHECK(ev.type == WindowLib::WindowEvent::Type::Close);
 }
 
 TEST_CASE(resize_event_data)
 {
-    WindowEvent ev(WindowEvent::Type::Resize);
+    WindowLib::WindowEvent ev(WindowLib::WindowEvent::Type::Resize);
     ev.resize.width = 1920;
     ev.resize.height = 1080;
     TEST_CHECK_EQUAL(ev.resize.width, static_cast<uint32_t>(1920));
@@ -30,7 +30,7 @@ TEST_CASE(resize_event_data)
 
 TEST_CASE(key_event_data)
 {
-    WindowEvent ev(WindowEvent::Type::KeyDown);
+    WindowLib::WindowEvent ev(WindowLib::WindowEvent::Type::KeyDown);
     ev.key.keycode = 27;
     ev.key.repeat = false;
     TEST_CHECK_EQUAL(ev.key.keycode, static_cast<uint32_t>(27));

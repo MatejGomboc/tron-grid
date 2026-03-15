@@ -12,6 +12,9 @@
 #include <string>
 #include <cstdint>
 
+namespace WindowLib
+{
+
 struct WindowConfig {
     std::string title = "TRON Grid Renderer";
     uint32_t width = 1920;
@@ -87,10 +90,8 @@ private:
     std::queue<WindowEvent> m_event_queue;
 };
 
-namespace WindowLib
-{
-    //! Factory — creates the platform-appropriate window (Win32 or XCB).
-    //! Consumers never need to include platform headers.
-    [[nodiscard]] std::unique_ptr<Window> create(const WindowConfig& config);
+//! Factory — creates the platform-appropriate window (Win32 or XCB).
+//! Consumers never need to include platform headers.
+[[nodiscard]] std::unique_ptr<Window> create(const WindowConfig& config);
 
 } // namespace WindowLib

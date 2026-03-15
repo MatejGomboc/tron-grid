@@ -9,7 +9,7 @@
 #endif
 #include "surface.hpp"
 
-vk::raii::SurfaceKHR createSurface(const vk::raii::Instance& instance, const Window& window)
+vk::raii::SurfaceKHR createSurface(const vk::raii::Instance& instance, const WindowLib::Window& window)
 {
 #ifdef _WIN32
     vk::Win32SurfaceCreateInfoKHR create_info{};

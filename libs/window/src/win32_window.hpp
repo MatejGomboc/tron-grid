@@ -18,6 +18,9 @@
 #endif
 #include <Windows.h>
 
+namespace WindowLib
+{
+
 class Win32Window : public Window {
 public:
     explicit Win32Window(const WindowConfig& config);
@@ -42,5 +45,7 @@ private:
     static constexpr const wchar_t* CLASS_NAME = L"TronGridWindowClass";
     static bool m_class_registered;
 };
+
+} // namespace WindowLib
 
 #endif // _WIN32
