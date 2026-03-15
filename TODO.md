@@ -24,7 +24,7 @@ Completed 2026-03-13. PR #20 merged.
 - `gpu::Instance` with validation layers + debug messenger (debug builds)
 - `gpu::Device` with GPU scoring (discrete preferred), graphics + present queues, dynamic rendering
 - `gpu::create_surface` for platform surface (Win32/XCB) via vulkan-hpp
-- Window library made Vulkan-agnostic (`native_handle()` / `native_display()`)
+- Window library made Vulkan-agnostic (`nativeHandle()` / `nativeDisplay()`)
 - C++20 best practices: `[[nodiscard]]`, `constexpr`, `std::ranges`, designated initialisers
 - `//!` Qt-style doxygen comments across entire codebase
 

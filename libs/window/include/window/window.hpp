@@ -31,63 +31,63 @@ public:
     Window& operator=(Window&&) = delete;
 
     // Process pending platform events into the event queue
-    virtual void pump_events() = 0;
+    virtual void pumpEvents() = 0;
 
     // Platform-native window handle (HWND on Win32, xcb_window_t via void* on XCB)
-    virtual void* native_handle() const = 0;
+    virtual void* nativeHandle() const = 0;
 
     // Platform-native display/instance (HINSTANCE on Win32, xcb_connection_t* on XCB)
-    virtual void* native_display() const = 0;
+    virtual void* nativeDisplay() const = 0;
 
     // Poll next event from queue (returns false if empty)
-    bool poll_event(WindowEvent& out)
+    bool pollEvent(WindowEvent& out)
     {
-        if (event_queue_.empty()) {
+        if (m_event_queue.empty()) {
             return false;
         }
-        out = event_queue_.front();
-        event_queue_.pop();
+        out = m_event_queue.front();
+        m_event_queue.pop();
         return true;
     }
 
     // Accessors
     uint32_t width() const
     {
-        return width_;
+        return m_width;
     }
     uint32_t height() const
     {
-        return height_;
+        return m_height;
     }
-    bool should_close() const
+    bool shouldClose() const
     {
-        return should_close_;
+        return m_should_close;
     }
 
-    void request_close()
+    void requestClose()
     {
-        should_close_ = true;
+        m_should_close = true;
     }
 
 protected:
     Window() = default;
 
-    void push_event(const WindowEvent& ev)
+    void pushEvent(const WindowEvent& ev)
     {
-        event_queue_.push(ev);
+        m_event_queue.push(ev);
     }
 
-    uint32_t width_ = 0;
-    uint32_t height_ = 0;
-    bool should_close_ = false;
+    uint32_t m_width = 0;
+    uint32_t m_height = 0;
+    bool m_should_close = false;
 
 private:
-    std::queue<WindowEvent> event_queue_;
+    std::queue<WindowEvent> m_event_queue;
 };
 
-namespace window
+namespace WindowLib
 {
     // Factory — creates the platform-appropriate window (Win32 or XCB).
     // Consumers never need to include platform headers.
     std::unique_ptr<Window> create(const WindowConfig& config);
-} // namespace window
+} // namespace WindowLib

@@ -11,7 +11,7 @@
 #include <mutex>
 #include <queue>
 
-namespace signals
+namespace SignalLib
 {
 
     //! thread-safe, typed message queue for inter-system communication.
@@ -23,41 +23,41 @@ namespace signals
     //! when the receiver is destroyed, the shared_ptr dies, the weak_ptr expires,
     //! and the sender knows to stop — no dangling pointers, no manual unregistration.
     template <typename T> struct Signal {
-        std::queue<T> pending; //!< queued messages
-        mutable std::mutex mutex; //!< protects the queue
+        std::queue<T> m_pending; //!< queued messages
+        mutable std::mutex m_mutex; //!< protects the queue
 
         //! thread-safe enqueue.
         void emit(const T& data)
         {
-            std::lock_guard<std::mutex> lock(mutex);
-            pending.push(data);
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_pending.push(data);
         }
 
         //! thread-safe dequeue. returns true if a value was consumed.
         [[nodiscard]] bool consume(T& out)
         {
-            std::lock_guard<std::mutex> lock(mutex);
-            if (pending.empty()) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            if (m_pending.empty()) {
                 return false;
             }
-            out = std::move(pending.front());
-            pending.pop();
+            out = std::move(m_pending.front());
+            m_pending.pop();
             return true;
         }
 
         //! returns true if the queue is empty.
         [[nodiscard]] bool empty() const
         {
-            std::lock_guard<std::mutex> lock(mutex);
-            return pending.empty();
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_pending.empty();
         }
 
         //! returns the number of pending messages.
         [[nodiscard]] std::size_t size() const
         {
-            std::lock_guard<std::mutex> lock(mutex);
-            return pending.size();
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_pending.size();
         }
     };
 
-} // namespace signals
+} // namespace SignalLib

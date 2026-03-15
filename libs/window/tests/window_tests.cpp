@@ -39,5 +39,5 @@ TEST_CASE(key_event_data)
 
 int main()
 {
-    return test_fixture::run_all();
+    return TestFixtureLib::runAll();
 }

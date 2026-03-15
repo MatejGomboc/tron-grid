@@ -8,15 +8,15 @@
 #include "gpu_instance.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iostream>
 #include <ranges>
 #include <set>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace gpu
+namespace Gpu
 {
 
     //! required device extensions.
@@ -28,13 +28,13 @@ namespace gpu
         uint32_t graphics = UINT32_MAX; //!< graphics queue family index
         uint32_t present = UINT32_MAX; //!< present queue family index
 
-        [[nodiscard]] bool is_complete() const
+        [[nodiscard]] bool isComplete() const
         {
-            return graphics != UINT32_MAX && present != UINT32_MAX;
+            return (graphics != UINT32_MAX) && (present != UINT32_MAX);
         }
     };
 
-    static QueueFamilyIndices find_queue_families(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
+    static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
     {
         QueueFamilyIndices indices;
         std::vector<vk::QueueFamilyProperties> families = device.getQueueFamilyProperties();
@@ -52,7 +52,7 @@ namespace gpu
             }
 
             // Prefer a single family that supports both (better performance)
-            if (indices.graphics == indices.present && indices.is_complete()) {
+            if (indices.graphics == indices.present && indices.isComplete()) {
                 break;
             }
         }
@@ -60,7 +60,7 @@ namespace gpu
         return indices;
     }
 
-    static bool has_required_extensions(const vk::raii::PhysicalDevice& device)
+    static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
     {
         std::vector<vk::ExtensionProperties> available = device.enumerateDeviceExtensionProperties();
 
@@ -76,13 +76,18 @@ namespace gpu
         return true;
     }
 
-    static int rate_device(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
+    static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
     {
         vk::PhysicalDeviceProperties properties = device.getProperties();
-        QueueFamilyIndices indices = find_queue_families(device, surface);
+        QueueFamilyIndices indices = findQueueFamilies(device, surface);
+
+        // Must support Vulkan 1.3 (for synchronization2, dynamic rendering)
+        if (VK_API_VERSION_MINOR(properties.apiVersion) < 3) {
+            return -1;
+        }
 
         // Must have graphics + present queues and required extensions
-        if (!indices.is_complete() || !has_required_extensions(device)) {
+        if (!indices.isComplete() || !hasRequiredExtensions(device)) {
             return -1;
         }
 
@@ -108,7 +113,9 @@ namespace gpu
         // Step 1: Enumerate physical devices
         std::vector<vk::raii::PhysicalDevice> physical_devices = instance.get().enumeratePhysicalDevices();
         if (physical_devices.empty()) {
-            throw std::runtime_error("No Vulkan-capable GPU found");
+            std::cerr << "[TronGrid] Fatal: no Vulkan-capable GPU found\n";
+            std::abort();
+            return;
         }
 
         // Step 2: Score and pick the best device
@@ -116,7 +123,7 @@ namespace gpu
         size_t best_index = 0;
 
         for (size_t i = 0; i < physical_devices.size(); ++i) {
-            int score = rate_device(physical_devices[i], surface);
+            int score = rateDevice(physical_devices[i], surface);
             vk::PhysicalDeviceProperties props = physical_devices[i].getProperties();
             std::cerr << "[TronGrid] GPU " << i << ": " << props.deviceName.data() << " (score: " << score << ")\n";
 
@@ -127,25 +134,27 @@ namespace gpu
         }
 
         if (best_score < 0) {
-            throw std::runtime_error("No suitable GPU found (need graphics + present queues and VK_KHR_swapchain)");
+            std::cerr << "[TronGrid] Fatal: no suitable GPU found (need graphics + present queues and VK_KHR_swapchain)\n";
+            std::abort();
+            return;
         }
 
-        physical_device_ = std::move(physical_devices[best_index]);
-        vk::PhysicalDeviceProperties properties = physical_device_.getProperties();
-        device_name_ = properties.deviceName.data();
-        std::cout << "Selected GPU: " << device_name_ << "\n";
+        m_physical_device = std::move(physical_devices[best_index]);
+        vk::PhysicalDeviceProperties properties = m_physical_device.getProperties();
+        m_device_name = properties.deviceName.data();
+        std::cout << "Selected GPU: " << m_device_name << "\n";
 
         // Step 3: Find queue families
-        QueueFamilyIndices indices = find_queue_families(physical_device_, surface);
-        graphics_family_index_ = indices.graphics;
-        present_family_index_ = indices.present;
+        QueueFamilyIndices indices = findQueueFamilies(m_physical_device, surface);
+        m_graphics_family_index = indices.graphics;
+        m_present_family_index = indices.present;
 
         // Step 4: Create logical device
         constexpr float QUEUE_PRIORITY = 1.0f;
         std::vector<vk::DeviceQueueCreateInfo> queue_create_infos;
 
         // Deduplicate queue family indices
-        std::set<uint32_t> unique_families = {graphics_family_index_, present_family_index_};
+        std::set<uint32_t> unique_families = {m_graphics_family_index, m_present_family_index};
         for (uint32_t family : unique_families) {
             vk::DeviceQueueCreateInfo queue_info{};
             queue_info.queueFamilyIndex = family;
@@ -173,15 +182,15 @@ namespace gpu
         device_info.enabledExtensionCount = static_cast<uint32_t>(std::size(REQUIRED_DEVICE_EXTENSIONS));
         device_info.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS;
 
-        device_ = vk::raii::Device(physical_device_, device_info);
+        m_device = vk::raii::Device(m_physical_device, device_info);
 
         // Step 5: Load device-level function pointers
-        volkLoadDevice(*device_);
-        VULKAN_HPP_DEFAULT_DISPATCHER.init(*device_);
+        volkLoadDevice(*m_device);
+        VULKAN_HPP_DEFAULT_DISPATCHER.init(*m_device);
 
         // Step 6: Retrieve queue handles
-        graphics_queue_ = device_.getQueue(graphics_family_index_, 0);
-        present_queue_ = device_.getQueue(present_family_index_, 0);
+        m_graphics_queue = m_device.getQueue(m_graphics_family_index, 0);
+        m_present_queue = m_device.getQueue(m_present_family_index, 0);
     }
 
-} // namespace gpu
+} // namespace Gpu

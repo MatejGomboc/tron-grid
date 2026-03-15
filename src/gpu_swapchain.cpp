@@ -8,28 +8,30 @@
 #include "gpu_device.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <ranges>
-#include <stdexcept>
 
-namespace gpu
+namespace Gpu
 {
 
-    static vk::SurfaceFormatKHR choose_surface_format(const std::vector<vk::SurfaceFormatKHR>& available)
+    static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& available)
     {
         // Prefer sRGB with B8G8R8A8 layout
-        for (const vk::SurfaceFormatKHR& fmt : available) {
-            if (fmt.format == vk::Format::eB8G8R8A8Srgb && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear) {
-                return fmt;
-            }
+        auto it = std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
+            return fmt.format == vk::Format::eB8G8R8A8Srgb && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+        });
+
+        if (it != available.end()) {
+            return *it;
         }
 
         // Fall back to first available
         return available.front();
     }
 
-    static vk::PresentModeKHR choose_present_mode(const std::vector<vk::PresentModeKHR>& available)
+    static vk::PresentModeKHR choosePresentMode(const std::vector<vk::PresentModeKHR>& available)
     {
         // Prefer MAILBOX (low latency, no tearing)
         if (std::ranges::any_of(available, [](vk::PresentModeKHR mode) {
@@ -42,7 +44,7 @@ namespace gpu
         return vk::PresentModeKHR::eFifo;
     }
 
-    static vk::Extent2D choose_extent(const vk::SurfaceCapabilitiesKHR& capabilities, uint32_t width, uint32_t height)
+    static vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities, uint32_t width, uint32_t height)
     {
         // If currentExtent is not the special 0xFFFFFFFF value, the surface size is fixed
         if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
@@ -56,7 +58,7 @@ namespace gpu
         return extent;
     }
 
-    Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height) : device_(&device), surface_(surface)
+    Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height) : m_device(&device), m_surface(surface)
     {
         build(width, height);
     }
@@ -64,11 +66,11 @@ namespace gpu
     void Swapchain::recreate(uint32_t width, uint32_t height)
     {
         // Wait for the device to finish before destroying old resources
-        device_->get().waitIdle();
+        m_device->get().waitIdle();
 
         // Clear old views first (they reference old images)
-        views_.clear();
-        images_.clear();
+        m_views.clear();
+        m_images.clear();
 
         // Rebuild with old swapchain for smoother transition
         build(width, height);
@@ -76,21 +78,23 @@ namespace gpu
 
     void Swapchain::build(uint32_t width, uint32_t height)
     {
-        const vk::raii::PhysicalDevice& physical_device = device_->physical_device();
+        const vk::raii::PhysicalDevice& physical_device = m_device->physicalDevice();
 
         // Query surface capabilities
-        vk::SurfaceCapabilitiesKHR capabilities = physical_device.getSurfaceCapabilitiesKHR(surface_);
-        std::vector<vk::SurfaceFormatKHR> formats = physical_device.getSurfaceFormatsKHR(surface_);
-        std::vector<vk::PresentModeKHR> present_modes = physical_device.getSurfacePresentModesKHR(surface_);
+        vk::SurfaceCapabilitiesKHR capabilities = physical_device.getSurfaceCapabilitiesKHR(m_surface);
+        std::vector<vk::SurfaceFormatKHR> formats = physical_device.getSurfaceFormatsKHR(m_surface);
+        std::vector<vk::PresentModeKHR> present_modes = physical_device.getSurfacePresentModesKHR(m_surface);
 
         if (formats.empty()) {
-            throw std::runtime_error("No surface formats available");
+            std::cerr << "[TronGrid] Fatal: no surface formats available\n";
+            std::abort();
+            return;
         }
 
         // Choose optimal settings
-        format_ = choose_surface_format(formats);
-        present_mode_ = choose_present_mode(present_modes);
-        extent_ = choose_extent(capabilities, width, height);
+        m_format = chooseSurfaceFormat(formats);
+        m_present_mode = choosePresentMode(present_modes);
+        m_extent = chooseExtent(capabilities, width, height);
 
         // Image count: min + 1 for triple buffering headroom
         uint32_t image_count = capabilities.minImageCount + 1;
@@ -100,19 +104,19 @@ namespace gpu
 
         // Create swapchain
         vk::SwapchainCreateInfoKHR create_info{};
-        create_info.surface = surface_;
+        create_info.surface = m_surface;
         create_info.minImageCount = image_count;
-        create_info.imageFormat = format_.format;
-        create_info.imageColorSpace = format_.colorSpace;
-        create_info.imageExtent = extent_;
+        create_info.imageFormat = m_format.format;
+        create_info.imageColorSpace = m_format.colorSpace;
+        create_info.imageExtent = m_extent;
         create_info.imageArrayLayers = 1;
         create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
 
-        uint32_t graphics_family = device_->graphics_family_index();
-        uint32_t present_family = device_->present_family_index();
+        uint32_t graphics_family = m_device->graphicsFamilyIndex();
+        uint32_t present_family = m_device->presentFamilyIndex();
+        uint32_t family_indices[] = {graphics_family, present_family};
 
         if (graphics_family != present_family) {
-            uint32_t family_indices[] = {graphics_family, present_family};
             create_info.imageSharingMode = vk::SharingMode::eConcurrent;
             create_info.queueFamilyIndexCount = 2;
             create_info.pQueueFamilyIndices = family_indices;
@@ -122,29 +126,29 @@ namespace gpu
 
         create_info.preTransform = capabilities.currentTransform;
         create_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
-        create_info.presentMode = present_mode_;
+        create_info.presentMode = m_present_mode;
         create_info.clipped = VK_TRUE;
 
         // Pass old swapchain for smoother recreation
-        create_info.oldSwapchain = *swapchain_;
+        create_info.oldSwapchain = *m_swapchain;
 
-        swapchain_ = vk::raii::SwapchainKHR(device_->get(), create_info);
+        m_swapchain = vk::raii::SwapchainKHR(m_device->get(), create_info);
 
         // Retrieve swapchain images
-        images_ = swapchain_.getImages();
+        m_images = m_swapchain.getImages();
 
-        std::cout << "Swapchain created: " << extent_.width << "x" << extent_.height << " (" << images_.size() << " images, "
-                  << (present_mode_ == vk::PresentModeKHR::eMailbox ? "MAILBOX" : "FIFO") << ")\n";
+        std::cout << "Swapchain created: " << m_extent.width << "x" << m_extent.height << " (" << m_images.size() << " images, "
+                  << (m_present_mode == vk::PresentModeKHR::eMailbox ? "MAILBOX" : "FIFO") << ")\n";
 
         // Create image views
-        views_.clear();
-        views_.reserve(images_.size());
+        m_views.clear();
+        m_views.reserve(m_images.size());
 
-        for (vk::Image image : images_) {
+        for (vk::Image image : m_images) {
             vk::ImageViewCreateInfo view_info{};
             view_info.image = image;
             view_info.viewType = vk::ImageViewType::e2D;
-            view_info.format = format_.format;
+            view_info.format = m_format.format;
             view_info.components.r = vk::ComponentSwizzle::eIdentity;
             view_info.components.g = vk::ComponentSwizzle::eIdentity;
             view_info.components.b = vk::ComponentSwizzle::eIdentity;
@@ -155,8 +159,8 @@ namespace gpu
             view_info.subresourceRange.baseArrayLayer = 0;
             view_info.subresourceRange.layerCount = 1;
 
-            views_.push_back(vk::raii::ImageView(device_->get(), view_info));
+            m_views.push_back(vk::raii::ImageView(m_device->get(), view_info));
         }
     }
 
-} // namespace gpu
+} // namespace Gpu

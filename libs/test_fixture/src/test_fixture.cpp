@@ -9,7 +9,7 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace test_fixture
+namespace TestFixtureLib
 {
 
     struct CheckFailure : std::runtime_error {
@@ -22,12 +22,12 @@ namespace test_fixture
         return cases;
     }
 
-    void register_test(std::string_view name, std::function<void()> fn)
+    void registerTest(std::string_view name, std::function<void()> fn)
     {
         registry().push_back({name, std::move(fn)});
     }
 
-    int run_all()
+    int runAll()
     {
         const auto& cases = registry();
         std::size_t passed = 0;
@@ -54,7 +54,7 @@ namespace test_fixture
         return failed > 0 ? 1 : 0;
     }
 
-    [[noreturn]] void check_failed(std::string_view expr, std::source_location loc)
+    [[noreturn]] void checkFailed(std::string_view expr, std::source_location loc)
     {
         std::string msg;
         msg += loc.file_name();
@@ -65,8 +65,7 @@ namespace test_fixture
         throw CheckFailure(msg);
     }
 
-    [[noreturn]] void check_equal_failed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val,
-        std::source_location loc)
+    [[noreturn]] void checkEqualFailed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val, std::source_location loc)
     {
         std::string msg;
         msg += loc.file_name();
@@ -84,4 +83,4 @@ namespace test_fixture
         throw CheckFailure(msg);
     }
 
-} // namespace test_fixture
+} // namespace TestFixtureLib

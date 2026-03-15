@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -27,7 +28,7 @@ struct ResizeEvent {
 
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
-static void record_clear_command(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView view, vk::Extent2D extent)
+static void recordClearCommand(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView view, vk::Extent2D extent)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -41,6 +42,8 @@ static void record_clear_command(const vk::raii::CommandBuffer& cmd, vk::Image i
     to_colour.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     to_colour.oldLayout = vk::ImageLayout::eUndefined;
     to_colour.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    to_colour.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_colour.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_colour.image = image;
     to_colour.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     to_colour.subresourceRange.baseMipLevel = 0;
@@ -79,6 +82,8 @@ static void record_clear_command(const vk::raii::CommandBuffer& cmd, vk::Image i
     to_present.dstAccessMask = vk::AccessFlagBits2::eNone;
     to_present.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
     to_present.newLayout = vk::ImageLayout::ePresentSrcKHR;
+    to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     to_present.image = image;
     to_present.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     to_present.subresourceRange.baseMipLevel = 0;
@@ -104,7 +109,7 @@ int main()
             .height = 720,
         };
 
-        std::unique_ptr<Window> window = window::create(config);
+        std::unique_ptr<Window> window = WindowLib::create(config);
         std::cout << "Window created: " << config.width << "x" << config.height << "\n";
 
         // Vulkan initialisation
@@ -115,19 +120,19 @@ int main()
             true;
 #endif
 
-        gpu::Instance instance(ENABLE_VALIDATION, gpu::required_surface_extensions());
-        vk::raii::SurfaceKHR surface = gpu::create_surface(instance.get(), *window);
-        gpu::Device device(instance, *surface);
+        Gpu::Instance instance(ENABLE_VALIDATION, Gpu::requiredSurfaceExtensions());
+        vk::raii::SurfaceKHR surface = Gpu::createSurface(instance.get(), *window);
+        Gpu::Device device(instance, *surface);
 
         std::cout << "Vulkan ready - GPU: " << device.name() << "\n";
 
         // Create swapchain
-        gpu::Swapchain swapchain(device, *surface, config.width, config.height);
+        Gpu::Swapchain swapchain(device, *surface, config.width, config.height);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
         pool_info.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer;
-        pool_info.queueFamilyIndex = device.graphics_family_index();
+        pool_info.queueFamilyIndex = device.graphicsFamilyIndex();
         vk::raii::CommandPool command_pool(device.get(), pool_info);
 
         vk::CommandBufferAllocateInfo alloc_info{};
@@ -154,13 +159,13 @@ int main()
         uint32_t current_frame = 0;
 
         // Resize signal — event loop emits, render loop consumes
-        signals::Signal<ResizeEvent> resize_signal;
+        SignalLib::Signal<ResizeEvent> resize_signal;
 
         std::cout << "Press ESC to close\n";
 
         // Main loop
-        while (!window->should_close()) {
-            window->pump_events();
+        while (!window->shouldClose()) {
+            window->pumpEvents();
 
             WindowEvent ev;
 #ifdef _WIN32
@@ -168,7 +173,7 @@ int main()
 #else
             constexpr uint32_t ESC_KEYCODE = 9; // X11 keycode
 #endif
-            while (window->poll_event(ev)) {
+            while (window->pollEvent(ev)) {
                 switch (ev.type) {
                 case WindowEvent::Type::Close:
                     std::cout << "Close requested\n";
@@ -180,7 +185,7 @@ int main()
 
                 case WindowEvent::Type::KeyDown:
                     if (ev.key.keycode == ESC_KEYCODE) {
-                        window->request_close();
+                        window->requestClose();
                     }
                     break;
 
@@ -196,7 +201,7 @@ int main()
                 while (resize_signal.consume(resize_ev)) {
                     needs_recreate = true;
                 }
-                if (needs_recreate) {
+                if (needs_recreate && resize_ev.width > 0 && resize_ev.height > 0) {
                     swapchain.recreate(resize_ev.width, resize_ev.height);
                 }
             }
@@ -209,26 +214,26 @@ int main()
             // Wait for this frame's fence
             vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, VK_TRUE, std::numeric_limits<uint64_t>::max());
             if (wait_result != vk::Result::eSuccess) {
-                throw std::runtime_error("Failed to wait for fence");
+                std::cerr << "[TronGrid] Fatal: failed to wait for fence\n";
+                std::abort();
+                return 1;
             }
 
             // Acquire next swapchain image
             uint32_t image_index = 0;
             vk::Result acquire_result = vk::Result::eSuccess;
             try {
-                vk::ResultValue<uint32_t> acquire = swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(),
-                    *image_available_semaphores[current_frame]);
+                vk::ResultValue<uint32_t> acquire = swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(), *image_available_semaphores[current_frame]);
                 acquire_result = acquire.result;
                 image_index = acquire.value;
             } catch (const vk::OutOfDateKHRError&) {
-                swapchain.recreate(window->width(), window->height());
+                if (window->width() > 0 && window->height() > 0) {
+                    swapchain.recreate(window->width(), window->height());
+                }
                 continue;
             }
 
-            if (acquire_result == vk::Result::eSuboptimalKHR) {
-                swapchain.recreate(window->width(), window->height());
-                continue;
-            }
+            bool swapchain_suboptimal = (acquire_result == vk::Result::eSuboptimalKHR);
 
             // Only reset fence after we know we will submit work
             device.get().resetFences({*in_flight_fences[current_frame]});
@@ -236,7 +241,7 @@ int main()
             // Record command buffer
             const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
             cmd.reset();
-            record_clear_command(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], swapchain.extent());
+            recordClearCommand(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], swapchain.extent());
 
             // Submit
             vk::SemaphoreSubmitInfo wait_sem{};
@@ -258,7 +263,7 @@ int main()
             submit_info.signalSemaphoreInfoCount = 1;
             submit_info.pSignalSemaphoreInfos = &signal_sem;
 
-            device.graphics_queue().submit2({submit_info}, *in_flight_fences[current_frame]);
+            device.graphicsQueue().submit2({submit_info}, *in_flight_fences[current_frame]);
 
             // Present
             vk::PresentInfoKHR present_info{};
@@ -271,14 +276,18 @@ int main()
 
             vk::Result present_result = vk::Result::eSuccess;
             try {
-                present_result = device.present_queue().presentKHR(present_info);
+                present_result = device.presentQueue().presentKHR(present_info);
             } catch (const vk::OutOfDateKHRError&) {
-                swapchain.recreate(window->width(), window->height());
+                if (window->width() > 0 && window->height() > 0) {
+                    swapchain.recreate(window->width(), window->height());
+                }
                 continue;
             }
 
-            if (present_result == vk::Result::eSuboptimalKHR) {
-                swapchain.recreate(window->width(), window->height());
+            if (present_result == vk::Result::eSuboptimalKHR || swapchain_suboptimal) {
+                if (window->width() > 0 && window->height() > 0) {
+                    swapchain.recreate(window->width(), window->height());
+                }
             }
 
             current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;

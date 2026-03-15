@@ -12,27 +12,27 @@
 
 #include <stdexcept>
 
-namespace gpu
+namespace Gpu
 {
 
-    vk::raii::SurfaceKHR create_surface(const vk::raii::Instance& instance, const Window& window)
+    vk::raii::SurfaceKHR createSurface(const vk::raii::Instance& instance, const Window& window)
     {
 #ifdef _WIN32
         vk::Win32SurfaceCreateInfoKHR create_info{};
-        create_info.hinstance = static_cast<HINSTANCE>(window.native_display());
-        create_info.hwnd = static_cast<HWND>(window.native_handle());
+        create_info.hinstance = static_cast<HINSTANCE>(window.nativeDisplay());
+        create_info.hwnd = static_cast<HWND>(window.nativeHandle());
 
         return instance.createWin32SurfaceKHR(create_info);
 #else
         vk::XcbSurfaceCreateInfoKHR create_info{};
-        create_info.connection = static_cast<xcb_connection_t*>(window.native_display());
-        create_info.window = static_cast<xcb_window_t>(reinterpret_cast<uintptr_t>(window.native_handle()));
+        create_info.connection = static_cast<xcb_connection_t*>(window.nativeDisplay());
+        create_info.window = static_cast<xcb_window_t>(reinterpret_cast<uintptr_t>(window.nativeHandle()));
 
         return instance.createXcbSurfaceKHR(create_info);
 #endif
     }
 
-    std::vector<const char*> required_surface_extensions()
+    std::vector<const char*> requiredSurfaceExtensions()
     {
         return {
             VK_KHR_SURFACE_EXTENSION_NAME,
@@ -44,4 +44,4 @@ namespace gpu
         };
     }
 
-} // namespace gpu
+} // namespace Gpu

@@ -13,7 +13,7 @@
 
 #include <vector>
 
-namespace gpu
+namespace Gpu
 {
 
     class Device; // forward declaration
@@ -37,51 +37,51 @@ namespace gpu
         //! RAII swapchain reference.
         [[nodiscard]] const vk::raii::SwapchainKHR& get() const
         {
-            return swapchain_;
+            return m_swapchain;
         }
 
         //! swapchain images (non-owning, managed by the swapchain).
         [[nodiscard]] const std::vector<vk::Image>& images() const
         {
-            return images_;
+            return m_images;
         }
 
         //! per-image views.
         [[nodiscard]] const std::vector<vk::raii::ImageView>& views() const
         {
-            return views_;
+            return m_views;
         }
 
         //! chosen surface format.
         [[nodiscard]] vk::SurfaceFormatKHR format() const
         {
-            return format_;
+            return m_format;
         }
 
         //! current swapchain extent.
         [[nodiscard]] vk::Extent2D extent() const
         {
-            return extent_;
+            return m_extent;
         }
 
         //! number of swapchain images.
-        [[nodiscard]] uint32_t image_count() const
+        [[nodiscard]] uint32_t imageCount() const
         {
-            return static_cast<uint32_t>(images_.size());
+            return static_cast<uint32_t>(m_images.size());
         }
 
     private:
         //! internal: query surface and build swapchain + views.
         void build(uint32_t width, uint32_t height);
 
-        const Device* device_ = nullptr; //!< back-pointer to the device (non-owning)
-        VkSurfaceKHR surface_ = VK_NULL_HANDLE; //!< surface handle (non-owning)
-        vk::raii::SwapchainKHR swapchain_{nullptr}; //!< swapchain handle
-        std::vector<vk::Image> images_; //!< swapchain images (non-owning)
-        std::vector<vk::raii::ImageView> views_; //!< per-image views
-        vk::SurfaceFormatKHR format_{}; //!< chosen surface format
-        vk::PresentModeKHR present_mode_{}; //!< chosen present mode
-        vk::Extent2D extent_{}; //!< current extent
+        const Device* m_device = nullptr; //!< back-pointer to the device (non-owning)
+        VkSurfaceKHR m_surface = VK_NULL_HANDLE; //!< surface handle (non-owning)
+        vk::raii::SwapchainKHR m_swapchain{nullptr}; //!< swapchain handle
+        std::vector<vk::Image> m_images; //!< swapchain images (non-owning)
+        std::vector<vk::raii::ImageView> m_views; //!< per-image views
+        vk::SurfaceFormatKHR m_format{}; //!< chosen surface format
+        vk::PresentModeKHR m_present_mode{}; //!< chosen present mode
+        vk::Extent2D m_extent{}; //!< current extent
     };
 
-} // namespace gpu
+} // namespace Gpu

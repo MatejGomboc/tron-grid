@@ -14,7 +14,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace test_fixture
+namespace TestFixtureLib
 {
 
     struct TestCase {
@@ -26,16 +26,16 @@ namespace test_fixture
     std::vector<TestCase>& registry();
 
     //! registers a test case. called automatically by TEST_CASE macro.
-    void register_test(std::string_view name, std::function<void()> fn);
+    void registerTest(std::string_view name, std::function<void()> fn);
 
     //! runs all registered tests. returns 0 if all pass, 1 if any fail.
-    [[nodiscard]] int run_all();
+    [[nodiscard]] int runAll();
 
     //! reports a check failure. throws to abort the current test.
-    [[noreturn]] void check_failed(std::string_view expr, std::source_location loc = std::source_location::current());
+    [[noreturn]] void checkFailed(std::string_view expr, std::source_location loc = std::source_location::current());
 
     //! reports an equality check failure. throws to abort the current test.
-    [[noreturn]] void check_equal_failed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val,
+    [[noreturn]] void checkEqualFailed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val,
         std::source_location loc = std::source_location::current());
 
     // ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ namespace test_fixture
     // ---------------------------------------------------------------------------
 
     //! converts a value to a string for diagnostics.
-    template <typename T> std::string to_string(const T& v)
+    template <typename T> std::string toString(const T& v)
     {
         if constexpr (std::is_convertible_v<T, std::string>) {
             return std::string(v);
@@ -56,15 +56,15 @@ namespace test_fixture
 
     //! checks that two values are equal; reports failure with stringified expressions and values.
     template <typename A, typename B>
-    void check_equal(const A& lhs, const B& rhs, std::string_view lhs_expr, std::string_view rhs_expr, std::source_location loc = std::source_location::current())
+    void checkEqual(const A& lhs, const B& rhs, std::string_view lhs_expr, std::string_view rhs_expr, std::source_location loc = std::source_location::current())
     {
         if (!(lhs == rhs)) {
-            check_equal_failed(lhs_expr, rhs_expr, to_string(lhs), to_string(rhs), loc);
+            checkEqualFailed(lhs_expr, rhs_expr, toString(lhs), toString(rhs), loc);
         }
     }
 
     //! checks that a callable throws any exception.
-    template <typename Fn> void check_throws(Fn&& fn, std::string_view expr, std::source_location loc = std::source_location::current())
+    template <typename Fn> void checkThrows(Fn&& fn, std::string_view expr, std::source_location loc = std::source_location::current())
     {
         bool threw = false;
         try {
@@ -75,45 +75,45 @@ namespace test_fixture
         if (!threw) {
             std::string msg(expr);
             msg += " did not throw";
-            check_failed(msg, loc);
+            checkFailed(msg, loc);
         }
     }
 
-} // namespace test_fixture
+} // namespace TestFixtureLib
 
 // ---------------------------------------------------------------------------
 // Thin macros — only used for expression stringification (#expr)
 // ---------------------------------------------------------------------------
 
 //! fails with file, line, and stringified expression if `expr` is false.
-#define TEST_CHECK(expr)                         \
-    do {                                         \
-        if (!(expr)) {                           \
-            ::test_fixture::check_failed(#expr); \
-        }                                        \
+#define TEST_CHECK(expr)                          \
+    do {                                          \
+        if (!(expr)) {                            \
+            ::TestFixtureLib::checkFailed(#expr); \
+        }                                         \
     } while (false)
 
 //! fails showing both values if `a != b`.
-#define TEST_CHECK_EQUAL(a, b) ::test_fixture::check_equal((a), (b), #a, #b)
+#define TEST_CHECK_EQUAL(a, b) ::TestFixtureLib::checkEqual((a), (b), #a, #b)
 
 //! fails if `expr` does not throw.
-#define TEST_CHECK_THROWS(expr)   \
-    ::test_fixture::check_throws( \
-        [&] {                     \
-            (void)(expr);         \
-        },                        \
+#define TEST_CHECK_THROWS(expr)    \
+    ::TestFixtureLib::checkThrows( \
+        [&] {                      \
+            (void)(expr);          \
+        },                         \
         #expr)
 
 //! defines and auto-registers a test case.
-#define TEST_CASE(test_name)                                          \
-    static void test_name();                                          \
-    namespace                                                         \
-    {                                                                 \
-        struct test_name##_registrar {                                \
-            test_name##_registrar()                                   \
-            {                                                         \
-                ::test_fixture::register_test(#test_name, test_name); \
-            }                                                         \
-        } test_name##_instance;                                       \
-    }                                                                 \
+#define TEST_CASE(test_name)                                           \
+    static void test_name();                                           \
+    namespace                                                          \
+    {                                                                  \
+        struct test_name##_registrar {                                 \
+            test_name##_registrar()                                    \
+            {                                                          \
+                ::TestFixtureLib::registerTest(#test_name, test_name); \
+            }                                                          \
+        } test_name##_instance;                                        \
+    }                                                                  \
     static void test_name()
