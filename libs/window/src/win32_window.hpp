@@ -54,12 +54,12 @@ namespace WindowLib
         //! Instance window procedure handling Win32 messages.
         LRESULT wndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
-        HWND m_hwnd = nullptr; //!< Native window handle.
-        HINSTANCE m_hinstance = nullptr; //!< Application instance handle.
+        HWND m_hwnd{nullptr}; //!< Native window handle.
+        HINSTANCE m_hinstance{nullptr}; //!< Application instance handle.
 
-        int32_t m_last_mouse_x = 0; //!< Last known mouse x for delta computation.
-        int32_t m_last_mouse_y = 0; //!< Last known mouse y for delta computation.
-        bool m_mouse_tracked = false; //!< True after the first mouse event has been received.
+        int32_t m_last_mouse_x{0}; //!< Last known mouse x for delta computation.
+        int32_t m_last_mouse_y{0}; //!< Last known mouse y for delta computation.
+        bool m_mouse_tracked{false}; //!< True after the first mouse event has been received.
 
         static constexpr const wchar_t* CLASS_NAME = L"TronGridWindowClass"; //!< Win32 window class name.
         static bool m_class_registered; //!< Tracks whether the Win32 window class has been registered.
