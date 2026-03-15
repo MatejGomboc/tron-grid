@@ -1,8 +1,8 @@
 /*
- * TronGrid — Win32 window implementation
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — Win32 window implementation
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #pragma once
 
@@ -23,24 +23,24 @@ public:
     explicit Win32Window(const WindowConfig& config);
     ~Win32Window() override;
 
-    void pump_events() override;
-    void* native_handle() const override;
-    void* native_display() const override;
+    void pumpEvents() override;
+    void* nativeHandle() const override;
+    void* nativeDisplay() const override;
 
 private:
-    static LRESULT CALLBACK wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-    LRESULT wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+    static LRESULT CALLBACK wndProcStatic(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+    LRESULT wndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
-    HWND hwnd_ = nullptr;
-    HINSTANCE hinstance_ = nullptr;
+    HWND m_hwnd = nullptr;
+    HINSTANCE m_hinstance = nullptr;
 
     // Track last mouse position for deltas
-    int32_t last_mouse_x_ = 0;
-    int32_t last_mouse_y_ = 0;
-    bool mouse_tracked_ = false;
+    int32_t m_last_mouse_x = 0;
+    int32_t m_last_mouse_y = 0;
+    bool m_mouse_tracked = false;
 
     static constexpr const wchar_t* CLASS_NAME = L"TronGridWindowClass";
-    static bool class_registered_;
+    static bool m_class_registered;
 };
 
 #endif // _WIN32

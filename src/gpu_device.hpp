@@ -1,8 +1,8 @@
 /*
- * TronGrid — Vulkan physical + logical device
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — Vulkan physical + logical device
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #pragma once
 
@@ -13,7 +13,7 @@
 
 #include <string>
 
-namespace gpu
+namespace Gpu
 {
 
     class Instance; // forward declaration
@@ -32,50 +32,56 @@ namespace gpu
         Device(Device&&) = default;
         Device& operator=(Device&&) = default;
 
+        //! RAII physical device reference.
+        [[nodiscard]] const vk::raii::PhysicalDevice& physicalDevice() const
+        {
+            return m_physical_device;
+        }
+
         //! RAII device reference.
         [[nodiscard]] const vk::raii::Device& get() const
         {
-            return device_;
+            return m_device;
         }
 
         //! graphics queue handle.
-        [[nodiscard]] const vk::raii::Queue& graphics_queue() const
+        [[nodiscard]] const vk::raii::Queue& graphicsQueue() const
         {
-            return graphics_queue_;
+            return m_graphics_queue;
         }
 
         //! present queue handle.
-        [[nodiscard]] const vk::raii::Queue& present_queue() const
+        [[nodiscard]] const vk::raii::Queue& presentQueue() const
         {
-            return present_queue_;
+            return m_present_queue;
         }
 
         //! graphics queue family index.
-        [[nodiscard]] uint32_t graphics_family_index() const
+        [[nodiscard]] uint32_t graphicsFamilyIndex() const
         {
-            return graphics_family_index_;
+            return m_graphics_family_index;
         }
 
         //! present queue family index.
-        [[nodiscard]] uint32_t present_family_index() const
+        [[nodiscard]] uint32_t presentFamilyIndex() const
         {
-            return present_family_index_;
+            return m_present_family_index;
         }
 
         //! human-readable GPU name.
         [[nodiscard]] const std::string& name() const
         {
-            return device_name_;
+            return m_device_name;
         }
 
     private:
-        vk::raii::PhysicalDevice physical_device_{nullptr}; //!< selected physical device
-        vk::raii::Device device_{nullptr}; //!< logical device handle
-        vk::raii::Queue graphics_queue_{nullptr}; //!< graphics queue
-        vk::raii::Queue present_queue_{nullptr}; //!< present queue
-        uint32_t graphics_family_index_ = 0; //!< graphics queue family index
-        uint32_t present_family_index_ = 0; //!< present queue family index
-        std::string device_name_; //!< human-readable GPU name
+        vk::raii::PhysicalDevice m_physical_device{nullptr}; //!< selected physical device
+        vk::raii::Device m_device{nullptr}; //!< logical device handle
+        vk::raii::Queue m_graphics_queue{nullptr}; //!< graphics queue
+        vk::raii::Queue m_present_queue{nullptr}; //!< present queue
+        uint32_t m_graphics_family_index = 0; //!< graphics queue family index
+        uint32_t m_present_family_index = 0; //!< present queue family index
+        std::string m_device_name; //!< human-readable GPU name
     };
 
-} // namespace gpu
+} // namespace Gpu

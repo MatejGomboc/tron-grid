@@ -1,8 +1,8 @@
 /*
- * TronGrid — test fixture self-tests
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — test fixture self-tests
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #include "test_fixture/test_fixture.hpp"
 
@@ -30,5 +30,5 @@ TEST_CASE(check_throws_catches_exception)
 
 int main()
 {
-    return test_fixture::run_all();
+    return TestFixtureLib::runAll();
 }

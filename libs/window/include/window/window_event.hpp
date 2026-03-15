@@ -1,8 +1,8 @@
 /*
- * TronGrid — window event types
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — window event types
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #pragma once
 
@@ -49,11 +49,11 @@ struct WindowEvent {
         } mouse_button;
     };
 
-    WindowEvent() : type(Type::None)
+    WindowEvent() : type(Type::None), resize{}
     {
     }
 
-    explicit WindowEvent(Type t) : type(t)
+    explicit WindowEvent(Type t) : type(t), resize{}
     {
     }
 };

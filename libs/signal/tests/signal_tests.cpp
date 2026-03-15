@@ -1,8 +1,8 @@
 /*
- * TronGrid — signal library tests
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — signal library tests
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #include "test_fixture/test_fixture.hpp"
 #include "signal/signal.hpp"
@@ -12,7 +12,7 @@
 
 TEST_CASE(emit_and_consume)
 {
-    signals::Signal<int> sig;
+    SignalLib::Signal<int> sig;
     sig.emit(42);
 
     int value = 0;
@@ -22,7 +22,7 @@ TEST_CASE(emit_and_consume)
 
 TEST_CASE(consume_empty_returns_false)
 {
-    signals::Signal<int> sig;
+    SignalLib::Signal<int> sig;
 
     int value = 0;
     TEST_CHECK(!sig.consume(value));
@@ -30,7 +30,7 @@ TEST_CASE(consume_empty_returns_false)
 
 TEST_CASE(fifo_order)
 {
-    signals::Signal<int> sig;
+    SignalLib::Signal<int> sig;
     sig.emit(1);
     sig.emit(2);
     sig.emit(3);
@@ -46,7 +46,7 @@ TEST_CASE(fifo_order)
 
 TEST_CASE(empty_and_size)
 {
-    signals::Signal<int> sig;
+    SignalLib::Signal<int> sig;
     TEST_CHECK(sig.empty());
     TEST_CHECK_EQUAL(sig.size(), static_cast<std::size_t>(0));
 
@@ -57,8 +57,8 @@ TEST_CASE(empty_and_size)
 
 TEST_CASE(weak_ptr_ownership_model)
 {
-    auto sig = std::make_shared<signals::Signal<int>>();
-    std::weak_ptr<signals::Signal<int>> weak = sig;
+    auto sig = std::make_shared<SignalLib::Signal<int>>();
+    std::weak_ptr<SignalLib::Signal<int>> weak = sig;
 
     sig->emit(99);
     TEST_CHECK(!weak.expired());
@@ -69,7 +69,7 @@ TEST_CASE(weak_ptr_ownership_model)
 
 TEST_CASE(thread_safety)
 {
-    signals::Signal<int> sig;
+    SignalLib::Signal<int> sig;
     constexpr int count = 1000;
 
     std::thread producer([&] {
@@ -96,5 +96,5 @@ TEST_CASE(thread_safety)
 
 int main()
 {
-    return test_fixture::run_all();
+    return TestFixtureLib::runAll();
 }

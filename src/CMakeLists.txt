@@ -4,6 +4,7 @@ add_executable(${PROJECT_NAME}
     gpu_instance.cpp
     gpu_device.cpp
     gpu_surface.cpp
+    gpu_swapchain.cpp
 )
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)

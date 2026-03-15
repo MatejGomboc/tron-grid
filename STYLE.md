@@ -61,16 +61,18 @@ Key settings:
 | Item | Convention | Example |
 |------|------------|---------|
 | Namespaces | PascalCase | `TronGrid` |
-| Types / Classes | PascalCase | `SwapchainImage` |
-| Functions | snake_case | `create_device` |
+| Types / Classes / Structs | PascalCase | `SwapchainImage` |
+| Functions / Methods | camelCase | `createDevice`, `pollEvent` |
 | Constants | SCREAMING_SNAKE_CASE | `MAX_FRAMES_IN_FLIGHT` |
 | Variables | snake_case | `frame_index` |
-| Member variables | snake_case | `device_handle` |
+| Member variables | m_snake_case_ | `m_device_handle` |
 | Macros | SCREAMING_SNAKE_CASE | `VK_NO_PROTOTYPES` |
 
 ### Language Standard
 
-C++20. No exceptions (the language feature — the word "exceptions" here refers to C++ exception handling, which we avoid).
+C++20. Do not throw exceptions in project code. Catch exceptions from third-party libraries
+(e.g., vulkan-hpp `vk::raii`) at API boundaries only. For unrecoverable errors in project code,
+log to `std::cerr` with a `[TronGrid] Fatal:` prefix and call `std::abort()` followed by a return statement to exit that function.
 
 ### Vulkan C++ Bindings
 

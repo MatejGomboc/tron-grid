@@ -1,35 +1,38 @@
 /*
- * TronGrid — Win32 window implementation
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — Win32 window implementation
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #ifdef _WIN32
 
 #include "win32_window.hpp"
-#include <stdexcept>
+#include <cstdlib>
+#include <iostream>
 
-bool Win32Window::class_registered_ = false;
+bool Win32Window::m_class_registered = false;
 
 Win32Window::Win32Window(const WindowConfig& config)
 {
-    hinstance_ = GetModuleHandle(nullptr);
+    m_hinstance = GetModuleHandle(nullptr);
 
     // Register window class once
-    if (!class_registered_) {
+    if (!m_class_registered) {
         WNDCLASSEXW wc = {};
         wc.cbSize = sizeof(WNDCLASSEXW);
         wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
-        wc.lpfnWndProc = wnd_proc_static;
-        wc.hInstance = hinstance_;
+        wc.lpfnWndProc = wndProcStatic;
+        wc.hInstance = m_hinstance;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
         wc.lpszClassName = CLASS_NAME;
 
         if (!RegisterClassExW(&wc)) {
-            throw std::runtime_error("Failed to register Win32 window class");
+            std::cerr << "[TronGrid] Fatal: failed to register Win32 window class\n";
+            std::abort();
+            return;
         }
-        class_registered_ = true;
+        m_class_registered = true;
     }
 
     // Window style
@@ -59,49 +62,53 @@ Win32Window::Win32Window(const WindowConfig& config)
     std::wstring title_wide(title_len, 0);
     MultiByteToWideChar(CP_UTF8, 0, config.title.c_str(), -1, title_wide.data(), title_len);
 
-    hwnd_ = CreateWindowExW(0, CLASS_NAME, title_wide.c_str(), style, x, y, window_width, window_height, nullptr, nullptr, hinstance_,
+    // Set dimensions before CreateWindowExW — WM_SIZE is dispatched during creation
+    // and wndProc compares against these to detect real resizes
+    m_width = config.width;
+    m_height = config.height;
+
+    m_hwnd = CreateWindowExW(0, CLASS_NAME, title_wide.c_str(), style, x, y, window_width, window_height, nullptr, nullptr, m_hinstance,
         this // Pass this pointer for WM_NCCREATE
     );
 
-    if (!hwnd_) {
-        throw std::runtime_error("Failed to create Win32 window");
+    if (!m_hwnd) {
+        std::cerr << "[TronGrid] Fatal: failed to create Win32 window\n";
+        std::abort();
+        return;
     }
 
-    width_ = config.width;
-    height_ = config.height;
-
-    ShowWindow(hwnd_, SW_SHOW);
-    UpdateWindow(hwnd_);
+    ShowWindow(m_hwnd, SW_SHOW);
+    UpdateWindow(m_hwnd);
 }
 
 Win32Window::~Win32Window()
 {
-    if (hwnd_) {
-        DestroyWindow(hwnd_);
-        hwnd_ = nullptr;
+    if (m_hwnd) {
+        DestroyWindow(m_hwnd);
+        m_hwnd = nullptr;
     }
 }
 
-void Win32Window::pump_events()
+void Win32Window::pumpEvents()
 {
     MSG msg;
-    while (PeekMessageW(&msg, hwnd_, 0, 0, PM_REMOVE)) {
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 }
 
-void* Win32Window::native_handle() const
+void* Win32Window::nativeHandle() const
 {
-    return static_cast<void*>(hwnd_);
+    return static_cast<void*>(m_hwnd);
 }
 
-void* Win32Window::native_display() const
+void* Win32Window::nativeDisplay() const
 {
-    return static_cast<void*>(hinstance_);
+    return static_cast<void*>(m_hinstance);
 }
 
-LRESULT CALLBACK Win32Window::wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+LRESULT CALLBACK Win32Window::wndProcStatic(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     Win32Window* self = nullptr;
 
@@ -115,32 +122,32 @@ LRESULT CALLBACK Win32Window::wnd_proc_static(HWND hwnd, UINT msg, WPARAM wparam
     }
 
     if (self) {
-        return self->wnd_proc(hwnd, msg, wparam, lparam);
+        return self->wndProc(hwnd, msg, wparam, lparam);
     }
 
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-LRESULT Win32Window::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+LRESULT Win32Window::wndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg) {
     case WM_CLOSE: {
         WindowEvent ev(WindowEvent::Type::Close);
-        push_event(ev);
-        should_close_ = true;
+        pushEvent(ev);
+        m_should_close = true;
         return 0;
     }
 
     case WM_SIZE: {
         uint32_t w = LOWORD(lparam);
         uint32_t h = HIWORD(lparam);
-        if (w != width_ || h != height_) {
-            width_ = w;
-            height_ = h;
+        if (w != m_width || h != m_height) {
+            m_width = w;
+            m_height = h;
             WindowEvent ev(WindowEvent::Type::Resize);
             ev.resize.width = w;
             ev.resize.height = h;
-            push_event(ev);
+            pushEvent(ev);
         }
         return 0;
     }
@@ -150,7 +157,7 @@ LRESULT Win32Window::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         WindowEvent ev(WindowEvent::Type::KeyDown);
         ev.key.keycode = static_cast<uint32_t>(wparam);
         ev.key.repeat = (lparam & 0x40000000) != 0;
-        push_event(ev);
+        pushEvent(ev);
         return 0;
     }
 
@@ -159,7 +166,7 @@ LRESULT Win32Window::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         WindowEvent ev(WindowEvent::Type::KeyUp);
         ev.key.keycode = static_cast<uint32_t>(wparam);
         ev.key.repeat = false;
-        push_event(ev);
+        pushEvent(ev);
         return 0;
     }
 
@@ -170,13 +177,13 @@ LRESULT Win32Window::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         WindowEvent ev(WindowEvent::Type::MouseMove);
         ev.mouse_move.x = x;
         ev.mouse_move.y = y;
-        ev.mouse_move.dx = mouse_tracked_ ? (x - last_mouse_x_) : 0;
-        ev.mouse_move.dy = mouse_tracked_ ? (y - last_mouse_y_) : 0;
-        push_event(ev);
+        ev.mouse_move.dx = m_mouse_tracked ? (x - m_last_mouse_x) : 0;
+        ev.mouse_move.dy = m_mouse_tracked ? (y - m_last_mouse_y) : 0;
+        pushEvent(ev);
 
-        last_mouse_x_ = x;
-        last_mouse_y_ = y;
-        mouse_tracked_ = true;
+        m_last_mouse_x = x;
+        m_last_mouse_y = y;
+        m_mouse_tracked = true;
         return 0;
     }
 
@@ -187,7 +194,7 @@ LRESULT Win32Window::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         ev.mouse_button.button = (msg == WM_LBUTTONDOWN) ? 0 : (msg == WM_RBUTTONDOWN) ? 1 : 2;
         ev.mouse_button.x = static_cast<int16_t>(LOWORD(lparam));
         ev.mouse_button.y = static_cast<int16_t>(HIWORD(lparam));
-        push_event(ev);
+        pushEvent(ev);
         return 0;
     }
 
@@ -198,19 +205,19 @@ LRESULT Win32Window::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         ev.mouse_button.button = (msg == WM_LBUTTONUP) ? 0 : (msg == WM_RBUTTONUP) ? 1 : 2;
         ev.mouse_button.x = static_cast<int16_t>(LOWORD(lparam));
         ev.mouse_button.y = static_cast<int16_t>(HIWORD(lparam));
-        push_event(ev);
+        pushEvent(ev);
         return 0;
     }
 
     case WM_SETFOCUS: {
         WindowEvent ev(WindowEvent::Type::Focus);
-        push_event(ev);
+        pushEvent(ev);
         return 0;
     }
 
     case WM_KILLFOCUS: {
         WindowEvent ev(WindowEvent::Type::Blur);
-        push_event(ev);
+        pushEvent(ev);
         return 0;
     }
     }

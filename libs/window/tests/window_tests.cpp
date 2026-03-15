@@ -1,8 +1,8 @@
 /*
- * TronGrid — window library tests
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — window library tests
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #include "test_fixture/test_fixture.hpp"
 #include "window/window_event.hpp"
@@ -39,5 +39,5 @@ TEST_CASE(key_event_data)
 
 int main()
 {
-    return test_fixture::run_all();
+    return TestFixtureLib::runAll();
 }

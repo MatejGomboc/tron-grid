@@ -1,8 +1,8 @@
 /*
- * TronGrid — window factory implementation
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — window factory implementation
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #include "window/window.hpp"
 
@@ -12,9 +12,10 @@
 #include "xcb_window.hpp"
 #endif
 
-#include <stdexcept>
+#include <cstdlib>
+#include <iostream>
 
-namespace window
+namespace WindowLib
 {
 
     std::unique_ptr<Window> create(const WindowConfig& config)
@@ -24,8 +25,10 @@ namespace window
 #elif defined(__linux__)
         return std::make_unique<XcbWindow>(config);
 #else
-        throw std::runtime_error("Unsupported platform");
+        std::cerr << "[TronGrid] Fatal: unsupported platform\n";
+        std::abort();
+        return nullptr;
 #endif
     }
 
-} // namespace window
+} // namespace WindowLib

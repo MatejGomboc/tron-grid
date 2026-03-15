@@ -1,8 +1,8 @@
 /*
- * TronGrid — Vulkan instance + debug messenger
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — Vulkan instance + debug messenger
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #pragma once
 
@@ -13,7 +13,7 @@
 
 #include <vector>
 
-namespace gpu
+namespace Gpu
 {
 
     //! owns the Vulkan instance and (in debug) the validation debug messenger.
@@ -34,19 +34,19 @@ namespace gpu
         //! raw VkInstance handle (for surface creation, etc.)
         [[nodiscard]] VkInstance handle() const
         {
-            return *instance_;
+            return *m_instance;
         }
 
         //! RAII instance reference.
         [[nodiscard]] const vk::raii::Instance& get() const
         {
-            return instance_;
+            return m_instance;
         }
 
     private:
-        vk::raii::Context context_; //!< Vulkan context (loader bootstrap)
-        vk::raii::Instance instance_{nullptr}; //!< Vulkan instance handle
-        vk::raii::DebugUtilsMessengerEXT debug_messenger_{nullptr}; //!< validation debug messenger (debug only)
+        vk::raii::Context m_context; //!< Vulkan context (loader bootstrap)
+        vk::raii::Instance m_instance{nullptr}; //!< Vulkan instance handle
+        vk::raii::DebugUtilsMessengerEXT m_debug_messenger{nullptr}; //!< validation debug messenger (debug only)
     };
 
-} // namespace gpu
+} // namespace Gpu
