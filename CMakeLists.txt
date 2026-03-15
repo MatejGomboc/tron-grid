@@ -27,6 +27,8 @@ add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
 # Platform surface extensions for Vulkan
 if(WIN32)
     add_compile_definitions(VK_USE_PLATFORM_WIN32_KHR)
+    add_compile_definitions(NOMINMAX)       # prevent Windows.h min/max macros
+    add_compile_definitions(WIN32_LEAN_AND_MEAN)
 else()
     add_compile_definitions(VK_USE_PLATFORM_XCB_KHR)
 endif()

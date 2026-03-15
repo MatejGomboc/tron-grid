@@ -32,6 +32,12 @@ namespace gpu
         Device(Device&&) = default;
         Device& operator=(Device&&) = default;
 
+        //! RAII physical device reference.
+        [[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const
+        {
+            return physical_device_;
+        }
+
         //! RAII device reference.
         [[nodiscard]] const vk::raii::Device& get() const
         {
