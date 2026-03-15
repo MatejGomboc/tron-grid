@@ -104,7 +104,7 @@ PenaltyBreakOpenParenthesis: 1000
 # Other
 BinPackArguments: true
 BinPackParameters: true
-BreakBeforeBinaryOperators: None
+BreakBeforeBinaryOperators: All
 BreakBeforeTernaryOperators: true
 BreakStringLiterals: true
 CompactNamespaces: false
