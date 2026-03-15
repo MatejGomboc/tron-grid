@@ -87,7 +87,7 @@ libs/log/
 - Severity levels: `Debug`, `Info`, `Warning`, `Error`, `Fatal`
 - `Logger` class with RAII lifecycle — constructor spawns worker, destructor drains
   remaining messages and joins the thread
-- Thread-safe: any thread can call `log()` / `logDebug()` / `logError()` etc.
+- Thread-safe: any thread can call `logInfo()` / `logDebug()` / `logError()` etc.
 
 ```cpp
 namespace LoggingLib
@@ -104,7 +104,6 @@ namespace LoggingLib
         Logger();   // Spawns worker thread.
         ~Logger();  // Drains queue, joins worker.
 
-        void log(Severity severity, std::string_view message);
         void logDebug(std::string_view message);
         void logInfo(std::string_view message);
         void logWarning(std::string_view message);
