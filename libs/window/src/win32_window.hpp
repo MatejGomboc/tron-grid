@@ -32,7 +32,10 @@ namespace WindowLib
     //! Win32 platform window implementation.
     class Win32Window : public Window {
     public:
+        //! Creates a Win32 window with the given configuration.
         explicit Win32Window(const WindowConfig& config);
+
+        //! Destroys the Win32 window and releases platform resources.
         ~Win32Window() override;
 
         //! Processes pending Win32 messages into the event queue.

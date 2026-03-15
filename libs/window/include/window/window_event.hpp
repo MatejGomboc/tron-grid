@@ -23,16 +23,16 @@ namespace WindowLib
     struct WindowEvent {
         //! Discriminator for the event union.
         enum class Type {
-            None,
-            Close,
-            Resize,
-            KeyDown,
-            KeyUp,
-            MouseMove,
-            MouseButtonDown,
-            MouseButtonUp,
-            Focus,
-            Blur
+            None, //!< No event.
+            Close, //!< Window close requested.
+            Resize, //!< Window resized.
+            KeyDown, //!< Key pressed.
+            KeyUp, //!< Key released.
+            MouseMove, //!< Mouse cursor moved.
+            MouseButtonDown, //!< Mouse button pressed.
+            MouseButtonUp, //!< Mouse button released.
+            Focus, //!< Window gained focus.
+            Blur //!< Window lost focus.
         };
 
         Type type = Type::None; //!< Event type discriminator.
@@ -62,10 +62,12 @@ namespace WindowLib
             } mouse_button; //!< Mouse button event data.
         };
 
+        //! Default constructor; initialises to Type::None with zeroed union.
         WindowEvent() : type(Type::None), resize{}
         {
         }
 
+        //! Constructs an event with the given type and zeroed union.
         explicit WindowEvent(Type t) : type(t), resize{}
         {
         }

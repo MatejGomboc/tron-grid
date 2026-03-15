@@ -25,6 +25,7 @@
 namespace TestFixtureLib
 {
 
+    //! A registered test case with a name and callable body.
     struct TestCase {
         std::string_view name; //!< Test name.
         std::function<void()> fn; //!< Test body.
@@ -51,7 +52,7 @@ namespace TestFixtureLib
     // ---------------------------------------------------------------------------
 
     //! Converts a value to a string for diagnostics.
-    template <typename T> std::string toString(const T& v)
+    template <typename T> [[nodiscard]] std::string toString(const T& v)
     {
         if constexpr (std::is_convertible_v<T, std::string>) {
             return std::string(v);

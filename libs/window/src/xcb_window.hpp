@@ -25,7 +25,10 @@ namespace WindowLib
     //! XCB (X11) platform window implementation.
     class XcbWindow : public Window {
     public:
+        //! Creates an XCB window with the given configuration.
         explicit XcbWindow(const WindowConfig& config);
+
+        //! Destroys the XCB window and disconnects from the X server.
         ~XcbWindow() override;
 
         //! Polls pending XCB events into the event queue.
