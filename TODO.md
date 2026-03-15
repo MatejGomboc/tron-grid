@@ -65,7 +65,60 @@ Decisions (coordinate system, colour space, descriptor model, Slang shaders)
 
 ### Steps (do in order)
 
-#### 1. Integrate VMA
+#### 1. Create `libs/log/` — logging library
+
+Create a new LEGO brick `libs/log/` with namespace `LoggingLib` and class `Logger`.
+
+```text
+libs/log/
+├── CMakeLists.txt
+├── include/log/logger.hpp
+├── src/logger.cpp
+└── tests/
+    ├── CMakeLists.txt
+    └── logger_tests.cpp
+```
+
+**Design:**
+
+- Uses `SignalLib::Signal<LogMessage>` internally as the thread-safe message queue
+- A background worker thread drains the signal and writes to configurable outputs
+  (stdout, stderr, file) based on message severity
+- Severity levels: `Debug`, `Info`, `Warning`, `Error`, `Fatal`
+- `Logger` class with RAII lifecycle — constructor spawns worker, destructor drains
+  remaining messages and joins the thread
+- Thread-safe: any thread can call `log()` / `logDebug()` / `logError()` etc.
+
+```cpp
+namespace LoggingLib
+{
+    enum class Severity { Debug, Info, Warning, Error, Fatal };
+
+    struct LogMessage {
+        Severity severity;
+        std::string text;
+    };
+
+    class Logger {
+    public:
+        Logger();   // Spawns worker thread.
+        ~Logger();  // Drains queue, joins worker.
+
+        void log(Severity severity, std::string_view message);
+        void logDebug(std::string_view message);
+        void logInfo(std::string_view message);
+        void logWarning(std::string_view message);
+        void logError(std::string_view message);
+        void logFatal(std::string_view message);
+    };
+}
+```
+
+**After this step:** replace all `std::cout` / `std::cerr` calls in `src/` with the logger.
+The `[TronGrid]` and `[Vulkan]` prefixes become part of the message text, and the logger
+handles routing to stdout (Info and below) or stderr (Warning and above).
+
+#### 2. Integrate VMA
 
 - Add `FetchContent` for VMA in root `CMakeLists.txt` (after `find_package(Vulkan)`)
 - Link `VulkanMemoryAllocator` in `src/CMakeLists.txt`
@@ -84,7 +137,7 @@ Decisions (coordinate system, colour space, descriptor model, Slang shaders)
   any buffers, so RAII destruction frees buffers → allocator → device (reverse order)
 - Verify: project builds with VMA linked but not yet used in the render loop
 
-#### 2. Write Slang shaders
+#### 3. Write Slang shaders
 
 Create `src/triangle.vert.slang` and `src/triangle.frag.slang` alongside the C++ sources.
 
@@ -99,7 +152,7 @@ Create `src/triangle.vert.slang` and `src/triangle.frag.slang` alongside the C++
 - Input: interpolated `float4 colour` from vertex stage
 - Output: `float4` colour to the colour attachment
 
-#### 3. Compile shaders via CMake
+#### 4. Compile shaders via CMake
 
 Find `slangc` from the Vulkan SDK — there is no `FindVulkan` component for Slang, so use:
 
@@ -128,7 +181,7 @@ Use `GetModuleFileNameW` on Win32 or `/proc/self/exe` readlink on Linux to find 
 executable path, strip the filename, and append the `.spv` filename. This avoids depending
 on the working directory.
 
-#### 4. Create the graphics pipeline
+#### 5. Create the graphics pipeline
 
 Create `src/pipeline.hpp` / `src/pipeline.cpp`.
 
@@ -151,7 +204,7 @@ Pipeline configuration:
 - **Pipeline layout:** empty (no descriptors, no push constants yet)
 - Use `vk::raii::Pipeline` and `vk::raii::PipelineLayout`
 
-#### 5. Allocate the triangle vertex buffer
+#### 6. Allocate the triangle vertex buffer
 
 Define the vertex data:
 
@@ -178,7 +231,7 @@ Allocation strategy (use `VMA_MEMORY_USAGE_AUTO` — the old `GPU_ONLY`/`CPU_ONL
 3. Record a one-shot command buffer to copy staging → GPU buffer
 4. Submit, wait, free the staging buffer
 
-#### 6. Update the render loop
+#### 7. Update the render loop
 
 Between `cmd.beginRendering()` and `cmd.endRendering()` in `recordClearCommand`
 (rename to `recordFrame` or similar):
@@ -192,18 +245,18 @@ Between `cmd.beginRendering()` and `cmd.endRendering()` in `recordClearCommand`
 
 The existing clear colour (dark teal) stays as the `loadOp = eClear` background.
 
-#### 7. Handle pipeline recreation on swapchain resize
+#### 8. Handle pipeline recreation on swapchain resize
 
 The pipeline uses dynamic viewport/scissor state, so **no pipeline recreation is needed**
 on resize — just update the viewport and scissor values each frame.
 
-#### 8. Update `src/CMakeLists.txt`
+#### 9. Update `src/CMakeLists.txt`
 
 - Add `allocator.cpp`, `pipeline.cpp` to source list
 - Add shader compilation custom commands
-- Link `VulkanMemoryAllocator`
+- Link `VulkanMemoryAllocator` and `log`
 
-#### 9. Run clang-format, build, test, commit, and PR
+#### 10. Run clang-format, build, test, commit, and PR
 
 - `clang-format -i` on all changed C++ files
 - Build all 5 presets (or at least windows-msvc + linux-x11-gcc)
@@ -214,6 +267,8 @@ on resize — just update the viewport and scissor values each frame.
 
 ### Acceptance Criteria
 
+- [ ] `libs/log/` logging library using `SignalLib::Signal<LogMessage>` with background worker thread
+- [ ] All `std::cout` / `std::cerr` calls replaced with logger
 - [ ] VMA integrated via FetchContent, RAII allocator wrapper
 - [ ] Slang shaders compiled to SPIR-V via `slangc` at build time
 - [ ] Graphics pipeline created with `VkPipelineRenderingCreateInfo` (no VkRenderPass)
