@@ -15,21 +15,24 @@
 #include <string_view>
 #include <vector>
 
-//! required device extensions.
+//! Required device extensions.
 static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
+//! Holds graphics and present queue family indices discovered during device selection.
 struct QueueFamilyIndices {
-    uint32_t graphics = UINT32_MAX; //!< graphics queue family index
-    uint32_t present = UINT32_MAX; //!< present queue family index
+    uint32_t graphics = UINT32_MAX; //!< Graphics queue family index.
+    uint32_t present = UINT32_MAX; //!< Present queue family index.
 
+    //! Returns true if both graphics and present queue families have been found.
     [[nodiscard]] bool isComplete() const
     {
         return (graphics != UINT32_MAX) && (present != UINT32_MAX);
     }
 };
 
+//! Finds graphics and present queue family indices for the given device and surface.
 static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     QueueFamilyIndices indices;
@@ -56,6 +59,7 @@ static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& devi
     return indices;
 }
 
+//! Checks whether the device supports all required extensions.
 static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 {
     std::vector<vk::ExtensionProperties> available = device.enumerateDeviceExtensionProperties();
@@ -72,6 +76,7 @@ static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
     return true;
 }
 
+//! Scores a physical device for suitability; returns -1 if unsuitable.
 static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     vk::PhysicalDeviceProperties properties = device.getProperties();

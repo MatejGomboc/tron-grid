@@ -12,8 +12,8 @@
 #include <vector>
 #include <window/window.hpp>
 
-//! create a vk::raii::SurfaceKHR from the platform-native window handles.
+//! Create a vk::raii::SurfaceKHR from the platform-native window handles.
 [[nodiscard]] vk::raii::SurfaceKHR createSurface(const vk::raii::Instance& instance, const WindowLib::Window& window);
 
-//! required surface extensions for the current platform.
+//! Required surface extensions for the current platform.
 [[nodiscard]] std::vector<const char*> requiredSurfaceExtensions();

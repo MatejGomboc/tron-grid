@@ -11,6 +11,7 @@
 namespace TestFixtureLib
 {
 
+    //! Internal exception thrown when a test check fails.
     struct CheckFailure : std::runtime_error {
         using std::runtime_error::runtime_error;
     };

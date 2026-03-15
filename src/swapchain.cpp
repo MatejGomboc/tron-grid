@@ -12,6 +12,7 @@
 #include <limits>
 #include <ranges>
 
+//! Selects the best surface format, preferring B8G8R8A8 sRGB.
 static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& available)
 {
     // Prefer sRGB with B8G8R8A8 layout
@@ -27,6 +28,7 @@ static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFor
     return available.front();
 }
 
+//! Selects the best present mode, preferring MAILBOX for low latency.
 static vk::PresentModeKHR choosePresentMode(const std::vector<vk::PresentModeKHR>& available)
 {
     // Prefer MAILBOX (low latency, no tearing)
@@ -40,6 +42,7 @@ static vk::PresentModeKHR choosePresentMode(const std::vector<vk::PresentModeKHR
     return vk::PresentModeKHR::eFifo;
 }
 
+//! Clamps the requested dimensions to the surface capability range.
 static vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities, uint32_t width, uint32_t height)
 {
     // If currentExtent is not the special 0xFFFFFFFF value, the surface size is fixed

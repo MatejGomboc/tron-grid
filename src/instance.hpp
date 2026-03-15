@@ -11,12 +11,12 @@
 #include <vulkan/vulkan_raii.hpp>
 #include <vector>
 
-//! owns the Vulkan instance and (in debug) the validation debug messenger, destruction order is handled by vk::raii — no manual cleanup needed.
+//! Owns the Vulkan instance and (in debug) the validation debug messenger, destruction order is handled by vk::raii — no manual cleanup needed.
 class Instance {
 public:
     /*!
-        create a Vulkan instance with the given surface extensions.
-        if enable_validation is true, enables VK_LAYER_KHRONOS_validation
+        Create a Vulkan instance with the given surface extensions.
+        If enable_validation is true, enables VK_LAYER_KHRONOS_validation
         and VK_EXT_debug_utils with a stderr callback.
     */
     Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions);
@@ -27,7 +27,7 @@ public:
     Instance(Instance&&) = default;
     Instance& operator=(Instance&&) = default;
 
-    //! raw VkInstance handle (for surface creation, etc.)
+    //! Raw VkInstance handle (for surface creation, etc.).
     [[nodiscard]] VkInstance handle() const
     {
         return *m_instance;
@@ -40,7 +40,7 @@ public:
     }
 
 private:
-    vk::raii::Context m_context; //!< Vulkan context (loader bootstrap)
-    vk::raii::Instance m_instance{nullptr}; //!< Vulkan instance handle
-    vk::raii::DebugUtilsMessengerEXT m_debug_messenger{nullptr}; //!< validation debug messenger (debug only)
+    vk::raii::Context m_context; //!< Vulkan context (loader bootstrap).
+    vk::raii::Instance m_instance{nullptr}; //!< Vulkan instance handle.
+    vk::raii::DebugUtilsMessengerEXT m_debug_messenger{nullptr}; //!< Validation debug messenger (debug only).
 };

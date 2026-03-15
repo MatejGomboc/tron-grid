@@ -15,6 +15,7 @@
 // Storage for the vulkan-hpp dynamic dispatcher (exactly one translation unit)
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
+//! Vulkan validation debug callback; logs warnings and errors to stderr.
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT /*type*/,
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* /*user_data*/)
 {
@@ -29,6 +30,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSev
     return VK_FALSE;
 }
 
+//! Checks whether a named layer exists in the available list.
 static bool isLayerAvailable(const std::vector<vk::LayerProperties>& available, const char* name)
 {
     return std::ranges::any_of(available, [name](const vk::LayerProperties& layer) {
@@ -36,6 +38,7 @@ static bool isLayerAvailable(const std::vector<vk::LayerProperties>& available, 
     });
 }
 
+//! Checks whether a named extension exists in the available list.
 static bool isExtensionAvailable(const std::vector<vk::ExtensionProperties>& available, const char* name)
 {
     return std::ranges::any_of(available, [name](const vk::ExtensionProperties& ext) {

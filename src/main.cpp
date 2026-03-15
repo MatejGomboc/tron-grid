@@ -20,14 +20,19 @@
 #include <memory>
 #include <vector>
 
-//! resize event carried through Signal<T>.
+//! Window resize event payload for Signal<T> communication.
 struct ResizeEvent {
-    uint32_t width = 0;
-    uint32_t height = 0;
+    uint32_t width = 0; //!< New window width in pixels.
+    uint32_t height = 0; //!< New window height in pixels.
 };
 
+//! Maximum number of frames that can be in-flight simultaneously.
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
+/*!
+    Records a command buffer that transitions the swapchain image to
+    colour attachment, clears it to dark teal, and transitions to present layout.
+*/
 static void recordClearCommand(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView view, vk::Extent2D extent)
 {
     vk::CommandBufferBeginInfo begin_info{};

@@ -13,10 +13,10 @@
 
 class Instance; // forward declaration
 
-//! selects the best physical device and creates a logical device with graphics + present queues
+//! Selects the best physical device and creates a logical device with graphics + present queues.
 class Device {
 public:
-    //! pick the best GPU and create a logical device, the surface is needed to check present queue support.
+    //! Pick the best GPU and create a logical device; the surface is needed to check present queue support.
     Device(const Instance& instance, VkSurfaceKHR surface);
 
     // Non-copyable, movable
@@ -37,42 +37,42 @@ public:
         return m_device;
     }
 
-    //! graphics queue handle.
+    //! Graphics queue handle.
     [[nodiscard]] const vk::raii::Queue& graphicsQueue() const
     {
         return m_graphics_queue;
     }
 
-    //! present queue handle.
+    //! Present queue handle.
     [[nodiscard]] const vk::raii::Queue& presentQueue() const
     {
         return m_present_queue;
     }
 
-    //! graphics queue family index.
+    //! Graphics queue family index.
     [[nodiscard]] uint32_t graphicsFamilyIndex() const
     {
         return m_graphics_family_index;
     }
 
-    //! present queue family index.
+    //! Present queue family index.
     [[nodiscard]] uint32_t presentFamilyIndex() const
     {
         return m_present_family_index;
     }
 
-    //! human-readable GPU name.
+    //! Human-readable GPU name.
     [[nodiscard]] const std::string& name() const
     {
         return m_device_name;
     }
 
 private:
-    vk::raii::PhysicalDevice m_physical_device{nullptr}; //!< selected physical device
-    vk::raii::Device m_device{nullptr}; //!< logical device handle
-    vk::raii::Queue m_graphics_queue{nullptr}; //!< graphics queue
-    vk::raii::Queue m_present_queue{nullptr}; //!< present queue
-    uint32_t m_graphics_family_index = 0; //!< graphics queue family index
-    uint32_t m_present_family_index = 0; //!< present queue family index
-    std::string m_device_name; //!< human-readable GPU name
+    vk::raii::PhysicalDevice m_physical_device{nullptr}; //!< Selected physical device.
+    vk::raii::Device m_device{nullptr}; //!< Logical device handle.
+    vk::raii::Queue m_graphics_queue{nullptr}; //!< Graphics queue.
+    vk::raii::Queue m_present_queue{nullptr}; //!< Present queue.
+    uint32_t m_graphics_family_index = 0; //!< Graphics queue family index.
+    uint32_t m_present_family_index = 0; //!< Present queue family index.
+    std::string m_device_name; //!< Human-readable GPU name.
 };

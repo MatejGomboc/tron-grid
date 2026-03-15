@@ -21,30 +21,38 @@
 namespace WindowLib
 {
 
-class Win32Window : public Window {
-public:
-    explicit Win32Window(const WindowConfig& config);
-    ~Win32Window() override;
+    //! Win32 platform window implementation.
+    class Win32Window : public Window {
+    public:
+        explicit Win32Window(const WindowConfig& config);
+        ~Win32Window() override;
 
-    void pumpEvents() override;
-    void* nativeHandle() const override;
-    void* nativeDisplay() const override;
+        //! Processes pending Win32 messages into the event queue.
+        void pumpEvents() override;
 
-private:
-    static LRESULT CALLBACK wndProcStatic(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-    LRESULT wndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+        //! Returns the HWND as a void pointer.
+        [[nodiscard]] void* nativeHandle() const override;
 
-    HWND m_hwnd = nullptr;
-    HINSTANCE m_hinstance = nullptr;
+        //! Returns the HINSTANCE as a void pointer.
+        [[nodiscard]] void* nativeDisplay() const override;
 
-    // Track last mouse position for deltas
-    int32_t m_last_mouse_x = 0;
-    int32_t m_last_mouse_y = 0;
-    bool m_mouse_tracked = false;
+    private:
+        //! Static window procedure thunk that forwards to the instance method.
+        static LRESULT CALLBACK wndProcStatic(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
-    static constexpr const wchar_t* CLASS_NAME = L"TronGridWindowClass";
-    static bool m_class_registered;
-};
+        //! Instance window procedure handling Win32 messages.
+        LRESULT wndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+
+        HWND m_hwnd = nullptr; //!< Native window handle.
+        HINSTANCE m_hinstance = nullptr; //!< Application instance handle.
+
+        int32_t m_last_mouse_x = 0; //!< Last known mouse x for delta computation.
+        int32_t m_last_mouse_y = 0; //!< Last known mouse y for delta computation.
+        bool m_mouse_tracked = false; //!< True after the first mouse event has been received.
+
+        static constexpr const wchar_t* CLASS_NAME = L"TronGridWindowClass"; //!< Win32 window class name.
+        static bool m_class_registered; //!< Tracks whether the Win32 window class has been registered.
+    };
 
 } // namespace WindowLib
 
