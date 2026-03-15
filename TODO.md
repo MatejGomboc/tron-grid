@@ -92,9 +92,11 @@ Create `src/triangle.vert.slang` and `src/triangle.frag.slang` alongside the C++
 
 #### 3. Compile shaders via CMake
 
-- Add custom commands in `src/CMakeLists.txt` to invoke `slangc`, outputting to the build directory:
-    - `slangc ${CMAKE_CURRENT_SOURCE_DIR}/triangle.vert.slang -target spirv -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv`
-    - `slangc ${CMAKE_CURRENT_SOURCE_DIR}/triangle.frag.slang -target spirv -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv`
+- Add a custom CMake target (`shaders`) in `src/CMakeLists.txt` that compiles `.slang` → `.spv`:
+    - Use `add_custom_command` for each shader (input `.slang`, output `.spv` in `${CMAKE_CURRENT_BINARY_DIR}`)
+    - Use `add_custom_target(shaders DEPENDS triangle.vert.spv triangle.frag.spv)` to group them
+    - `add_dependencies(${PROJECT_NAME} shaders)` so the executable depends on compiled shaders
+    - This ensures shaders rebuild when sources change (via `DEPENDS` on the `.slang` files)
 - Add a helper function in `src/` to load `.spv` files from disc into `std::vector<uint32_t>`
 - Create `vk::raii::ShaderModule` from the loaded SPIR-V bytes
 
