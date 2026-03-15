@@ -4,10 +4,10 @@
     SPDX-Licence-Identifier: GPL-3.0-or-later
 */
 
-#include "gpu_device.hpp"
-#include "gpu_instance.hpp"
-#include "gpu_surface.hpp"
-#include "gpu_swapchain.hpp"
+#include "device.hpp"
+#include "instance.hpp"
+#include "surface.hpp"
+#include "swapchain.hpp"
 
 #include <signal/signal.hpp>
 #include <window/window.hpp>
@@ -120,14 +120,14 @@ int main()
             true;
 #endif
 
-        Gpu::Instance instance(ENABLE_VALIDATION, Gpu::requiredSurfaceExtensions());
-        vk::raii::SurfaceKHR surface = Gpu::createSurface(instance.get(), *window);
-        Gpu::Device device(instance, *surface);
+        Instance instance(ENABLE_VALIDATION, requiredSurfaceExtensions());
+        vk::raii::SurfaceKHR surface = createSurface(instance.get(), *window);
+        Device device(instance, *surface);
 
         std::cout << "Vulkan ready - GPU: " << device.name() << "\n";
 
         // Create swapchain
-        Gpu::Swapchain swapchain(device, *surface, config.width, config.height);
+        Swapchain swapchain(device, *surface, config.width, config.height);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
