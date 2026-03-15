@@ -7,17 +7,14 @@
 #pragma once
 
 #include <volk/volk.h>
-
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
-
 #include <vector>
 
 namespace Gpu
 {
 
-    //! owns the Vulkan instance and (in debug) the validation debug messenger.
-    //! destruction order is handled by vk::raii — no manual cleanup needed.
+    //! owns the Vulkan instance and (in debug) the validation debug messenger, destruction order is handled by vk::raii — no manual cleanup needed.
     class Instance {
     public:
         //! create a Vulkan instance with the given surface extensions.

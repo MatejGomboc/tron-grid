@@ -7,7 +7,6 @@
 #ifdef _WIN32
 #include <Windows.h>
 #endif
-
 #include "gpu_surface.hpp"
 
 namespace Gpu

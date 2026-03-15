@@ -6,7 +6,6 @@
 
 #include "gpu_swapchain.hpp"
 #include "gpu_device.hpp"
-
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>

@@ -6,7 +6,6 @@
 
 #include "gpu_device.hpp"
 #include "gpu_instance.hpp"
-
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>

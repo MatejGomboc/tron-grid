@@ -7,10 +7,8 @@
 #pragma once
 
 #include <volk/volk.h>
-
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
-
 #include <string>
 
 namespace Gpu
@@ -18,12 +16,10 @@ namespace Gpu
 
     class Instance; // forward declaration
 
-    //! selects the best physical device and creates a logical device with
-    //! graphics + present queues.
+    //! selects the best physical device and creates a logical device with graphics + present queues
     class Device {
     public:
-        //! pick the best GPU and create a logical device.
-        //! the surface is needed to check present queue support.
+        //! pick the best GPU and create a logical device, the surface is needed to check present queue support.
         Device(const Instance& instance, VkSurfaceKHR surface);
 
         // Non-copyable, movable

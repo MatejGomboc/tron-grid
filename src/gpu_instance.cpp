@@ -5,7 +5,6 @@
 */
 
 #include "gpu_instance.hpp"
-
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
@@ -115,8 +114,8 @@ namespace Gpu
         vk::DebugUtilsMessengerCreateInfoEXT debug_create_info{};
         if (enable_validation && !layers.empty()) {
             debug_create_info.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
-            debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
+            debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
+                | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
             debug_create_info.setPfnUserCallback(vulkanDebugCallback);
             create_info.pNext = &debug_create_info;
         }

@@ -7,10 +7,8 @@
 #pragma once
 
 #include <volk/volk.h>
-
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
-
 #include <vector>
 
 namespace Gpu
