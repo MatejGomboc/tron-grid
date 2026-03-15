@@ -1,16 +1,14 @@
 /*
- * TronGrid — Vulkan surface creation from native window handles
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — Vulkan surface creation from native window handles
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #ifdef _WIN32
 #include <Windows.h>
 #endif
 
 #include "gpu_surface.hpp"
-
-#include <stdexcept>
 
 namespace Gpu
 {

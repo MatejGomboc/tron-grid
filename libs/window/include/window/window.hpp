@@ -1,8 +1,8 @@
 /*
- * TronGrid — abstract window interface
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — abstract window interface
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #pragma once
 
@@ -40,7 +40,7 @@ public:
     virtual void* nativeDisplay() const = 0;
 
     // Poll next event from queue (returns false if empty)
-    bool pollEvent(WindowEvent& out)
+    [[nodiscard]] bool pollEvent(WindowEvent& out)
     {
         if (m_event_queue.empty()) {
             return false;
@@ -51,15 +51,15 @@ public:
     }
 
     // Accessors
-    uint32_t width() const
+    [[nodiscard]] uint32_t width() const
     {
         return m_width;
     }
-    uint32_t height() const
+    [[nodiscard]] uint32_t height() const
     {
         return m_height;
     }
-    bool shouldClose() const
+    [[nodiscard]] bool shouldClose() const
     {
         return m_should_close;
     }
@@ -89,5 +89,5 @@ namespace WindowLib
 {
     // Factory — creates the platform-appropriate window (Win32 or XCB).
     // Consumers never need to include platform headers.
-    std::unique_ptr<Window> create(const WindowConfig& config);
+    [[nodiscard]] std::unique_ptr<Window> create(const WindowConfig& config);
 } // namespace WindowLib

@@ -1,8 +1,8 @@
 /*
- * TronGrid — signal library tests
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — signal library tests
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #include "test_fixture/test_fixture.hpp"
 #include "signal/signal.hpp"

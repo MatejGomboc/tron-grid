@@ -1,8 +1,8 @@
 /*
- * TronGrid — entry point
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — entry point
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #include "gpu_device.hpp"
 #include "gpu_instance.hpp"

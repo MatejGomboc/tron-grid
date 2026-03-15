@@ -1,8 +1,8 @@
 /*
- * TronGrid — Win32 window implementation
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — Win32 window implementation
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #ifdef _WIN32
 
@@ -30,6 +30,7 @@ Win32Window::Win32Window(const WindowConfig& config)
         if (!RegisterClassExW(&wc)) {
             std::cerr << "[TronGrid] Fatal: failed to register Win32 window class\n";
             std::abort();
+            return;
         }
         m_class_registered = true;
     }
@@ -73,6 +74,7 @@ Win32Window::Win32Window(const WindowConfig& config)
     if (!m_hwnd) {
         std::cerr << "[TronGrid] Fatal: failed to create Win32 window\n";
         std::abort();
+        return;
     }
 
     ShowWindow(m_hwnd, SW_SHOW);

@@ -1,8 +1,8 @@
 /*
- * TronGrid — Vulkan swapchain + image views
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — Vulkan swapchain + image views
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #pragma once
 

@@ -1,8 +1,8 @@
 /*
- * TronGrid — thread-safe Signal<T> message queue
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — thread-safe Signal<T> message queue
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #pragma once
 
@@ -22,10 +22,8 @@ namespace SignalLib
     //!
     //! when the receiver is destroyed, the shared_ptr dies, the weak_ptr expires,
     //! and the sender knows to stop — no dangling pointers, no manual unregistration.
-    template <typename T> struct Signal {
-        std::queue<T> m_pending; //!< queued messages
-        mutable std::mutex m_mutex; //!< protects the queue
-
+    template <typename T> class Signal {
+    public:
         //! thread-safe enqueue.
         void emit(const T& data)
         {
@@ -58,6 +56,10 @@ namespace SignalLib
             std::lock_guard<std::mutex> lock(m_mutex);
             return m_pending.size();
         }
+
+    private:
+        std::queue<T> m_pending; //!< queued messages
+        mutable std::mutex m_mutex; //!< protects the queue
     };
 
 } // namespace SignalLib

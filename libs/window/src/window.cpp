@@ -1,8 +1,8 @@
 /*
- * TronGrid — window factory implementation
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — window factory implementation
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #include "window/window.hpp"
 
@@ -27,6 +27,7 @@ namespace WindowLib
 #else
         std::cerr << "[TronGrid] Fatal: unsupported platform\n";
         std::abort();
+        return nullptr;
 #endif
     }
 

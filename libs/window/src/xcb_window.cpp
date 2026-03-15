@@ -1,8 +1,8 @@
 /*
- * TronGrid — XCB window implementation
- * Copyright (C) 2026 Matej Gomboc
- * SPDX-Licence-Identifier: GPL-3.0-or-later
- */
+    TronGrid — XCB window implementation
+    Copyright (C) 2026 Matej Gomboc
+    SPDX-Licence-Identifier: GPL-3.0-or-later
+*/
 
 #ifdef __linux__
 
@@ -33,6 +33,7 @@ XcbWindow::XcbWindow(const WindowConfig& config)
     if (xcb_connection_has_error(m_connection)) {
         std::cerr << "[TronGrid] Fatal: failed to connect to X server\n";
         std::abort();
+        return;
     }
 
     // Get the screen
