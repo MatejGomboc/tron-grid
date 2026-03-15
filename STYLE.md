@@ -74,6 +74,22 @@ C++20. Do not throw exceptions in project code. Catch exceptions from third-part
 (e.g., vulkan-hpp `vk::raii`) at API boundaries only. For unrecoverable errors in project code,
 log to `std::cerr` with a `[TronGrid] Fatal:` prefix and call `std::abort()` followed by a return statement to exit that function.
 
+### Member Initialisation
+
+Use brace initialisation `{}` for all member default values — not `= value` assignment:
+
+```cpp
+// Correct
+uint32_t m_width{0};
+bool m_tracked{false};
+const Device* m_device{nullptr};
+vk::raii::Device m_device{nullptr};
+
+// Wrong
+uint32_t m_width = 0;
+bool m_tracked = false;
+```
+
 ### Vulkan C++ Bindings
 
 Use **vulkan-hpp** with the `vk::raii` namespace for all Vulkan objects. RAII wrappers own their

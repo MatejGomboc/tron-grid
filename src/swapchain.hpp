@@ -79,8 +79,8 @@ private:
     //! Internal: query surface and build swapchain + views.
     void build(uint32_t width, uint32_t height);
 
-    const Device* m_device = nullptr; //!< Back-pointer to the device (non-owning).
-    VkSurfaceKHR m_surface = VK_NULL_HANDLE; //!< Surface handle (non-owning).
+    const Device* m_device{nullptr}; //!< Back-pointer to the device (non-owning).
+    VkSurfaceKHR m_surface{VK_NULL_HANDLE}; //!< Surface handle (non-owning).
     vk::raii::SwapchainKHR m_swapchain{nullptr}; //!< Swapchain handle.
     std::vector<vk::Image> m_images; //!< Swapchain images (non-owning).
     std::vector<vk::raii::ImageView> m_views; //!< Per-image views.

@@ -25,11 +25,11 @@ namespace WindowLib
 
     //! Configuration parameters for creating a platform window.
     struct WindowConfig {
-        std::string title = "TRON Grid Renderer"; //!< Window title text.
-        uint32_t width = 1920; //!< Initial window width in pixels.
-        uint32_t height = 1080; //!< Initial window height in pixels.
-        bool resizable = true; //!< Whether the window can be resized by the user.
-        bool decorated = true; //!< Window chrome (title bar, borders).
+        std::string title{"TRON Grid Renderer"}; //!< Window title text.
+        uint32_t width{1920}; //!< Initial window width in pixels.
+        uint32_t height{1080}; //!< Initial window height in pixels.
+        bool resizable{true}; //!< Whether the window can be resized by the user.
+        bool decorated{true}; //!< Window chrome (title bar, borders).
     };
 
     //! Abstract base class for platform-native windows.
@@ -96,9 +96,9 @@ namespace WindowLib
             m_event_queue.push(ev);
         }
 
-        uint32_t m_width = 0; //!< Current client-area width in pixels.
-        uint32_t m_height = 0; //!< Current client-area height in pixels.
-        bool m_should_close = false; //!< True after a close has been requested.
+        uint32_t m_width{0}; //!< Current client-area width in pixels.
+        uint32_t m_height{0}; //!< Current client-area height in pixels.
+        bool m_should_close{false}; //!< True after a close has been requested.
 
     private:
         std::queue<WindowEvent> m_event_queue; //!< Pending window events waiting to be polled.
