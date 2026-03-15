@@ -96,5 +96,5 @@ TEST_CASE(thread_safety)
 
 int main()
 {
-    return TestFixtureLib::runAll();
+    return static_cast<int>(TestFixtureLib::runAll());
 }

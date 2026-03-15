@@ -4,10 +4,10 @@
     SPDX-Licence-Identifier: GPL-3.0-or-later
 */
 
-#include "gpu_device.hpp"
-#include "gpu_instance.hpp"
-#include "gpu_surface.hpp"
-#include "gpu_swapchain.hpp"
+#include "device.hpp"
+#include "instance.hpp"
+#include "surface.hpp"
+#include "swapchain.hpp"
 
 #include <signal/signal.hpp>
 #include <window/window.hpp>
@@ -103,13 +103,13 @@ int main()
 {
     try {
         // Create window
-        WindowConfig config{
+        WindowLib::WindowConfig config{
             .title = "TRON Grid Renderer",
             .width = 1280,
             .height = 720,
         };
 
-        std::unique_ptr<Window> window = WindowLib::create(config);
+        std::unique_ptr<WindowLib::Window> window = WindowLib::create(config);
         std::cout << "Window created: " << config.width << "x" << config.height << "\n";
 
         // Vulkan initialisation
@@ -120,14 +120,14 @@ int main()
             true;
 #endif
 
-        Gpu::Instance instance(ENABLE_VALIDATION, Gpu::requiredSurfaceExtensions());
-        vk::raii::SurfaceKHR surface = Gpu::createSurface(instance.get(), *window);
-        Gpu::Device device(instance, *surface);
+        Instance instance(ENABLE_VALIDATION, requiredSurfaceExtensions());
+        vk::raii::SurfaceKHR surface = createSurface(instance.get(), *window);
+        Device device(instance, *surface);
 
         std::cout << "Vulkan ready - GPU: " << device.name() << "\n";
 
         // Create swapchain
-        Gpu::Swapchain swapchain(device, *surface, config.width, config.height);
+        Swapchain swapchain(device, *surface, config.width, config.height);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
@@ -167,7 +167,7 @@ int main()
         while (!window->shouldClose()) {
             window->pumpEvents();
 
-            WindowEvent ev;
+            WindowLib::WindowEvent ev;
 #ifdef _WIN32
             constexpr uint32_t ESC_KEYCODE = 27; // Win32 virtual key code
 #else
@@ -175,15 +175,15 @@ int main()
 #endif
             while (window->pollEvent(ev)) {
                 switch (ev.type) {
-                case WindowEvent::Type::Close:
+                case WindowLib::WindowEvent::Type::Close:
                     std::cout << "Close requested\n";
                     break;
 
-                case WindowEvent::Type::Resize:
+                case WindowLib::WindowEvent::Type::Resize:
                     resize_signal.emit({ev.resize.width, ev.resize.height});
                     break;
 
-                case WindowEvent::Type::KeyDown:
+                case WindowLib::WindowEvent::Type::KeyDown:
                     if (ev.key.keycode == ESC_KEYCODE) {
                         window->requestClose();
                     }

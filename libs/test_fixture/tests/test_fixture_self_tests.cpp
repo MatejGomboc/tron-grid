@@ -30,5 +30,5 @@ TEST_CASE(check_throws_catches_exception)
 
 int main()
 {
-    return TestFixtureLib::runAll();
+    return static_cast<int>(TestFixtureLib::runAll());
 }

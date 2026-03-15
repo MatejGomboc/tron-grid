@@ -8,6 +8,9 @@
 
 #include <cstdint>
 
+namespace WindowLib
+{
+
 struct WindowEvent {
     enum class Type {
         None,
@@ -57,3 +60,5 @@ struct WindowEvent {
     {
     }
 };
+
+} // namespace WindowLib

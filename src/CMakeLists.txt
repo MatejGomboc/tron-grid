@@ -1,10 +1,10 @@
 add_executable(${PROJECT_NAME}
     main.cpp
     volk.cpp
-    gpu_instance.cpp
-    gpu_device.cpp
-    gpu_surface.cpp
-    gpu_swapchain.cpp
+    instance.cpp
+    device.cpp
+    surface.cpp
+    swapchain.cpp
 )
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)

@@ -11,6 +11,9 @@
 #include "window/window.hpp"
 #include <xcb/xcb.h>
 
+namespace WindowLib
+{
+
 class XcbWindow : public Window {
 public:
     explicit XcbWindow(const WindowConfig& config);
@@ -36,5 +39,7 @@ private:
     int32_t m_last_mouse_y = 0;
     bool m_mouse_tracked = false;
 };
+
+} // namespace WindowLib
 
 #endif // __linux__
