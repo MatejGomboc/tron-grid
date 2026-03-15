@@ -30,155 +30,165 @@ Completed 2026-03-13. PR #20 merged.
 
 ---
 
-## Current Etape: 3 — Swapchain, Command Buffers, and Clear Screen
+## Etape 3 — Swapchain, Command Buffers, and Clear Screen ✅
 
-**Branch:** create from `main`, name `feat/swapchain`
+Completed 2026-03-15. PRs #22, #23, #24 merged.
 
-**Goal:** Create a swapchain with MAILBOX present mode, set up command buffers and frame
-synchronisation, and run a basic render loop that clears the screen to a colour. After this
-etape, the window shows a solid colour (not black) and handles resize correctly.
+- `Swapchain` class with MAILBOX present mode, B8G8R8A8_SRGB, old-swapchain reuse
+- Double-buffered frame sync (fences + semaphores), command pool + per-frame command buffers
+- Dynamic rendering clear to dark teal, Synchronization2 image layout barriers
+- `SignalLib::Signal<ResizeEvent>` for window resize communication
+- Bug fixes: dangling pointer, orphaned semaphore, 0x0 extent, `VK_QUEUE_FAMILY_IGNORED`,
+  Vulkan 1.3 device check, Win32 spurious `WM_SIZE`, `PeekMessageW` `WM_QUIT`, XCB fixes
+- Full naming convention sweep: camelCase functions, `m_` member prefix, `WindowLib`/`SignalLib`/`TestFixtureLib` namespaces
+- Comprehensive doxygen coverage, full GPL v3 licence headers, STYLE.md enforced
 
-**Note:** VMA (Vulkan Memory Allocator) is **deferred to Etape 4** — swapchain images are
-managed by the presentation engine and require no manual memory allocation.
+---
 
-**Read before starting:** `docs/ARCHITECTURE.md` § Frame Synchronisation, § Dynamic Rendering,
-and § Key Design Decisions (MAILBOX present mode, sRGB output, 16-bit float HDR)
+## Current Etape: 4 — Triangle on Screen (Phase 0 Finale)
+
+**Branch:** create from `main`, name `feat/triangle`
+
+**Goal:** Integrate VMA for GPU memory allocation, compile Slang shaders to SPIR-V, create a
+graphics pipeline with dynamic rendering, and draw a hardcoded colourful triangle. After this
+etape, a red-green-blue triangle is visible on the dark teal background — **Phase 0 complete**.
+
+**Read before starting:** `docs/ARCHITECTURE.md` § Rendering Pipeline, `CLAUDE.md` § Key Design
+Decisions (coordinate system, colour space, descriptor model, Slang shaders)
+
+### Dependencies to integrate
+
+| Library | Purpose | Integration |
+|---------|---------|-------------|
+| VMA | GPU memory allocation for buffers | `FetchContent` from GitHub (GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) |
+| Slang | Shader compilation to SPIR-V | `slangc` from Vulkan SDK, CMake custom commands |
 
 ### Steps (do in order)
 
-#### 1. `gpu::Swapchain` — swapchain + image views
+#### 1. Integrate VMA
 
-Create `src/gpu_swapchain.hpp` and `src/gpu_swapchain.cpp`.
+- Add `FetchContent` for VMA in root `CMakeLists.txt` (after `find_package(Vulkan)`)
+- Link `VulkanMemoryAllocator` in `src/CMakeLists.txt`
+- Create `src/allocator.hpp` / `src/allocator.cpp` — thin RAII wrapper around `VmaAllocator`
+    - Constructor: `vmaCreateAllocator()` with Volk function pointers
+    - Destructor: `vmaDestroyAllocator()`
+    - Provide `createBuffer()` that returns a RAII buffer+allocation pair
+- Verify: project builds with VMA linked but not yet used in the render loop
+
+#### 2. Write Slang shaders
+
+Create `src/shaders/triangle.vert.slang` and `src/shaders/triangle.frag.slang`.
+
+**Vertex shader:**
+
+- Input: `float3 position` (location 0) + `float4 colour` (location 1)
+- Output: `float4 sv_position` + `float4 colour` (to fragment)
+- No transforms — pass position through as `float4(position, 1.0)`
+
+**Fragment shader:**
+
+- Input: interpolated `float4 colour` from vertex stage
+- Output: `float4` colour to the colour attachment
+
+#### 3. Compile shaders via CMake
+
+- Add custom commands in `src/CMakeLists.txt` to invoke `slangc`:
+    - `slangc triangle.vert.slang -target spirv -o triangle.vert.spv`
+    - `slangc triangle.frag.slang -target spirv -o triangle.frag.spv`
+- Add a helper function in `src/` to load `.spv` files from disc into `std::vector<uint32_t>`
+- Create `vk::raii::ShaderModule` from the loaded SPIR-V bytes
+
+#### 4. Create the graphics pipeline
+
+Create `src/pipeline.hpp` / `src/pipeline.cpp`.
+
+Pipeline configuration:
+
+- **Shader stages:** vertex + fragment from the loaded shader modules
+- **Vertex input:** one binding (stride = `sizeof(Vertex)`), two attributes:
+    - Location 0: `R32G32B32_SFLOAT` at offset 0 (position)
+    - Location 1: `R32G32B32A32_SFLOAT` at offset 12 (colour)
+- **Input assembly:** `eTriangleList`
+- **Viewport + scissor:** dynamic state (set per-frame from swapchain extent)
+- **Rasterisation:** fill mode, no culling (both faces visible), counter-clockwise front
+- **Colour blend:** no blending, write RGBA
+- **Dynamic rendering:** chain `VkPipelineRenderingCreateInfo` with the swapchain colour format
+- **Pipeline layout:** empty (no descriptors, no push constants yet)
+- Use `vk::raii::Pipeline` and `vk::raii::PipelineLayout`
+
+#### 5. Allocate the triangle vertex buffer
+
+Define the vertex data:
 
 ```cpp
-namespace gpu {
-class Swapchain {
-    vk::raii::SwapchainKHR swapchain_;
-    std::vector<vk::Image> images_;           // non-owning (managed by swapchain)
-    std::vector<vk::raii::ImageView> views_;  // RAII image views
-    vk::SurfaceFormatKHR format_;
-    vk::Extent2D extent_;
-    vk::PresentModeKHR present_mode_;
+struct Vertex {
+    float position[3];
+    float colour[4];
 };
-}
+
+constexpr std::array<Vertex, 3> TRIANGLE_VERTICES = {{
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},  // Red   (bottom-left)
+    {{ 0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},  // Green (bottom-right)
+    {{ 0.0f,  0.5f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},  // Blue  (top)
+}};
 ```
 
-Init sequence:
+Allocation strategy:
 
-1. Query surface capabilities via `physical_device.getSurfaceCapabilitiesKHR(surface)`
-2. Choose surface format:
-   - Prefer `B8G8R8A8_SRGB` with `VK_COLOR_SPACE_SRGB_NONLINEAR_KHR`
-   - Fall back to the first available format
-3. Choose present mode:
-   - Prefer `MAILBOX` (low latency, no tearing)
-   - Fall back to `FIFO` (always available, guaranteed by spec)
-4. Choose extent:
-   - Use `currentExtent` from surface capabilities if not `0xFFFFFFFF`
-   - Otherwise use the window dimensions, clamped to `minImageExtent` / `maxImageExtent`
-5. Choose image count:
-   - `minImageCount + 1` (for triple buffering headroom)
-   - Clamp to `maxImageCount` if non-zero
-6. Create `vk::raii::SwapchainKHR`:
-   - `imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT`
-   - If graphics and present families differ: `imageSharingMode = CONCURRENT`
-   - Otherwise: `imageSharingMode = EXCLUSIVE`
-   - `preTransform = currentTransform`
-   - `compositeAlpha = OPAQUE`
-   - `clipped = true`
-7. Retrieve swapchain images via `swapchain.getImages()`
-8. Create one `vk::raii::ImageView` per image:
-   - `viewType = 2D`, `format = chosen surface format`
-   - `subresourceRange = { COLOUR, mipLevel 0, 1 level, arrayLayer 0, 1 layer }`
+1. Create a staging buffer (`VMA_MEMORY_USAGE_CPU_ONLY`) and copy vertex data into it
+2. Create the GPU vertex buffer (`VMA_MEMORY_USAGE_GPU_ONLY`)
+3. Record a one-shot command buffer to copy staging → GPU buffer
+4. Submit, wait, free the staging buffer
 
-Provide a `recreate(uint32_t width, uint32_t height)` method that destroys and rebuilds
-the swapchain + image views (reusing the old swapchain handle for smoother transitions).
+#### 6. Update the render loop
 
-#### 2. Frame synchronisation objects
-
-Add frame-in-flight management to `src/main.cpp` or a small `gpu::FrameSync` helper struct.
-
-For double buffering (`MAX_FRAMES_IN_FLIGHT = 2`):
-
-- `std::vector<vk::raii::Semaphore> image_available_semaphores_` — one per frame in flight
-- `std::vector<vk::raii::Semaphore> render_finished_semaphores_` — one per frame in flight
-- `std::vector<vk::raii::Fence> in_flight_fences_` — one per frame in flight (start signalled)
-- `uint32_t current_frame_ = 0` — index cycling `0..MAX_FRAMES_IN_FLIGHT-1`
-
-#### 3. Command pool + command buffers
-
-Create `vk::raii::CommandPool` for the graphics queue family, then allocate one
-`vk::raii::CommandBuffer` per frame in flight.
-
-#### 4. Basic render loop — clear screen to a colour
-
-The main loop becomes:
+Between `cmd.beginRendering()` and `cmd.endRendering()` in `recordClearCommand`
+(rename to `recordFrame` or similar):
 
 ```text
-1. Wait for in_flight_fence[current_frame]
-2. Acquire next swapchain image (image_available_semaphore[current_frame])
-   - If OUT_OF_DATE: recreate swapchain, continue
-3. Reset in_flight_fence[current_frame]
-4. Reset + begin command buffer[current_frame]
-5. Transition swapchain image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (pipeline barrier)
-6. vkCmdBeginRendering with clear colour (e.g., dark teal: 0.0, 0.1, 0.15, 1.0)
-7. vkCmdEndRendering
-8. Transition swapchain image: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC (pipeline barrier)
-9. End + submit command buffer (wait: image_available, signal: render_finished)
-10. Present (wait: render_finished)
-    - If OUT_OF_DATE or SUBOPTIMAL: recreate swapchain
-11. current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT
+1. Bind the graphics pipeline
+2. Set viewport and scissor (from swapchain extent)
+3. Bind the vertex buffer
+4. Draw 3 vertices, 1 instance
 ```
 
-Use `vkCmdBeginRendering` / `vkCmdEndRendering` (dynamic rendering) — **no VkRenderPass**.
-Use `vkCmdPipelineBarrier2` for image layout transitions.
+The existing clear colour (dark teal) stays as the `loadOp = eClear` background.
 
-#### 5. Handle window resize
+#### 7. Handle pipeline recreation on swapchain resize
 
-- On `WindowEvent::Type::Resize`: set a `framebuffer_resized` flag
-- After present (or on OUT_OF_DATE / SUBOPTIMAL): call `swapchain.recreate(new_width, new_height)`
-- Skip frames while minimised (extent 0×0)
+The pipeline uses dynamic viewport/scissor state, so **no pipeline recreation is needed**
+on resize — just update the viewport and scissor values each frame.
 
-#### 6. Update `src/CMakeLists.txt`
+#### 8. Update `src/CMakeLists.txt`
 
-Add `gpu_swapchain.cpp` to the source list.
+- Add `allocator.cpp`, `pipeline.cpp` to source list
+- Add shader compilation custom commands
+- Link `VulkanMemoryAllocator`
 
-#### 7. Run clang-format, build, test, commit, and PR
+#### 9. Run clang-format, build, test, commit, and PR
 
 - `clang-format -i` on all changed C++ files
-- `cmake --preset windows-msvc && cmake --build build/windows-msvc --config Debug`
-- `ctest --test-dir build/windows-msvc -C Debug` — all existing tests still pass
-- Manual verification: window opens with a solid colour, handles resize, ESC closes
-- Branch: `feat/swapchain`
+- Build all 5 presets (or at least windows-msvc + linux-x11-gcc)
+- `ctest` — all existing tests still pass
+- Manual verification: colourful triangle on dark teal background, resize works, ESC closes
+- Branch: `feat/triangle`
 - PR against `main`
 
 ### Acceptance Criteria
 
-- [ ] Swapchain created with MAILBOX present mode (FIFO fallback)
-- [ ] Surface format: sRGB preferred (B8G8R8A8_SRGB)
-- [ ] Image views created for all swapchain images
-- [ ] Command pool + per-frame command buffers allocated
-- [ ] Frame sync: semaphores + fences for double-buffered rendering
-- [ ] Render loop clears screen to a visible colour (not black)
-- [ ] Dynamic rendering used (`vkCmdBeginRendering`) — no VkRenderPass
-- [ ] Image layout transitions via pipeline barriers
-- [ ] Swapchain recreated on window resize and OUT_OF_DATE
-- [ ] Minimised window handled gracefully (no crash, no busy loop)
+- [ ] VMA integrated via FetchContent, RAII allocator wrapper
+- [ ] Slang shaders compiled to SPIR-V via `slangc` at build time
+- [ ] Graphics pipeline created with `VkPipelineRenderingCreateInfo` (no VkRenderPass)
+- [ ] Triangle vertex buffer allocated via VMA (staging → GPU copy)
+- [ ] Colourful triangle visible on screen (red, green, blue corners)
+- [ ] Dark teal background still visible around the triangle
+- [ ] Dynamic viewport/scissor — no pipeline recreation on resize
 - [ ] `vk::raii` for all new Vulkan objects — no manual destroy
-- [ ] `[[nodiscard]]`, `constexpr`, explicit types, `//!` doxygen
+- [ ] Proper doxygen on all new classes, methods, and members
 - [ ] Code follows `.clang-format` and `STYLE.md`
 - [ ] British spelling in all comments and documentation
 - [ ] All existing tests still pass
-
----
-
-## Phase 0 — Remaining Etapes (after Etape 3)
-
-### Etape 4 — Triangle on screen
-
-- VMA integration for vertex buffer memory allocation
-- Graphics pipeline with `VkPipelineRenderingCreateInfo` (dynamic rendering, no VkRenderPass)
-- Hardcoded colourful triangle (vertex + fragment shaders via Slang)
-- Triangle on screen — Phase 0 complete
+- [ ] **Phase 0 complete — triangle on screen**
 
 ---
 
