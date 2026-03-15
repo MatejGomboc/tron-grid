@@ -77,7 +77,7 @@ Decisions (coordinate system, colour space, descriptor model, Slang shaders)
 
 #### 2. Write Slang shaders
 
-Create `src/shaders/triangle.vert.slang` and `src/shaders/triangle.frag.slang`.
+Create `src/triangle.vert.slang` and `src/triangle.frag.slang` alongside the C++ sources.
 
 **Vertex shader:**
 
@@ -92,9 +92,9 @@ Create `src/shaders/triangle.vert.slang` and `src/shaders/triangle.frag.slang`.
 
 #### 3. Compile shaders via CMake
 
-- Add custom commands in `src/CMakeLists.txt` to invoke `slangc`:
-    - `slangc triangle.vert.slang -target spirv -o triangle.vert.spv`
-    - `slangc triangle.frag.slang -target spirv -o triangle.frag.spv`
+- Add custom commands in `src/CMakeLists.txt` to invoke `slangc`, outputting to the build directory:
+    - `slangc ${CMAKE_CURRENT_SOURCE_DIR}/triangle.vert.slang -target spirv -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv`
+    - `slangc ${CMAKE_CURRENT_SOURCE_DIR}/triangle.frag.slang -target spirv -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv`
 - Add a helper function in `src/` to load `.spv` files from disc into `std::vector<uint32_t>`
 - Create `vk::raii::ShaderModule` from the loaded SPIR-V bytes
 
