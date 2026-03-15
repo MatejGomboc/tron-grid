@@ -69,13 +69,17 @@ Decisions (coordinate system, colour space, descriptor model, Slang shaders)
 
 - Add `FetchContent` for VMA in root `CMakeLists.txt` (after `find_package(Vulkan)`)
 - Link `VulkanMemoryAllocator` in `src/CMakeLists.txt`
-- **Volk compatibility:** VMA assumes static Vulkan linking by default. Define
-  `VMA_STATIC_VULKAN_FUNCTIONS=0` and `VMA_DYNAMIC_VULKAN_FUNCTIONS=0` globally, then pass
-  Volk's function pointers explicitly via `VmaVulkanFunctions` struct when creating the allocator
+- **Volk compatibility:** VMA assumes static Vulkan linking by default. Add
+  `VMA_STATIC_VULKAN_FUNCTIONS=0` and `VMA_DYNAMIC_VULKAN_FUNCTIONS=0` to the global
+  compile definitions in root `CMakeLists.txt`. Then use the official one-liner
+  `vmaImportVulkanFunctionsFromVolk()` to populate `VmaVulkanFunctions` — no manual
+  function pointer filling needed (requires `volk.h` included before `vk_mem_alloc.h`)
+- **Include order matters:** `volk.h` → `vulkan/vulkan_raii.hpp` → `vk_mem_alloc.h`
 - Create `src/allocator.hpp` / `src/allocator.cpp` — thin RAII wrapper around `VmaAllocator`
-    - Constructor: `vmaCreateAllocator()` with `VmaVulkanFunctions` populated from Volk
+    - Constructor: call `vmaImportVulkanFunctionsFromVolk()` then `vmaCreateAllocator()`
     - Destructor: `vmaDestroyAllocator()`
-    - Provide `createBuffer()` that returns a RAII buffer+allocation pair
+    - Provide `createBuffer()` that returns a RAII buffer+allocation pair (VMA returns raw
+      `VkBuffer`, not `vk::raii::Buffer` — the wrapper must call `vmaDestroyBuffer` on cleanup)
 - **Destruction order:** in `main()`, the allocator must be declared after the device but before
   any buffers, so RAII destruction frees buffers → allocator → device (reverse order)
 - Verify: project builds with VMA linked but not yet used in the render loop
@@ -164,10 +168,13 @@ constexpr std::array<Vertex, 3> TRIANGLE_VERTICES = {{
 }};
 ```
 
-Allocation strategy:
+Allocation strategy (use `VMA_MEMORY_USAGE_AUTO` — the old `GPU_ONLY`/`CPU_ONLY` are deprecated):
 
-1. Create a staging buffer (`VMA_MEMORY_USAGE_CPU_ONLY`) and copy vertex data into it
-2. Create the GPU vertex buffer (`VMA_MEMORY_USAGE_GPU_ONLY`)
+1. Create a staging buffer with `VMA_MEMORY_USAGE_AUTO` +
+   `VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT`
+   (auto-mapped, no manual `vkMapMemory` needed) — copy vertex data via `memcpy` into `allocInfo.pMappedData`
+2. Create the GPU vertex buffer with `VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE` +
+   `VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT`
 3. Record a one-shot command buffer to copy staging → GPU buffer
 4. Submit, wait, free the staging buffer
 
