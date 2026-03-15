@@ -92,13 +92,27 @@ Create `src/triangle.vert.slang` and `src/triangle.frag.slang` alongside the C++
 
 #### 3. Compile shaders via CMake
 
-- Add a custom CMake target (`shaders`) in `src/CMakeLists.txt` that compiles `.slang` → `.spv`:
-    - Use `add_custom_command` for each shader (input `.slang`, output `.spv` in `${CMAKE_CURRENT_BINARY_DIR}`)
-    - Use `add_custom_target(shaders DEPENDS triangle.vert.spv triangle.frag.spv)` to group them
-    - `add_dependencies(${PROJECT_NAME} shaders)` so the executable depends on compiled shaders
-    - This ensures shaders rebuild when sources change (via `DEPENDS` on the `.slang` files)
-- Add a helper function in `src/` to load `.spv` files from disc into `std::vector<uint32_t>`
-- Create `vk::raii::ShaderModule` from the loaded SPIR-V bytes
+Find `slangc` from the Vulkan SDK — there is no `FindVulkan` component for Slang, so use:
+
+```cmake
+find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+```
+
+Add a custom CMake target (`shaders`) in `src/CMakeLists.txt`:
+
+- Use `add_custom_command` for each shader with flags:
+    - `-target spirv -profile spirv_1_4 -emit-spirv-directly`
+    - `-fvk-use-entrypoint-name` (preserve entry point names)
+    - `-fvk-invert-y` (Vulkan Y-axis flip — avoids negating Y in shader source)
+    - `-entry main -stage vertex` / `-stage fragment`
+- Output `.spv` files to `${CMAKE_CURRENT_BINARY_DIR}`
+- Use `add_custom_target(shaders DEPENDS triangle.vert.spv triangle.frag.spv)` to group them
+- `add_dependencies(${PROJECT_NAME} shaders)` so the executable depends on compiled shaders
+- Add a `POST_BUILD` command to copy `.spv` files next to the executable (`$<TARGET_FILE_DIR:${PROJECT_NAME}>`) so they can be loaded at runtime via a relative path
+- This ensures shaders rebuild when `.slang` sources change (via `DEPENDS`)
+
+Add a helper function in `src/` to load `.spv` files from disc into `std::vector<uint32_t>`,
+then create `vk::raii::ShaderModule` from the loaded SPIR-V bytes.
 
 #### 4. Create the graphics pipeline
 
