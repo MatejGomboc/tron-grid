@@ -118,13 +118,21 @@ Multi-line doxygen blocks use 4-space indented content:
 */
 ```
 
-Licence headers use plain `/* */` (not doxygen):
+Licence headers use plain `/* */` (not doxygen) with the full GPL v3 notice:
 
 ```cpp
 /*
-    TronGrid — description
-    Copyright (C) 2026 Matej Gomboc
-    SPDX-Licence-Identifier: GPL-3.0-or-later
+    Copyright (C) 2026 Matej Gomboc https://github.com/MatejGomboc/tron-grid
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
 */
 ```
 
