@@ -60,7 +60,7 @@ Decisions (coordinate system, colour space, descriptor model, Slang shaders)
 
 | Library | Purpose | Integration |
 |---------|---------|-------------|
-| VMA | GPU memory allocation for buffers | `FetchContent` from GitHub (GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) |
+| VMA | GPU memory allocation for buffers | From Vulkan SDK (same as Volk) |
 | Slang | Shader compilation to SPIR-V | `slangc` from Vulkan SDK, CMake custom commands |
 
 ### Steps (do in order)
@@ -120,8 +120,9 @@ handles routing to stdout (Info and below) or stderr (Warning and above).
 
 #### 2. Integrate VMA
 
-- Add `FetchContent` for VMA in root `CMakeLists.txt` (after `find_package(Vulkan)`)
-- Link `VulkanMemoryAllocator` in `src/CMakeLists.txt`
+- VMA ships with the Vulkan SDK (same as Volk) — no `FetchContent` needed
+- Include `vk_mem_alloc.h` from the SDK include path (already available via `find_package(Vulkan)`)
+- Create a single `vma.cpp` translation unit with `#define VMA_IMPLEMENTATION` (same pattern as `volk.cpp`)
 - **Volk compatibility:** VMA assumes static Vulkan linking by default. Add
   `VMA_STATIC_VULKAN_FUNCTIONS=0` and `VMA_DYNAMIC_VULKAN_FUNCTIONS=0` to the global
   compile definitions in root `CMakeLists.txt`. Then use the official one-liner
@@ -254,7 +255,8 @@ on resize — just update the viewport and scissor values each frame.
 
 - Add `allocator.cpp`, `pipeline.cpp` to source list
 - Add shader compilation custom commands
-- Link `VulkanMemoryAllocator` and `log`
+- Add `vma.cpp` to source list
+- Link `log`
 
 #### 10. Run clang-format, build, test, commit, and PR
 
@@ -269,7 +271,7 @@ on resize — just update the viewport and scissor values each frame.
 
 - [ ] `libs/log/` logging library using `SignalLib::Signal<LogMessage>` with background worker thread
 - [ ] All `std::cout` / `std::cerr` calls replaced with logger
-- [ ] VMA integrated via FetchContent, RAII allocator wrapper
+- [ ] VMA integrated from Vulkan SDK, RAII allocator wrapper
 - [ ] Slang shaders compiled to SPIR-V via `slangc` at build time
 - [ ] Graphics pipeline created with `VkPipelineRenderingCreateInfo` (no VkRenderPass)
 - [ ] Triangle vertex buffer allocated via VMA (staging → GPU copy)
