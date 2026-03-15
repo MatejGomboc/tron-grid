@@ -69,10 +69,15 @@ Decisions (coordinate system, colour space, descriptor model, Slang shaders)
 
 - Add `FetchContent` for VMA in root `CMakeLists.txt` (after `find_package(Vulkan)`)
 - Link `VulkanMemoryAllocator` in `src/CMakeLists.txt`
+- **Volk compatibility:** VMA assumes static Vulkan linking by default. Define
+  `VMA_STATIC_VULKAN_FUNCTIONS=0` and `VMA_DYNAMIC_VULKAN_FUNCTIONS=0` globally, then pass
+  Volk's function pointers explicitly via `VmaVulkanFunctions` struct when creating the allocator
 - Create `src/allocator.hpp` / `src/allocator.cpp` — thin RAII wrapper around `VmaAllocator`
-    - Constructor: `vmaCreateAllocator()` with Volk function pointers
+    - Constructor: `vmaCreateAllocator()` with `VmaVulkanFunctions` populated from Volk
     - Destructor: `vmaDestroyAllocator()`
     - Provide `createBuffer()` that returns a RAII buffer+allocation pair
+- **Destruction order:** in `main()`, the allocator must be declared after the device but before
+  any buffers, so RAII destruction frees buffers → allocator → device (reverse order)
 - Verify: project builds with VMA linked but not yet used in the render loop
 
 #### 2. Write Slang shaders
@@ -114,6 +119,11 @@ Add a custom CMake target (`shaders`) in `src/CMakeLists.txt`:
 Add a helper function in `src/` to load `.spv` files from disc into `std::vector<uint32_t>`,
 then create `vk::raii::ShaderModule` from the loaded SPIR-V bytes.
 
+**Runtime path resolution:** load `.spv` files from the same directory as the executable.
+Use `GetModuleFileNameW` on Win32 or `/proc/self/exe` readlink on Linux to find the
+executable path, strip the filename, and append the `.spv` filename. This avoids depending
+on the working directory.
+
 #### 4. Create the graphics pipeline
 
 Create `src/pipeline.hpp` / `src/pipeline.cpp`.
@@ -125,8 +135,13 @@ Pipeline configuration:
     - Location 0: `R32G32B32_SFLOAT` at offset 0 (position)
     - Location 1: `R32G32B32A32_SFLOAT` at offset 12 (colour)
 - **Input assembly:** `eTriangleList`
-- **Viewport + scissor:** dynamic state (set per-frame from swapchain extent)
+- **Viewport + scissor:** set per-frame from swapchain extent (not baked into pipeline)
+- **Dynamic state:** `VkPipelineDynamicStateCreateInfo` with `VK_DYNAMIC_STATE_VIEWPORT` +
+  `VK_DYNAMIC_STATE_SCISSOR` — this is required so the viewport/scissor can change each frame
+  without recreating the pipeline
 - **Rasterisation:** fill mode, no culling (both faces visible), counter-clockwise front
+- **Multisample:** `VkPipelineMultisampleStateCreateInfo` with `rasterizationSamples = 1`
+  (required even without MSAA — the pipeline won't create without it)
 - **Colour blend:** no blending, write RGBA
 - **Dynamic rendering:** chain `VkPipelineRenderingCreateInfo` with the swapchain colour format
 - **Pipeline layout:** empty (no descriptors, no push constants yet)
