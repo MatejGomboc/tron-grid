@@ -1,7 +1,15 @@
 /*
-    TronGrid — Vulkan physical + logical device
-    Copyright (C) 2026 Matej Gomboc
-    SPDX-Licence-Identifier: GPL-3.0-or-later
+    Copyright (C) 2026 Matej Gomboc https://github.com/MatejGomboc/tron-grid
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
 */
 
 #include "device.hpp"
@@ -15,21 +23,24 @@
 #include <string_view>
 #include <vector>
 
-//! required device extensions.
+//! Required device extensions.
 static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
+//! Holds graphics and present queue family indices discovered during device selection.
 struct QueueFamilyIndices {
-    uint32_t graphics = UINT32_MAX; //!< graphics queue family index
-    uint32_t present = UINT32_MAX; //!< present queue family index
+    uint32_t graphics = UINT32_MAX; //!< Graphics queue family index.
+    uint32_t present = UINT32_MAX; //!< Present queue family index.
 
+    //! Returns true if both graphics and present queue families have been found.
     [[nodiscard]] bool isComplete() const
     {
         return (graphics != UINT32_MAX) && (present != UINT32_MAX);
     }
 };
 
+//! Finds graphics and present queue family indices for the given device and surface.
 static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     QueueFamilyIndices indices;
@@ -56,6 +67,7 @@ static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& devi
     return indices;
 }
 
+//! Checks whether the device supports all required extensions.
 static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 {
     std::vector<vk::ExtensionProperties> available = device.enumerateDeviceExtensionProperties();
@@ -72,6 +84,7 @@ static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
     return true;
 }
 
+//! Scores a physical device for suitability; returns -1 if unsuitable.
 static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     vk::PhysicalDeviceProperties properties = device.getProperties();

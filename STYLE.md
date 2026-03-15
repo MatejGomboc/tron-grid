@@ -98,6 +98,44 @@ RAII everywhere. Use `vk::raii` for Vulkan objects, `std::unique_ptr` for single
 objects, and `std::shared_ptr` / `std::weak_ptr` only for signal ownership (see
 `docs/ARCHITECTURE.md` § Signal-Based Communication).
 
+### Doxygen Comments
+
+All doxygen comments must be proper sentences — capital letter start, period end.
+
+| Style | Use | Example |
+|-------|-----|---------|
+| `//!` | Single-line brief | `//! Returns the current extent.` |
+| `//!<` | Inline member | `uint32_t m_width; //!< Client-area width in pixels.` |
+| `/*! */` | Multi-line block | See below |
+
+Multi-line doxygen blocks use 4-space indented content:
+
+```cpp
+/*!
+    Records a command buffer that transitions the swapchain image to
+    colour attachment, clears it to dark teal, and transitions to
+    present layout.
+*/
+```
+
+Licence headers use plain `/* */` (not doxygen) with the full GPL v3 notice:
+
+```cpp
+/*
+    Copyright (C) 2026 Matej Gomboc https://github.com/MatejGomboc/tron-grid
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+*/
+```
+
 ---
 
 ## YAML (GitHub Actions)

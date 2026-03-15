@@ -1,7 +1,15 @@
 /*
-    TronGrid — entry point
-    Copyright (C) 2026 Matej Gomboc
-    SPDX-Licence-Identifier: GPL-3.0-or-later
+    Copyright (C) 2026 Matej Gomboc https://github.com/MatejGomboc/tron-grid
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
 */
 
 #include "device.hpp"
@@ -20,14 +28,19 @@
 #include <memory>
 #include <vector>
 
-//! resize event carried through Signal<T>.
+//! Window resize event payload for Signal<T> communication.
 struct ResizeEvent {
-    uint32_t width = 0;
-    uint32_t height = 0;
+    uint32_t width = 0; //!< New window width in pixels.
+    uint32_t height = 0; //!< New window height in pixels.
 };
 
+//! Maximum number of frames that can be in-flight simultaneously.
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
+/*!
+    Records a command buffer that transitions the swapchain image to
+    colour attachment, clears it to dark teal, and transitions to present layout.
+*/
 static void recordClearCommand(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView view, vk::Extent2D extent)
 {
     vk::CommandBufferBeginInfo begin_info{};

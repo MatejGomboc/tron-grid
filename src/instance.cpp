@@ -1,7 +1,15 @@
 /*
-    TronGrid — Vulkan instance + debug messenger
-    Copyright (C) 2026 Matej Gomboc
-    SPDX-Licence-Identifier: GPL-3.0-or-later
+    Copyright (C) 2026 Matej Gomboc https://github.com/MatejGomboc/tron-grid
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
 */
 
 #include "instance.hpp"
@@ -15,6 +23,7 @@
 // Storage for the vulkan-hpp dynamic dispatcher (exactly one translation unit)
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
+//! Vulkan validation debug callback; logs warnings and errors to stderr.
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT /*type*/,
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* /*user_data*/)
 {
@@ -29,6 +38,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSev
     return VK_FALSE;
 }
 
+//! Checks whether a named layer exists in the available list.
 static bool isLayerAvailable(const std::vector<vk::LayerProperties>& available, const char* name)
 {
     return std::ranges::any_of(available, [name](const vk::LayerProperties& layer) {
@@ -36,6 +46,7 @@ static bool isLayerAvailable(const std::vector<vk::LayerProperties>& available, 
     });
 }
 
+//! Checks whether a named extension exists in the available list.
 static bool isExtensionAvailable(const std::vector<vk::ExtensionProperties>& available, const char* name)
 {
     return std::ranges::any_of(available, [name](const vk::ExtensionProperties& ext) {

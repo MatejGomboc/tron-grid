@@ -1,7 +1,15 @@
 /*
-    TronGrid — test fixture
-    Copyright (C) 2026 Matej Gomboc
-    SPDX-Licence-Identifier: GPL-3.0-or-later
+    Copyright (C) 2026 Matej Gomboc https://github.com/MatejGomboc/tron-grid
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
 */
 
 #pragma once
@@ -17,24 +25,25 @@
 namespace TestFixtureLib
 {
 
+    //! A registered test case with a name and callable body.
     struct TestCase {
-        std::string_view name; //!< test name
-        std::function<void()> fn; //!< test body
+        std::string_view name; //!< Test name.
+        std::function<void()> fn; //!< Test body.
     };
 
-    //! returns the global list of registered test cases.
+    //! Returns the global list of registered test cases.
     std::vector<TestCase>& registry();
 
-    //! registers a test case. called automatically by TEST_CASE macro.
+    //! Registers a test case; called automatically by TEST_CASE macro.
     void registerTest(std::string_view name, std::function<void()> fn);
 
-    //! runs all registered tests. returns true if any test failed, false if all passed.
+    //! Runs all registered tests; returns true if any test failed, false if all passed.
     [[nodiscard]] bool runAll();
 
-    //! reports a check failure. throws to abort the current test.
+    //! Reports a check failure; throws to abort the current test.
     [[noreturn]] void checkFailed(std::string_view expr, std::source_location loc = std::source_location::current());
 
-    //! reports an equality check failure. throws to abort the current test.
+    //! Reports an equality check failure; throws to abort the current test.
     [[noreturn]] void checkEqualFailed(std::string_view lhs_expr, std::string_view rhs_expr, std::string_view lhs_val, std::string_view rhs_val,
         std::source_location loc = std::source_location::current());
 
@@ -42,8 +51,8 @@ namespace TestFixtureLib
     // Template helpers — real logic lives here, not in macros
     // ---------------------------------------------------------------------------
 
-    //! converts a value to a string for diagnostics.
-    template <typename T> std::string toString(const T& v)
+    //! Converts a value to a string for diagnostics.
+    template <typename T> [[nodiscard]] std::string toString(const T& v)
     {
         if constexpr (std::is_convertible_v<T, std::string>) {
             return std::string(v);
@@ -54,7 +63,7 @@ namespace TestFixtureLib
         }
     }
 
-    //! checks that two values are equal; reports failure with stringified expressions and values.
+    //! Checks that two values are equal; reports failure with stringified expressions and values.
     template <typename A, typename B>
     void checkEqual(const A& lhs, const B& rhs, std::string_view lhs_expr, std::string_view rhs_expr, std::source_location loc = std::source_location::current())
     {
@@ -63,7 +72,7 @@ namespace TestFixtureLib
         }
     }
 
-    //! checks that a callable throws any exception.
+    //! Checks that a callable throws any exception.
     template <typename Fn> void checkThrows(Fn&& fn, std::string_view expr, std::source_location loc = std::source_location::current())
     {
         bool threw = false;
@@ -85,7 +94,7 @@ namespace TestFixtureLib
 // Thin macros — only used for expression stringification (#expr)
 // ---------------------------------------------------------------------------
 
-//! fails with file, line, and stringified expression if `expr` is false.
+//! Fails with file, line, and stringified expression if `expr` is false.
 #define TEST_CHECK(expr)                          \
     do {                                          \
         if (!(expr)) {                            \
@@ -93,10 +102,10 @@ namespace TestFixtureLib
         }                                         \
     } while (false)
 
-//! fails showing both values if `a != b`.
+//! Fails showing both values if `a != b`.
 #define TEST_CHECK_EQUAL(a, b) ::TestFixtureLib::checkEqual((a), (b), #a, #b)
 
-//! fails if `expr` does not throw.
+//! Fails if `expr` does not throw.
 #define TEST_CHECK_THROWS(expr)    \
     ::TestFixtureLib::checkThrows( \
         [&] {                      \
@@ -104,7 +113,7 @@ namespace TestFixtureLib
         },                         \
         #expr)
 
-//! defines and auto-registers a test case.
+//! Defines and auto-registers a test case.
 #define TEST_CASE(test_name)                                           \
     static void test_name();                                           \
     namespace                                                          \
