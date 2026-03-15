@@ -28,7 +28,7 @@ namespace TestFixtureLib
     //! registers a test case. called automatically by TEST_CASE macro.
     void registerTest(std::string_view name, std::function<void()> fn);
 
-    //! runs all registered tests. returns 0 if all pass, 1 if any fail.
+    //! runs all registered tests. returns true if any test failed, false if all passed.
     [[nodiscard]] bool runAll();
 
     //! reports a check failure. throws to abort the current test.

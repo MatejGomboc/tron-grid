@@ -65,7 +65,7 @@ Key settings:
 | Functions / Methods | camelCase | `createDevice`, `pollEvent` |
 | Constants | SCREAMING_SNAKE_CASE | `MAX_FRAMES_IN_FLIGHT` |
 | Variables | snake_case | `frame_index` |
-| Member variables | m_snake_case_ | `m_device_handle` |
+| Member variables | m_snake_case | `m_device_handle` |
 | Macros | SCREAMING_SNAKE_CASE | `VK_NO_PROTOTYPES` |
 
 ### Language Standard
