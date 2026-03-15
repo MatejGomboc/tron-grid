@@ -14,14 +14,16 @@
 namespace SignalLib
 {
 
-    //! thread-safe, typed message queue for inter-system communication.
-    //!
-    //! ownership model:
-    //! - receiver owns: std::shared_ptr<Signal<T>>
-    //! - sender holds:  std::weak_ptr<Signal<T>>
-    //!
-    //! when the receiver is destroyed, the shared_ptr dies, the weak_ptr expires,
-    //! and the sender knows to stop — no dangling pointers, no manual unregistration.
+    /*!
+        thread-safe, typed message queue for inter-system communication.
+
+        ownership model:
+        - receiver owns: std::shared_ptr<Signal<T>>
+        - sender holds:  std::weak_ptr<Signal<T>>
+
+        when the receiver is destroyed, the shared_ptr dies, the weak_ptr expires,
+        and the sender knows to stop — no dangling pointers, no manual unregistration.
+    */
     template <typename T> class Signal {
     public:
         //! thread-safe enqueue.

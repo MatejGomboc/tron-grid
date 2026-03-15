@@ -29,7 +29,7 @@ namespace TestFixtureLib
     void registerTest(std::string_view name, std::function<void()> fn);
 
     //! runs all registered tests. returns 0 if all pass, 1 if any fail.
-    [[nodiscard]] int runAll();
+    [[nodiscard]] bool runAll();
 
     //! reports a check failure. throws to abort the current test.
     [[noreturn]] void checkFailed(std::string_view expr, std::source_location loc = std::source_location::current());

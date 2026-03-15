@@ -5,7 +5,6 @@
 */
 
 #include "test_fixture/test_fixture.hpp"
-
 #include <iostream>
 #include <stdexcept>
 
@@ -27,13 +26,13 @@ namespace TestFixtureLib
         registry().push_back({name, std::move(fn)});
     }
 
-    int runAll()
+    bool runAll()
     {
-        const auto& cases = registry();
+        const std::vector<TestCase>& cases = registry();
         std::size_t passed = 0;
         std::size_t failed = 0;
 
-        for (const auto& tc : cases) {
+        for (const TestCase& tc : cases) {
             try {
                 tc.fn();
                 std::cout << "  PASS  " << tc.name << "\n";
@@ -50,8 +49,7 @@ namespace TestFixtureLib
         }
 
         std::cout << "\n" << passed << " passed, " << failed << " failed, " << cases.size() << " total\n";
-
-        return failed > 0 ? 1 : 0;
+        return failed > 0;
     }
 
     [[noreturn]] void checkFailed(std::string_view expr, std::source_location loc)
