@@ -16,11 +16,9 @@
 #include "instance.hpp"
 #include "surface.hpp"
 #include "swapchain.hpp"
-
 #include <log/logger.hpp>
 #include <signal/signal.hpp>
 #include <window/window.hpp>
-
 #include <array>
 #include <cstdint>
 #include <cstdlib>

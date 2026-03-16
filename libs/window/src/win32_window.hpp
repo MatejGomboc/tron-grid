@@ -15,7 +15,6 @@
 #pragma once
 
 #ifdef _WIN32
-
 #include "window/window.hpp"
 // Lean and mean Windows
 #ifndef WIN32_LEAN_AND_MEAN

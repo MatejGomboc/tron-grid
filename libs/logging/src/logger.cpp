@@ -36,8 +36,7 @@ namespace LoggingLib
         return "[UNKNOWN]";
     }
 
-    Logger::Logger()
-        : m_worker(&Logger::workerLoop, this)
+    Logger::Logger() : m_worker(&Logger::workerLoop, this)
     {
     }
 
@@ -47,6 +46,7 @@ namespace LoggingLib
             std::lock_guard<std::mutex> lock(m_mutex);
             m_stop = true;
         }
+
         m_cv.notify_one();
         m_worker.join();
     }

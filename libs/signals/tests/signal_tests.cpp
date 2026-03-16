@@ -14,7 +14,6 @@
 
 #include "test_fixture/test_fixture.hpp"
 #include "signal/signal.hpp"
-
 #include <memory>
 #include <thread>
 

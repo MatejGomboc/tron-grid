@@ -90,7 +90,9 @@ namespace WindowLib
 
     protected:
         //! Constructs the base window with a logger reference.
-        explicit Window(LoggingLib::Logger& logger) : m_logger(logger) {}
+        explicit Window(LoggingLib::Logger& logger) : m_logger(logger)
+        {
+        }
 
         //! Pushes an event onto the internal event queue (for subclass use).
         void pushEvent(const WindowEvent& ev)

@@ -14,7 +14,6 @@
 
 #include "test_fixture/test_fixture.hpp"
 #include "log/logger.hpp"
-
 #include <thread>
 
 TEST_CASE(logger_construct_destroy)

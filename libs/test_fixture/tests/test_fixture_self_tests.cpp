@@ -13,7 +13,6 @@
 */
 
 #include "test_fixture/test_fixture.hpp"
-
 #include <stdexcept>
 
 TEST_CASE(check_true_passes)

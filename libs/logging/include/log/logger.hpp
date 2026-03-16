@@ -26,17 +26,17 @@ namespace LoggingLib
 
     //! Message severity levels.
     enum class Severity {
-        Debug,   //!< Verbose diagnostic information.
-        Info,    //!< Normal operational messages.
+        Debug, //!< Verbose diagnostic information.
+        Info, //!< Normal operational messages.
         Warning, //!< Potential issues that do not prevent operation.
-        Error,   //!< Failures that prevent a specific operation.
-        Fatal    //!< Unrecoverable failures — the application will terminate.
+        Error, //!< Failures that prevent a specific operation.
+        Fatal //!< Unrecoverable failures — the application will terminate.
     };
 
     //! A single log message with severity and text.
     struct LogMessage {
         Severity severity{Severity::Info}; //!< Severity level.
-        std::string text;                  //!< Message content.
+        std::string text; //!< Message content.
     };
 
     /*!
@@ -86,11 +86,11 @@ namespace LoggingLib
         //! Worker thread entry point — drains the queue in a loop.
         void workerLoop();
 
-        SignalsLib::Signal<LogMessage> m_queue;  //!< Thread-safe message queue.
-        std::thread m_worker;                   //!< Background writer thread.
-        std::mutex m_mutex;                     //!< Protects the stop flag.
-        std::condition_variable m_cv;           //!< Wakes the worker when messages arrive or stop is requested.
-        bool m_stop{false};                     //!< Set to true when the logger is shutting down.
+        SignalsLib::Signal<LogMessage> m_queue; //!< Thread-safe message queue.
+        std::thread m_worker; //!< Background writer thread.
+        std::mutex m_mutex; //!< Protects the stop flag.
+        std::condition_variable m_cv; //!< Wakes the worker when messages arrive or stop is requested.
+        bool m_stop{false}; //!< Set to true when the logger is shutting down.
     };
 
 } // namespace LoggingLib

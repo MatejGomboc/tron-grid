@@ -116,8 +116,7 @@ static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surfa
     return score;
 }
 
-Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logger& logger)
-    : m_logger(logger)
+Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logger& logger) : m_logger(logger)
 {
     // Step 1: Enumerate physical devices
     std::vector<vk::raii::PhysicalDevice> physical_devices = instance.get().enumeratePhysicalDevices();

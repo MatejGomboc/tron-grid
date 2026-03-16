@@ -65,7 +65,8 @@ static vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities,
     return extent;
 }
 
-Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger) : m_logger(&logger), m_device(&device), m_surface(surface)
+Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger) :
+    m_logger(&logger), m_device(&device), m_surface(surface)
 {
     build(width, height);
 }
@@ -144,8 +145,8 @@ void Swapchain::build(uint32_t width, uint32_t height)
     // Retrieve swapchain images
     m_images = m_swapchain.getImages();
 
-    m_logger->logInfo("Swapchain created: " + std::to_string(m_extent.width) + "x" + std::to_string(m_extent.height) + " ("
-        + std::to_string(m_images.size()) + " images, " + (m_present_mode == vk::PresentModeKHR::eMailbox ? "MAILBOX" : "FIFO") + ").");
+    m_logger->logInfo("Swapchain created: " + std::to_string(m_extent.width) + "x" + std::to_string(m_extent.height) + " (" + std::to_string(m_images.size())
+        + " images, " + (m_present_mode == vk::PresentModeKHR::eMailbox ? "MAILBOX" : "FIFO") + ").");
 
     // Create image views
     m_views.clear();
