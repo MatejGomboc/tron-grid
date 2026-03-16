@@ -72,7 +72,7 @@ Key settings:
 
 C++20. Do not throw exceptions in project code. Catch exceptions from third-party libraries
 (e.g., vulkan-hpp `vk::raii`) at API boundaries only. For unrecoverable errors in project code,
-log to `std::cerr` with a `[TronGrid] Fatal:` prefix and call `std::abort()` followed by a return statement to exit that function.
+log via `LoggingLib::Logger::logFatal()` and call `std::abort()` followed by a return statement to exit that function.
 
 ### Member Initialisation
 
