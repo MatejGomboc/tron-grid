@@ -26,7 +26,7 @@ namespace WindowLib
     class XcbWindow : public Window {
     public:
         //! Creates an XCB window with the given configuration.
-        explicit XcbWindow(const WindowConfig& config);
+        XcbWindow(const WindowConfig& config, LoggingLib::Logger& logger);
 
         //! Destroys the XCB window and disconnects from the X server.
         ~XcbWindow() override;

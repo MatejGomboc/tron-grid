@@ -17,21 +17,22 @@
 #include "surface.hpp"
 #include "swapchain.hpp"
 
+#include <log/logger.hpp>
 #include <signal/signal.hpp>
 #include <window/window.hpp>
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-#include <iostream>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 //! Window resize event payload for Signal<T> communication.
 struct ResizeEvent {
-    uint32_t width = 0; //!< New window width in pixels.
-    uint32_t height = 0; //!< New window height in pixels.
+    uint32_t width{0}; //!< New window width in pixels.
+    uint32_t height{0}; //!< New window height in pixels.
 };
 
 //! Maximum number of frames that can be in-flight simultaneously.
@@ -114,6 +115,8 @@ static void recordClearCommand(const vk::raii::CommandBuffer& cmd, vk::Image ima
 
 int main()
 {
+    LoggingLib::Logger logger;
+
     try {
         // Create window
         WindowLib::WindowConfig config{
@@ -122,8 +125,8 @@ int main()
             .height = 720,
         };
 
-        std::unique_ptr<WindowLib::Window> window = WindowLib::create(config);
-        std::cout << "Window created: " << config.width << "x" << config.height << "\n";
+        std::unique_ptr<WindowLib::Window> window = WindowLib::create(config, logger);
+        logger.logInfo("Window created: " + std::to_string(config.width) + "x" + std::to_string(config.height) + ".");
 
         // Vulkan initialisation
         constexpr bool ENABLE_VALIDATION =
@@ -133,14 +136,14 @@ int main()
             true;
 #endif
 
-        Instance instance(ENABLE_VALIDATION, requiredSurfaceExtensions());
+        Instance instance(ENABLE_VALIDATION, requiredSurfaceExtensions(), logger);
         vk::raii::SurfaceKHR surface = createSurface(instance.get(), *window);
-        Device device(instance, *surface);
+        Device device(instance, *surface, logger);
 
-        std::cout << "Vulkan ready - GPU: " << device.name() << "\n";
+        logger.logInfo("Vulkan ready - GPU: " + device.name() + ".");
 
         // Create swapchain
-        Swapchain swapchain(device, *surface, config.width, config.height);
+        Swapchain swapchain(device, *surface, config.width, config.height, logger);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
@@ -154,27 +157,38 @@ int main()
         alloc_info.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
         vk::raii::CommandBuffers command_buffers(device.get(), alloc_info);
 
-        // Frame synchronisation
+        // Frame synchronisation — per-frame fences and acquire semaphores
         std::vector<vk::raii::Semaphore> image_available_semaphores;
-        std::vector<vk::raii::Semaphore> render_finished_semaphores;
         std::vector<vk::raii::Fence> in_flight_fences;
 
         vk::SemaphoreCreateInfo sem_info{};
         vk::FenceCreateInfo fence_info{};
-        fence_info.flags = vk::FenceCreateFlagBits::eSignaled; // start signalled so first wait succeeds
+        fence_info.flags = vk::FenceCreateFlagBits::eSignaled; // Start signalled so first wait succeeds.
 
         for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
-            render_finished_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
             in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
         }
+
+        // Per-swapchain-image semaphores for present — indexed by image_index
+        // so a semaphore is never reused while the presentation engine still holds it.
+        std::vector<vk::raii::Semaphore> render_finished_semaphores;
+
+        //! Rebuilds the per-image present semaphores to match the current swapchain image count.
+        auto rebuildPresentSemaphores = [&]() {
+            render_finished_semaphores.clear();
+            for (uint32_t i = 0; i < swapchain.imageCount(); ++i) {
+                render_finished_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
+            }
+        };
+        rebuildPresentSemaphores();
 
         uint32_t current_frame = 0;
 
         // Resize signal — event loop emits, render loop consumes
-        SignalLib::Signal<ResizeEvent> resize_signal;
+        SignalsLib::Signal<ResizeEvent> resize_signal;
 
-        std::cout << "Press ESC to close\n";
+        logger.logInfo("Press ESC to close.");
 
         // Main loop
         while (!window->shouldClose()) {
@@ -189,7 +203,7 @@ int main()
             while (window->pollEvent(ev)) {
                 switch (ev.type) {
                 case WindowLib::WindowEvent::Type::Close:
-                    std::cout << "Close requested\n";
+                    logger.logInfo("Close requested.");
                     break;
 
                 case WindowLib::WindowEvent::Type::Resize:
@@ -216,6 +230,7 @@ int main()
                 }
                 if (needs_recreate && resize_ev.width > 0 && resize_ev.height > 0) {
                     swapchain.recreate(resize_ev.width, resize_ev.height);
+                    rebuildPresentSemaphores();
                 }
             }
 
@@ -227,7 +242,7 @@ int main()
             // Wait for this frame's fence
             vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, VK_TRUE, std::numeric_limits<uint64_t>::max());
             if (wait_result != vk::Result::eSuccess) {
-                std::cerr << "[TronGrid] Fatal: failed to wait for fence\n";
+                logger.logFatal("Failed to wait for fence.");
                 std::abort();
                 return 1;
             }
@@ -242,6 +257,7 @@ int main()
             } catch (const vk::OutOfDateKHRError&) {
                 if (window->width() > 0 && window->height() > 0) {
                     swapchain.recreate(window->width(), window->height());
+                    rebuildPresentSemaphores();
                 }
                 continue;
             }
@@ -262,7 +278,7 @@ int main()
             wait_sem.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
 
             vk::SemaphoreSubmitInfo signal_sem{};
-            signal_sem.semaphore = *render_finished_semaphores[current_frame];
+            signal_sem.semaphore = *render_finished_semaphores[image_index];
             signal_sem.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
 
             vk::CommandBufferSubmitInfo cmd_submit{};
@@ -282,7 +298,7 @@ int main()
             vk::PresentInfoKHR present_info{};
             vk::SwapchainKHR swapchains[] = {*swapchain.get()};
             present_info.waitSemaphoreCount = 1;
-            present_info.pWaitSemaphores = &*render_finished_semaphores[current_frame];
+            present_info.pWaitSemaphores = &*render_finished_semaphores[image_index];
             present_info.swapchainCount = 1;
             present_info.pSwapchains = swapchains;
             present_info.pImageIndices = &image_index;
@@ -293,6 +309,7 @@ int main()
             } catch (const vk::OutOfDateKHRError&) {
                 if (window->width() > 0 && window->height() > 0) {
                     swapchain.recreate(window->width(), window->height());
+                    rebuildPresentSemaphores();
                 }
                 continue;
             }
@@ -300,6 +317,7 @@ int main()
             if (present_result == vk::Result::eSuboptimalKHR || swapchain_suboptimal) {
                 if (window->width() > 0 && window->height() > 0) {
                     swapchain.recreate(window->width(), window->height());
+                    rebuildPresentSemaphores();
                 }
             }
 
@@ -309,13 +327,13 @@ int main()
         // Wait for GPU to finish before destroying resources
         device.get().waitIdle();
 
-        std::cout << "Shutting down\n";
+        logger.logInfo("Shutting down.");
 
     } catch (const vk::SystemError& e) {
-        std::cerr << "Vulkan error: " << e.what() << "\n";
+        logger.logFatal(std::string("Vulkan error: ") + e.what());
         return 1;
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << "\n";
+        logger.logFatal(std::string("Fatal error: ") + e.what());
         return 1;
     }
 

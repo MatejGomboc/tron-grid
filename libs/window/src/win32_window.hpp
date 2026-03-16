@@ -33,7 +33,7 @@ namespace WindowLib
     class Win32Window : public Window {
     public:
         //! Creates a Win32 window with the given configuration.
-        explicit Win32Window(const WindowConfig& config);
+        Win32Window(const WindowConfig& config, LoggingLib::Logger& logger);
 
         //! Destroys the Win32 window and releases platform resources.
         ~Win32Window() override;

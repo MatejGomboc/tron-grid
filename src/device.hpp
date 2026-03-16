@@ -17,6 +17,7 @@
 #include <volk/volk.h>
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
+#include <log/logger.hpp>
 #include <string>
 
 class Instance; // forward declaration
@@ -25,7 +26,7 @@ class Instance; // forward declaration
 class Device {
 public:
     //! Pick the best GPU and create a logical device; the surface is needed to check present queue support.
-    Device(const Instance& instance, VkSurfaceKHR surface);
+    Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logger& logger);
 
     // Non-copyable, movable
     Device(const Device&) = delete;
@@ -76,6 +77,7 @@ public:
     }
 
 private:
+    LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
     vk::raii::PhysicalDevice m_physical_device{nullptr}; //!< Selected physical device.
     vk::raii::Device m_device{nullptr}; //!< Logical device handle.
     vk::raii::Queue m_graphics_queue{nullptr}; //!< Graphics queue.

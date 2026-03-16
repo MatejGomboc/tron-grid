@@ -17,6 +17,7 @@
 #include <volk/volk.h>
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
+#include <log/logger.hpp>
 #include <vector>
 
 //! Owns the Vulkan instance and (in debug) the validation debug messenger, destruction order is handled by vk::raii — no manual cleanup needed.
@@ -27,7 +28,7 @@ public:
         If enable_validation is true, enables VK_LAYER_KHRONOS_validation
         and VK_EXT_debug_utils with a stderr callback.
     */
-    Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions);
+    Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions, LoggingLib::Logger& logger);
 
     // Non-copyable, movable
     Instance(const Instance&) = delete;
@@ -48,6 +49,7 @@ public:
     }
 
 private:
+    LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
     vk::raii::Context m_context; //!< Vulkan context (loader bootstrap).
     vk::raii::Instance m_instance{nullptr}; //!< Vulkan instance handle.
     vk::raii::DebugUtilsMessengerEXT m_debug_messenger{nullptr}; //!< Validation debug messenger (debug only).

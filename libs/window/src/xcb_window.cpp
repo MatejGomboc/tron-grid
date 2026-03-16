@@ -17,7 +17,6 @@
 #include "xcb_window.hpp"
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 
 //! Looks up or creates an X11 atom by name.
 static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
@@ -35,14 +34,15 @@ static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
 namespace WindowLib
 {
 
-    XcbWindow::XcbWindow(const WindowConfig& config)
+    XcbWindow::XcbWindow(const WindowConfig& config, LoggingLib::Logger& logger)
+        : Window(logger)
     {
         // Connect to X server
         int screen_num;
         m_connection = xcb_connect(nullptr, &screen_num);
 
         if (xcb_connection_has_error(m_connection)) {
-            std::cerr << "[TronGrid] Fatal: failed to connect to X server\n";
+            m_logger.logFatal("Failed to connect to X server.");
             std::abort();
             return;
         }
