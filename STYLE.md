@@ -70,7 +70,7 @@ Key settings:
 
 ### Language Standard
 
-C++20. Do not throw exceptions in project code. Catch exceptions from third-party libraries
+C++20 (and **NOT** beyond it!). Do not throw exceptions in project code. Catch exceptions from third-party libraries
 (e.g., vulkan-hpp `vk::raii`) at API boundaries only. For unrecoverable errors in project code,
 log via `LoggingLib::Logger::logFatal()` and call `std::abort()` followed by a return statement to exit that function.
 
