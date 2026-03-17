@@ -285,6 +285,57 @@ Licence headers use plain `/* */` (not doxygen) with the full GPL v3 notice:
 
 ---
 
+## Slang Shaders
+
+Follow the C++ conventions where applicable — Slang is syntactically close to HLSL/C++.
+
+### Formatting
+
+| Setting | Value |
+|---------|-------|
+| Indent | 4 spaces |
+| Brace style | Allman for functions, attached for structs |
+| Column limit | 170 |
+
+### Naming Conventions
+
+| Item | Convention | Example |
+|------|------------|---------|
+| Structs | PascalCase | `VSInput`, `VSOutput` |
+| Entry points | camelCase | `vertMain`, `fragMain` |
+| Struct members | snake_case | `position`, `colour` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_LIGHT_COUNT` |
+
+### Semantics
+
+Use HLSL-style semantics (`POSITION`, `COLOR0`, `SV_Position`, `SV_Target`) — not
+`[[vk::location(N)]]` unless explicit location control is required.
+
+### Entry Points
+
+Mark entry points with `[shader("vertex")]`, `[shader("fragment")]`, etc. Use descriptive
+names — not `main`:
+
+```slang
+[shader("vertex")]
+VSOutput vertMain(VSInput input)
+{
+    ...
+}
+
+[shader("fragment")]
+float4 fragMain(VSOutput input) : SV_Target
+{
+    ...
+}
+```
+
+### Licence Header
+
+Same GPL v3 `/* */` block as C++ files.
+
+---
+
 ## YAML (GitHub Actions)
 
 ### Indentation
