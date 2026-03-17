@@ -176,16 +176,14 @@ The same applies to enum values — no extra spaces between the value and its co
 
 ### Constructor Initialiser Lists
 
-Place the initialiser list on the same line as the constructor when it fits within 170 columns.
-When it overflows, break after the colon with 4-space indentation:
+Always break after the colon, with 4-space indentation on the next line:
 
 ```cpp
-// Fits on one line
-Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger) : Window(logger)
+Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger) :
+    Window(logger)
 {
 }
 
-// Overflows — break after colon
 Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger) :
     m_logger(&logger), m_device(&device), m_surface(surface)
 {
