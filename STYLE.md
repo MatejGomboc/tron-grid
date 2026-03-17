@@ -176,7 +176,8 @@ The same applies to enum values — no extra spaces between the value and its co
 
 ### Constructor Initialiser Lists
 
-Always break after the colon, with 4-space indentation on the next line:
+Always break after the colon. Each initialiser gets its own line with 4-space indentation.
+A single initialiser is one line; multiple initialisers are one per line:
 
 ```cpp
 Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger) :
@@ -185,7 +186,9 @@ Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger)
 }
 
 Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger) :
-    m_logger(&logger), m_device(&device), m_surface(surface)
+    m_logger(&logger),
+    m_device(&device),
+    m_surface(surface)
 {
 }
 ```

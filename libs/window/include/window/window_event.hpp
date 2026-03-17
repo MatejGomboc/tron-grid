@@ -64,13 +64,15 @@ namespace WindowLib
 
         //! Default constructor; initialises to Type::None with zeroed union.
         WindowEvent() :
-            type(Type::None), resize{}
+            type(Type::None),
+            resize{}
         {
         }
 
         //! Constructs an event with the given type and zeroed union.
         explicit WindowEvent(Type t) :
-            type(t), resize{}
+            type(t),
+            resize{}
         {
         }
     };

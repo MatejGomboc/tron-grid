@@ -66,7 +66,9 @@ static vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities,
 }
 
 Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger) :
-    m_logger(&logger), m_device(&device), m_surface(surface)
+    m_logger(&logger),
+    m_device(&device),
+    m_surface(surface)
 {
     build(width, height);
 }
