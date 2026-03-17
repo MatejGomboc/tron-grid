@@ -76,8 +76,11 @@ namespace LoggingLib
         //! Log an error message.
         void logError(std::string_view message);
 
-        //! Log a fatal error message.
+        //! Log a fatal error message. Flushes synchronously before returning.
         void logFatal(std::string_view message);
+
+        //! Block until all pending messages have been written.
+        void flush();
 
     private:
         //! Push a message onto the queue and wake the worker.
@@ -88,9 +91,12 @@ namespace LoggingLib
 
         SignalsLib::Signal<LogMessage> m_queue; //!< Thread-safe message queue.
         std::thread m_worker; //!< Background writer thread.
-        std::mutex m_mutex; //!< Protects the stop flag.
+        std::mutex m_mutex; //!< Protects the stop flag and flush flag.
         std::condition_variable m_cv; //!< Wakes the worker when messages arrive or stop is requested.
+        std::condition_variable m_flush_cv; //!< Notified when the worker finishes a flush.
         bool m_stop{false}; //!< Set to true when the logger is shutting down.
+        bool m_flush_requested{false}; //!< Set to true when a synchronous flush is requested.
+        bool m_flush_done{false}; //!< Set to true when the worker completes a flush.
     };
 
 } // namespace LoggingLib

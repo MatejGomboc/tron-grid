@@ -64,7 +64,7 @@ TEST_CASE(empty_and_size)
 
 TEST_CASE(weak_ptr_ownership_model)
 {
-    auto sig = std::make_shared<SignalsLib::Signal<int>>();
+    std::shared_ptr<SignalsLib::Signal<int>> sig = std::make_shared<SignalsLib::Signal<int>>();
     std::weak_ptr<SignalsLib::Signal<int>> weak = sig;
 
     sig->emit(99);

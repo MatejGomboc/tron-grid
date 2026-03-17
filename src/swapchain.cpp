@@ -24,7 +24,7 @@
 static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& available)
 {
     // Prefer sRGB with B8G8R8A8 layout
-    auto it = std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
+    std::vector<vk::SurfaceFormatKHR>::const_iterator it = std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
         return fmt.format == vk::Format::eB8G8R8A8Srgb && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
     });
 

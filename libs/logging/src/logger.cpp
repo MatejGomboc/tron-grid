@@ -19,7 +19,7 @@ namespace LoggingLib
 {
 
     //! Convert severity to a human-readable prefix string.
-    static std::string_view severityPrefix(Severity severity)
+    [[nodiscard]] static std::string_view severityPrefix(Severity severity)
     {
         switch (severity) {
         case Severity::Debug:
@@ -75,6 +75,22 @@ namespace LoggingLib
     void Logger::logFatal(std::string_view message)
     {
         enqueue(Severity::Fatal, message);
+        flush();
+    }
+
+    void Logger::flush()
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_flush_requested = true;
+        m_flush_done = false;
+        lock.unlock();
+
+        m_cv.notify_one();
+
+        lock.lock();
+        m_flush_cv.wait(lock, [this]() {
+            return m_flush_done;
+        });
     }
 
     void Logger::enqueue(Severity severity, std::string_view message)
@@ -88,13 +104,15 @@ namespace LoggingLib
         while (true) {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_cv.wait(lock, [this]() {
-                return m_stop || !m_queue.empty();
+                return m_stop || m_flush_requested || !m_queue.empty();
             });
 
-            // Drain all pending messages while holding the lock on m_stop.
             bool stopping = m_stop;
+            bool flushing = m_flush_requested;
+            m_flush_requested = false;
             lock.unlock();
 
+            // Drain all pending messages.
             LogMessage msg;
             while (m_queue.consume(msg)) {
                 std::string_view prefix = severityPrefix(msg.severity);
@@ -103,6 +121,13 @@ namespace LoggingLib
                 } else {
                     std::cout << prefix << " " << msg.text << "\n";
                 }
+            }
+
+            // Notify flush() caller that all messages have been written.
+            if (flushing) {
+                std::lock_guard<std::mutex> flush_lock(m_mutex);
+                m_flush_done = true;
+                m_flush_cv.notify_one();
             }
 
             if (stopping) {

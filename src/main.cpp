@@ -201,17 +201,17 @@ int main()
         // Triangle vertex buffer — staging upload to GPU-local memory
         constexpr VkDeviceSize VERTEX_BUFFER_SIZE = sizeof(TRIANGLE_VERTICES);
 
-        AllocatedBuffer staging_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
-
-        VmaAllocationInfo staging_info = staging_buffer.allocationInfo();
-        std::memcpy(staging_info.pMappedData, TRIANGLE_VERTICES.data(), VERTEX_BUFFER_SIZE);
-
         AllocatedBuffer vertex_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 0,
             VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
-        // One-shot copy: staging → GPU vertex buffer
+        // Staging buffer scoped so it is freed immediately after the copy completes
         {
+            AllocatedBuffer staging_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+
+            VmaAllocationInfo staging_info = staging_buffer.allocationInfo();
+            std::memcpy(staging_info.pMappedData, TRIANGLE_VERTICES.data(), VERTEX_BUFFER_SIZE);
+
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
             copy_alloc.level = vk::CommandBufferLevel::ePrimary;

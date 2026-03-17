@@ -35,7 +35,7 @@ namespace WindowLib
             Blur //!< Window lost focus.
         };
 
-        Type type = Type::None; //!< Event type discriminator.
+        Type type{Type::None}; //!< Event type discriminator.
 
         union {
             struct {

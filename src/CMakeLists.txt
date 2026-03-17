@@ -38,6 +38,7 @@ add_custom_command(
         -profile spirv_1_4
         -emit-spirv-directly
         -fvk-use-entrypoint-name
+        -fvk-invert-y
         -entry vertMain
         -entry fragMain
         -o ${SHADER_OUTPUT_DIR}/triangle.spv

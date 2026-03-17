@@ -29,8 +29,8 @@ static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
 
 //! Holds graphics and present queue family indices discovered during device selection.
 struct QueueFamilyIndices {
-    uint32_t graphics = UINT32_MAX; //!< Graphics queue family index.
-    uint32_t present = UINT32_MAX; //!< Present queue family index.
+    uint32_t graphics{UINT32_MAX}; //!< Graphics queue family index.
+    uint32_t present{UINT32_MAX}; //!< Present queue family index.
 
     //! Returns true if both graphics and present queue families have been found.
     [[nodiscard]] bool isComplete() const
