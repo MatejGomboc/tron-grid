@@ -22,7 +22,8 @@ namespace WindowLib
 
     bool Win32Window::m_class_registered = false;
 
-    Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger) : Window(logger)
+    Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger) :
+        Window(logger)
     {
         m_hinstance = GetModuleHandle(nullptr);
 

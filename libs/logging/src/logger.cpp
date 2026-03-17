@@ -36,7 +36,8 @@ namespace LoggingLib
         return "[UNKNOWN]";
     }
 
-    Logger::Logger() : m_worker(&Logger::workerLoop, this)
+    Logger::Logger() :
+        m_worker(&Logger::workerLoop, this)
     {
     }
 

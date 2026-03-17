@@ -34,7 +34,8 @@ static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
 namespace WindowLib
 {
 
-    XcbWindow::XcbWindow(const WindowConfig& config, LoggingLib::Logger& logger) : Window(logger)
+    XcbWindow::XcbWindow(const WindowConfig& config, LoggingLib::Logger& logger) :
+        Window(logger)
     {
         // Connect to X server
         int screen_num;

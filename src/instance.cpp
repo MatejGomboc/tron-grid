@@ -58,7 +58,8 @@ static bool isExtensionAvailable(const std::vector<vk::ExtensionProperties>& ava
     });
 }
 
-Instance::Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions, LoggingLib::Logger& logger) : m_logger(logger)
+Instance::Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions, LoggingLib::Logger& logger) :
+    m_logger(logger)
 {
     // Step 1: Volk — find the Vulkan loader on this system
     if (volkInitialize() != VK_SUCCESS) {
