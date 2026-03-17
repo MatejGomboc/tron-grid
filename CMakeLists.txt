@@ -28,6 +28,7 @@ add_compile_definitions(VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1)
 add_compile_definitions(VMA_STATIC_VULKAN_FUNCTIONS=0)
 add_compile_definitions(VMA_DYNAMIC_VULKAN_FUNCTIONS=0)
 
+
 # Platform surface extensions for Vulkan
 if(WIN32)
     add_compile_definitions(VK_USE_PLATFORM_WIN32_KHR)
