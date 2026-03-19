@@ -23,8 +23,8 @@
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 //! Vulkan validation debug callback; routes messages through the Logger via pUserData.
-static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT /*type*/,
-    const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
+static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
+    vk::DebugUtilsMessageTypeFlagsEXT /*type*/, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
 {
     LoggingLib::Logger* logger = static_cast<LoggingLib::Logger*>(user_data);
     if (!logger) {
@@ -32,9 +32,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSev
     }
 
     std::string message = std::string("[Vulkan] ") + callback_data->pMessage;
-    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+    if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
         logger->logError(message);
-    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+    } else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
         logger->logWarning(message);
     } else {
         logger->logInfo(message);
