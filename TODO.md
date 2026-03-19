@@ -119,14 +119,17 @@ projection and depth testing. The camera is at a fixed position looking at the o
 
 **Input handling:**
 
-- WASD for movement (forward/back/left/right)
+- WASD for movement (forward/back/left/right), Space/Shift for up/down
 - Mouse movement for look direction (yaw/pitch)
-- Space/Shift for up/down
-- Input events already flow through `WindowEvent` — extend the main loop callback
-  to also forward KeyDown/KeyUp and MouseMove to the render thread
-- Delta time for frame-rate-independent movement (measure time between frames)
-- Since we are event-driven: key press/release sets a movement state, mouse move
-  sets a rotation delta. The render thread applies movement when it renders.
+- Input state tracking: maintain a key-state map (pressed/released) on the render
+  thread — camera movement reads "is W held?" not "W was pressed". Forward KeyDown,
+  KeyUp, and MouseMove events to the render thread via `Signal<InputEvent>` or extend
+  `RenderEvent` with input payload
+- Mouse capture: right-click to engage FPS-style mouse look (hide cursor, capture
+  relative movement). Win32: `SetCapture()` + `ShowCursor(FALSE)` + `ClipCursor()`.
+  XCB: `xcb_grab_pointer()`. Right-click again or ESC to release
+- Delta time: `std::chrono::steady_clock` in the render thread measures time between
+  frames for frame-rate-independent movement speed
 
 **Procedural cube mesh:**
 
