@@ -137,7 +137,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
     create_info.preTransform = capabilities.currentTransform;
     create_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
     create_info.presentMode = m_present_mode;
-    create_info.clipped = VK_TRUE;
+    create_info.clipped = vk::True;
 
     // Pass old swapchain for smoother recreation
     create_info.oldSwapchain = *m_swapchain;

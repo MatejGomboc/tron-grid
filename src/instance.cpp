@@ -28,7 +28,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageS
 {
     LoggingLib::Logger* logger = static_cast<LoggingLib::Logger*>(user_data);
     if (!logger) {
-        return VK_FALSE;
+        return vk::False;
     }
 
     std::string message = std::string("[Vulkan] ") + callback_data->pMessage;
@@ -39,7 +39,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageS
     } else {
         logger->logInfo(message);
     }
-    return VK_FALSE;
+    return vk::False;
 }
 
 //! Checks whether a named layer exists in the available list.
