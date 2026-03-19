@@ -129,7 +129,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
         debug_create_info.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
         debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
             | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
-        debug_create_info.setPfnUserCallback(vulkanDebugCallback);
+        debug_create_info.pfnUserCallback = vulkanDebugCallback;
         debug_create_info.pUserData = &m_logger;
         create_info.pNext = &debug_create_info;
     }
