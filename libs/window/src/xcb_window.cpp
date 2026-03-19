@@ -61,8 +61,11 @@ namespace WindowLib
         uint32_t event_mask = XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
             | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_FOCUS_CHANGE;
 
-        uint32_t value_mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-        uint32_t value_list[] = {m_screen->black_pixel, event_mask};
+        // Do not set XCB_CW_BACK_PIXEL — omitting the background pixel prevents the
+        // X server from painting a background colour during resize, so the old Vulkan
+        // frame stays visible until the render thread presents the new one.
+        uint32_t value_mask = XCB_CW_EVENT_MASK;
+        uint32_t value_list[] = {event_mask};
 
         // Centre on screen
         int16_t x = static_cast<int16_t>((static_cast<int32_t>(m_screen->width_in_pixels) - static_cast<int32_t>(config.width)) / 2);
@@ -138,6 +141,19 @@ namespace WindowLib
         }
     }
 
+    void XcbWindow::waitEvents()
+    {
+        // Block until at least one event arrives
+        xcb_generic_event_t* event = xcb_wait_for_event(m_connection);
+        if (event) {
+            handleEvent(event);
+            free(event);
+        }
+
+        // Drain any remaining pending events
+        pumpEvents();
+    }
+
     void XcbWindow::handleEvent(xcb_generic_event_t* event)
     {
         uint8_t event_type = event->response_type & 0x7F;
@@ -150,6 +166,12 @@ namespace WindowLib
                 pushEvent(ev);
                 m_should_close = true;
             }
+            break;
+        }
+
+        case XCB_EXPOSE: {
+            WindowEvent ev(WindowEvent::Type::Expose);
+            pushEvent(ev);
             break;
         }
 

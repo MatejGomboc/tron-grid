@@ -78,7 +78,10 @@ namespace WindowLib
         m_width = config.width;
         m_height = config.height;
 
-        m_hwnd = CreateWindowExW(0, CLASS_NAME, title_wide.c_str(), style, x, y, window_width, window_height, nullptr, nullptr, m_hinstance,
+        // WS_EX_NOREDIRECTIONBITMAP prevents DWM from allocating a redirection bitmap,
+        // so the window composites directly from the Vulkan swapchain. This eliminates
+        // the black flash during resize caused by DWM stretching stale content.
+        m_hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, CLASS_NAME, title_wide.c_str(), style, x, y, window_width, window_height, nullptr, nullptr, m_hinstance,
             this // Pass this pointer for WM_NCCREATE
         );
 
@@ -107,6 +110,12 @@ namespace WindowLib
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+
+    void Win32Window::waitEvents()
+    {
+        WaitMessage();
+        pumpEvents();
     }
 
     void* Win32Window::nativeHandle() const
@@ -146,6 +155,20 @@ namespace WindowLib
             WindowEvent ev(WindowEvent::Type::Close);
             pushEvent(ev);
             m_should_close = true;
+            return 0;
+        }
+
+        case WM_ERASEBKGND: {
+            // Return non-zero to prevent Windows from erasing the client area to black.
+            // The old Vulkan frame stays visible until the render thread presents the next one.
+            return 1;
+        }
+
+        case WM_PAINT: {
+            // Validate the window region so WM_PAINT stops firing, then push an Expose event.
+            ValidateRect(hwnd, nullptr);
+            WindowEvent ev(WindowEvent::Type::Expose);
+            pushEvent(ev);
             return 0;
         }
 

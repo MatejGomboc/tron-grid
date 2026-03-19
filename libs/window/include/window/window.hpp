@@ -44,8 +44,11 @@ namespace WindowLib
         Window(Window&&) = delete;
         Window& operator=(Window&&) = delete;
 
-        //! Processes pending platform events into the event queue.
+        //! Processes pending platform events into the event queue (non-blocking).
         virtual void pumpEvents() = 0;
+
+        //! Blocks until at least one platform event arrives, then drains all pending events.
+        virtual void waitEvents() = 0;
 
         //! Returns the platform-native window handle (HWND on Win32, xcb_window_t via void* on XCB).
         [[nodiscard]] virtual void* nativeHandle() const = 0;
@@ -88,6 +91,16 @@ namespace WindowLib
             m_should_close = true;
         }
 
+        //! Sets a callback that fires immediately when an event is pushed (from the platform thread).
+        //! This is called in addition to the internal event queue, allowing the caller to react
+        //! to events during modal operations (e.g., Win32 resize drag) when the main loop is blocked.
+        using EventCallback = void (*)(const WindowEvent& ev, void* user_data);
+        void setEventCallback(EventCallback callback, void* user_data)
+        {
+            m_event_callback = callback;
+            m_event_callback_data = user_data;
+        }
+
     protected:
         //! Constructs the base window with a logger reference.
         explicit Window(LoggingLib::Logger& logger) :
@@ -95,10 +108,13 @@ namespace WindowLib
         {
         }
 
-        //! Pushes an event onto the internal event queue (for subclass use).
+        //! Pushes an event onto the internal event queue and invokes the immediate callback.
         void pushEvent(const WindowEvent& ev)
         {
             m_event_queue.push(ev);
+            if (m_event_callback) {
+                m_event_callback(ev, m_event_callback_data);
+            }
         }
 
         LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
@@ -108,6 +124,8 @@ namespace WindowLib
 
     private:
         std::queue<WindowEvent> m_event_queue; //!< Pending window events waiting to be polled.
+        EventCallback m_event_callback{nullptr}; //!< Immediate event callback (may be null).
+        void* m_event_callback_data{nullptr}; //!< User data for the event callback.
     };
 
     //! Factory — creates the platform-appropriate window (Win32 or XCB).
