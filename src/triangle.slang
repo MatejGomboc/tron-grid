@@ -12,30 +12,29 @@
     GNU General Public License for more details.
 */
 
-#include "test_fixture/test_fixture.hpp"
-#include <stdexcept>
+// Vertex input — matches C++ Vertex struct and VkVertexInputAttributeDescription layout.
+struct VSInput {
+    float3 position : POSITION;
+    float4 colour : COLOR0;
+};
 
-TEST_CASE(check_true_passes)
+// Vertex-to-fragment interpolated data.
+struct VSOutput {
+    float4 position : SV_Position;
+    float4 colour : COLOR0;
+};
+
+[shader("vertex")]
+VSOutput vertMain(VSInput input)
 {
-    TEST_CHECK(true);
-    TEST_CHECK(1 == 1);
-    TEST_CHECK(42 > 0);
+    VSOutput output;
+    output.position = float4(input.position, 1.0);
+    output.colour = input.colour;
+    return output;
 }
 
-TEST_CASE(check_equal_same_values)
+[shader("fragment")]
+float4 fragMain(VSOutput input) : SV_Target
 {
-    TEST_CHECK_EQUAL(1, 1);
-    TEST_CHECK_EQUAL(0, 0);
-    TEST_CHECK_EQUAL(-5, -5);
-}
-
-TEST_CASE(check_throws_catches_exception)
-{
-    TEST_CHECK_THROWS(throw std::runtime_error("expected"));
-    TEST_CHECK_THROWS(throw 42);
-}
-
-int main()
-{
-    return static_cast<int>(TestFixtureLib::runAll());
+    return input.colour;
 }

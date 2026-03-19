@@ -16,7 +16,6 @@
 #include "instance.hpp"
 #include <algorithm>
 #include <cstdlib>
-#include <iostream>
 #include <ranges>
 #include <set>
 #include <string>
@@ -30,8 +29,8 @@ static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
 
 //! Holds graphics and present queue family indices discovered during device selection.
 struct QueueFamilyIndices {
-    uint32_t graphics = UINT32_MAX; //!< Graphics queue family index.
-    uint32_t present = UINT32_MAX; //!< Present queue family index.
+    uint32_t graphics{UINT32_MAX}; //!< Graphics queue family index.
+    uint32_t present{UINT32_MAX}; //!< Present queue family index.
 
     //! Returns true if both graphics and present queue families have been found.
     [[nodiscard]] bool isComplete() const
@@ -117,12 +116,13 @@ static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surfa
     return score;
 }
 
-Device::Device(const Instance& instance, VkSurfaceKHR surface)
+Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logger& logger) :
+    m_logger(logger)
 {
     // Step 1: Enumerate physical devices
     std::vector<vk::raii::PhysicalDevice> physical_devices = instance.get().enumeratePhysicalDevices();
     if (physical_devices.empty()) {
-        std::cerr << "[TronGrid] Fatal: no Vulkan-capable GPU found\n";
+        m_logger.logFatal("No Vulkan-capable GPU found.");
         std::abort();
         return;
     }
@@ -134,7 +134,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface)
     for (size_t i = 0; i < physical_devices.size(); ++i) {
         int score = rateDevice(physical_devices[i], surface);
         vk::PhysicalDeviceProperties props = physical_devices[i].getProperties();
-        std::cerr << "[TronGrid] GPU " << i << ": " << props.deviceName.data() << " (score: " << score << ")\n";
+        m_logger.logInfo("GPU " + std::to_string(i) + ": " + props.deviceName.data() + " (score: " + std::to_string(score) + ").");
 
         if (score > best_score) {
             best_score = score;
@@ -143,7 +143,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface)
     }
 
     if (best_score < 0) {
-        std::cerr << "[TronGrid] Fatal: no suitable GPU found (need graphics + present queues and VK_KHR_swapchain)\n";
+        m_logger.logFatal("No suitable GPU found (need graphics + present queues and VK_KHR_swapchain).");
         std::abort();
         return;
     }
@@ -151,7 +151,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface)
     m_physical_device = std::move(physical_devices[best_index]);
     vk::PhysicalDeviceProperties properties = m_physical_device.getProperties();
     m_device_name = properties.deviceName.data();
-    std::cout << "Selected GPU: " << m_device_name << "\n";
+    m_logger.logInfo("Selected GPU: " + m_device_name + ".");
 
     // Step 3: Find queue families
     QueueFamilyIndices indices = findQueueFamilies(m_physical_device, surface);

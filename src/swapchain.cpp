@@ -16,15 +16,15 @@
 #include "device.hpp"
 #include <algorithm>
 #include <cstdlib>
-#include <iostream>
 #include <limits>
 #include <ranges>
+#include <string>
 
 //! Selects the best surface format, preferring B8G8R8A8 sRGB.
 static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& available)
 {
     // Prefer sRGB with B8G8R8A8 layout
-    auto it = std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
+    std::vector<vk::SurfaceFormatKHR>::const_iterator it = std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
         return fmt.format == vk::Format::eB8G8R8A8Srgb && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
     });
 
@@ -65,7 +65,10 @@ static vk::Extent2D chooseExtent(const vk::SurfaceCapabilitiesKHR& capabilities,
     return extent;
 }
 
-Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height) : m_device(&device), m_surface(surface)
+Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger) :
+    m_logger(&logger),
+    m_device(&device),
+    m_surface(surface)
 {
     build(width, height);
 }
@@ -93,7 +96,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
     std::vector<vk::PresentModeKHR> present_modes = physical_device.getSurfacePresentModesKHR(m_surface);
 
     if (formats.empty()) {
-        std::cerr << "[TronGrid] Fatal: no surface formats available\n";
+        m_logger->logFatal("No surface formats available.");
         std::abort();
         return;
     }
@@ -144,8 +147,8 @@ void Swapchain::build(uint32_t width, uint32_t height)
     // Retrieve swapchain images
     m_images = m_swapchain.getImages();
 
-    std::cout << "Swapchain created: " << m_extent.width << "x" << m_extent.height << " (" << m_images.size() << " images, "
-              << (m_present_mode == vk::PresentModeKHR::eMailbox ? "MAILBOX" : "FIFO") << ")\n";
+    m_logger->logInfo("Swapchain created: " + std::to_string(m_extent.width) + "x" + std::to_string(m_extent.height) + " (" + std::to_string(m_images.size())
+        + " images, " + (m_present_mode == vk::PresentModeKHR::eMailbox ? "MAILBOX" : "FIFO") + ").");
 
     // Create image views
     m_views.clear();

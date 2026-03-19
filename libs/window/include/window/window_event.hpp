@@ -35,7 +35,7 @@ namespace WindowLib
             Blur //!< Window lost focus.
         };
 
-        Type type = Type::None; //!< Event type discriminator.
+        Type type{Type::None}; //!< Event type discriminator.
 
         union {
             struct {
@@ -63,12 +63,16 @@ namespace WindowLib
         };
 
         //! Default constructor; initialises to Type::None with zeroed union.
-        WindowEvent() : type(Type::None), resize{}
+        WindowEvent() :
+            type(Type::None),
+            resize{}
         {
         }
 
         //! Constructs an event with the given type and zeroed union.
-        explicit WindowEvent(Type t) : type(t), resize{}
+        explicit WindowEvent(Type t) :
+            type(t),
+            resize{}
         {
         }
     };

@@ -6,25 +6,40 @@ inputs:
     version:
         description: Vulkan SDK version
         required: true
+    components:
+        description: Space-separated list of SDK components to install
+        required: false
+        default: com.lunarg.vulkan.volk com.lunarg.vulkan.vma
 
 runs:
     using: composite
 
     steps:
+        - name: Compute cache key
+          id: cache-key
+          shell: pwsh
+          run: |
+            $hash = [System.BitConverter]::ToString(
+              [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                [System.Text.Encoding]::UTF8.GetBytes("${{ inputs.components }}")
+              )
+            ).Replace("-","").Substring(0,8).ToLower()
+            echo "key=vulkan-sdk-windows-${{ inputs.version }}-$hash" >> $env:GITHUB_OUTPUT
+
         # On main: restore and save cache. On PRs: restore only (read-only).
         - name: Restore Vulkan SDK cache
           if: github.ref != 'refs/heads/main'
           uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
           with:
             path: C:\VulkanSDK\${{ inputs.version }}
-            key: vulkan-sdk-windows-${{ inputs.version }}
+            key: ${{ steps.cache-key.outputs.key }}
 
         - name: Restore and save Vulkan SDK cache
           if: github.ref == 'refs/heads/main'
           uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
           with:
             path: C:\VulkanSDK\${{ inputs.version }}
-            key: vulkan-sdk-windows-${{ inputs.version }}
+            key: ${{ steps.cache-key.outputs.key }}
 
         - name: Check if SDK already exists
           id: check-sdk
@@ -41,7 +56,7 @@ runs:
           shell: pwsh
           run: |
             Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/${{ inputs.version }}/windows/vulkansdk-windows-X64-${{ inputs.version }}.exe" -OutFile VulkanSDK-Installer.exe
-            Start-Process -FilePath .\VulkanSDK-Installer.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install com.lunarg.vulkan.volk" -Wait
+            Start-Process -FilePath .\VulkanSDK-Installer.exe -ArgumentList "--accept-licenses --default-answer --confirm-command install ${{ inputs.components }}" -Wait
             Remove-Item VulkanSDK-Installer.exe
 
         - name: Setup environment

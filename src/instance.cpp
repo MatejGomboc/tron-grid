@@ -15,7 +15,6 @@
 #include "instance.hpp"
 #include <algorithm>
 #include <cstdlib>
-#include <iostream>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -23,18 +22,23 @@
 // Storage for the vulkan-hpp dynamic dispatcher (exactly one translation unit)
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
-//! Vulkan validation debug callback; logs warnings and errors to stderr.
+//! Vulkan validation debug callback; routes messages through the Logger via pUserData.
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT /*type*/,
-    const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* /*user_data*/)
+    const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
 {
-    const char* prefix = "[Vulkan]";
-    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-        prefix = "[Vulkan ERROR]";
-    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-        prefix = "[Vulkan WARNING]";
+    LoggingLib::Logger* logger = static_cast<LoggingLib::Logger*>(user_data);
+    if (!logger) {
+        return VK_FALSE;
     }
 
-    std::cerr << prefix << " " << callback_data->pMessage << "\n";
+    std::string message = std::string("[Vulkan] ") + callback_data->pMessage;
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        logger->logError(message);
+    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        logger->logWarning(message);
+    } else {
+        logger->logInfo(message);
+    }
     return VK_FALSE;
 }
 
@@ -54,11 +58,12 @@ static bool isExtensionAvailable(const std::vector<vk::ExtensionProperties>& ava
     });
 }
 
-Instance::Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions)
+Instance::Instance(bool enable_validation, const std::vector<const char*>& required_surface_extensions, LoggingLib::Logger& logger) :
+    m_logger(logger)
 {
     // Step 1: Volk — find the Vulkan loader on this system
     if (volkInitialize() != VK_SUCCESS) {
-        std::cerr << "[TronGrid] Fatal: Vulkan not found on this system\n";
+        m_logger.logFatal("Vulkan not found on this system.");
         std::abort();
         return;
     }
@@ -69,7 +74,8 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     // Step 2: Check Vulkan version >= 1.3
     uint32_t api_version = vk::enumerateInstanceVersion();
     if (VK_API_VERSION_MAJOR(api_version) < 1 || (VK_API_VERSION_MAJOR(api_version) == 1 && VK_API_VERSION_MINOR(api_version) < 3)) {
-        std::cerr << "[TronGrid] Fatal: Vulkan 1.3 or later required (found " << VK_API_VERSION_MAJOR(api_version) << "." << VK_API_VERSION_MINOR(api_version) << ")\n";
+        m_logger.logFatal("Vulkan 1.3 or later required (found " + std::to_string(VK_API_VERSION_MAJOR(api_version)) + "."
+            + std::to_string(VK_API_VERSION_MINOR(api_version)) + ").");
         std::abort();
         return;
     }
@@ -85,7 +91,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     std::vector<vk::ExtensionProperties> available_extensions = vk::enumerateInstanceExtensionProperties();
     for (const char* ext : extensions) {
         if (!isExtensionAvailable(available_extensions, ext)) {
-            std::cerr << "[TronGrid] Fatal: required Vulkan instance extension not available: " << ext << "\n";
+            m_logger.logFatal(std::string("Required Vulkan instance extension not available: ") + ext + ".");
             std::abort();
             return;
         }
@@ -98,7 +104,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
         if (isLayerAvailable(available_layers, "VK_LAYER_KHRONOS_validation")) {
             layers.push_back("VK_LAYER_KHRONOS_validation");
         } else {
-            std::cerr << "[TronGrid] Warning: VK_LAYER_KHRONOS_validation not available\n";
+            m_logger.logWarning("VK_LAYER_KHRONOS_validation not available.");
         }
     }
 
@@ -124,6 +130,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
         debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
             | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
         debug_create_info.setPfnUserCallback(vulkanDebugCallback);
+        debug_create_info.pUserData = &m_logger;
         create_info.pNext = &debug_create_info;
     }
 

@@ -16,14 +16,14 @@
 
 #include "win32_window.hpp"
 #include <cstdlib>
-#include <iostream>
 
 namespace WindowLib
 {
 
     bool Win32Window::m_class_registered = false;
 
-    Win32Window::Win32Window(const WindowConfig& config)
+    Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger) :
+        Window(logger)
     {
         m_hinstance = GetModuleHandle(nullptr);
 
@@ -39,7 +39,7 @@ namespace WindowLib
             wc.lpszClassName = CLASS_NAME;
 
             if (!RegisterClassExW(&wc)) {
-                std::cerr << "[TronGrid] Fatal: failed to register Win32 window class\n";
+                m_logger.logFatal("Failed to register Win32 window class.");
                 std::abort();
                 return;
             }
@@ -83,7 +83,7 @@ namespace WindowLib
         );
 
         if (!m_hwnd) {
-            std::cerr << "[TronGrid] Fatal: failed to create Win32 window\n";
+            m_logger.logFatal("Failed to create Win32 window.");
             std::abort();
             return;
         }

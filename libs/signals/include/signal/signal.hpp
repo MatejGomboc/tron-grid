@@ -19,7 +19,7 @@
 #include <mutex>
 #include <queue>
 
-namespace SignalLib
+namespace SignalsLib
 {
 
     /*!
@@ -72,4 +72,4 @@ namespace SignalLib
         mutable std::mutex m_mutex; //!< Protects the queue.
     };
 
-} // namespace SignalLib
+} // namespace SignalsLib
