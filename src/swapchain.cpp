@@ -75,7 +75,9 @@ Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width,
 
 void Swapchain::recreate(uint32_t width, uint32_t height)
 {
-    // Wait for the device to finish before destroying old resources
+    // Wait for all GPU work (including present operations) to complete before
+    // destroying the old swapchain and its semaphores. Fences alone are not
+    // sufficient — they only track command buffer completion, not present.
     m_device->get().waitIdle();
 
     // Clear old views first (they reference old images)

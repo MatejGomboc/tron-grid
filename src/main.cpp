@@ -22,18 +22,30 @@
 #include <signal/signal.hpp>
 #include <window/window.hpp>
 #include <array>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
-//! Window resize event payload for Signal<T> communication.
-struct ResizeEvent {
-    uint32_t width{0}; //!< New window width in pixels.
-    uint32_t height{0}; //!< New window height in pixels.
+//! Event sent from the main (event) thread to the render thread via Signal<T>.
+struct RenderEvent {
+    //! Discriminator for the render event type.
+    enum class Type {
+        Render, //!< Window needs redrawing (expose, initial frame).
+        Resize, //!< Window was resized — recreate swapchain before rendering.
+        Stop //!< Render thread should shut down.
+    };
+
+    Type type{Type::Render}; //!< Event type.
+    uint32_t width{0}; //!< New width (only meaningful for Resize events).
+    uint32_t height{0}; //!< New height (only meaningful for Resize events).
 };
 
 //! Maximum number of frames that can be in-flight simultaneously.
@@ -144,6 +156,182 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     cmd.end();
 }
 
+/*!
+    Render thread entry point. Blocks on a condition variable until the main thread
+    sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline —
+    command recording, submission, and presentation all happen here.
+*/
+static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, VkBuffer vertex_buffer, vk::raii::CommandPool& command_pool,
+    vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
+    LoggingLib::Logger& logger)
+{
+    // Frame synchronisation — per-frame fences and acquire semaphores
+    std::vector<vk::raii::Semaphore> image_available_semaphores;
+    std::vector<vk::raii::Fence> in_flight_fences;
+
+    vk::SemaphoreCreateInfo sem_info{};
+    vk::FenceCreateInfo fence_info{};
+    fence_info.flags = vk::FenceCreateFlagBits::eSignaled;
+
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
+        in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
+    }
+
+    // Per-swapchain-image semaphores for present
+    std::vector<vk::raii::Semaphore> render_finished_semaphores;
+
+    auto rebuildPresentSemaphores = [&]() {
+        render_finished_semaphores.clear();
+        for (uint32_t i = 0; i < swapchain.imageCount(); ++i) {
+            render_finished_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
+        }
+    };
+    rebuildPresentSemaphores();
+
+    uint32_t current_frame{0};
+
+    while (true) {
+        // Block until the main thread sends an event
+        {
+            std::unique_lock<std::mutex> lock(render_mutex);
+            render_cv.wait(lock, [&render_signal]() {
+                return !render_signal.empty();
+            });
+        }
+
+        // Drain all pending events — coalesce multiple resizes into the last one
+        bool should_render{false};
+        bool should_stop{false};
+        bool needs_resize{false};
+        uint32_t resize_width{0};
+        uint32_t resize_height{0};
+
+        RenderEvent ev;
+        while (render_signal.consume(ev)) {
+            switch (ev.type) {
+            case RenderEvent::Type::Render:
+                should_render = true;
+                break;
+            case RenderEvent::Type::Resize:
+                needs_resize = true;
+                should_render = true;
+                resize_width = ev.width;
+                resize_height = ev.height;
+                break;
+            case RenderEvent::Type::Stop:
+                should_stop = true;
+                break;
+            }
+        }
+
+        if (should_stop) {
+            device.get().waitIdle();
+            return;
+        }
+
+        // Handle swapchain recreation — skip if minimised (0x0)
+        if (needs_resize) {
+            if (resize_width > 0 && resize_height > 0) {
+                swapchain.recreate(resize_width, resize_height);
+                rebuildPresentSemaphores();
+            } else {
+                // Minimised — do not render
+                should_render = false;
+            }
+        }
+
+        // Skip rendering while minimised or if no render was requested
+        if (!should_render || swapchain.extent().width == 0 || swapchain.extent().height == 0) {
+            continue;
+        }
+
+        // Wait for this frame's fence
+        vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, std::numeric_limits<uint64_t>::max());
+        if (wait_result != vk::Result::eSuccess) {
+            logger.logFatal("Failed to wait for fence.");
+            std::abort();
+            return;
+        }
+
+        // Acquire next swapchain image
+        uint32_t image_index{0};
+        vk::Result acquire_result = vk::Result::eSuccess;
+        try {
+            vk::ResultValue<uint32_t> acquire = swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(), *image_available_semaphores[current_frame]);
+            acquire_result = acquire.result;
+            image_index = acquire.value;
+        } catch (const vk::OutOfDateKHRError&) {
+            if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
+                swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
+                rebuildPresentSemaphores();
+            }
+            continue;
+        }
+
+        bool swapchain_suboptimal = (acquire_result == vk::Result::eSuboptimalKHR);
+
+        // Only reset fence after we know we will submit work
+        device.get().resetFences({*in_flight_fences[current_frame]});
+
+        // Record command buffer
+        const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
+        cmd.reset();
+        recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], swapchain.extent(), pipeline, vertex_buffer);
+
+        // Submit
+        vk::SemaphoreSubmitInfo wait_sem{};
+        wait_sem.semaphore = *image_available_semaphores[current_frame];
+        wait_sem.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+
+        vk::SemaphoreSubmitInfo signal_sem{};
+        signal_sem.semaphore = *render_finished_semaphores[image_index];
+        signal_sem.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+
+        vk::CommandBufferSubmitInfo cmd_submit{};
+        cmd_submit.commandBuffer = *cmd;
+
+        vk::SubmitInfo2 submit_info{};
+        submit_info.waitSemaphoreInfoCount = 1;
+        submit_info.pWaitSemaphoreInfos = &wait_sem;
+        submit_info.commandBufferInfoCount = 1;
+        submit_info.pCommandBufferInfos = &cmd_submit;
+        submit_info.signalSemaphoreInfoCount = 1;
+        submit_info.pSignalSemaphoreInfos = &signal_sem;
+
+        device.graphicsQueue().submit2({submit_info}, *in_flight_fences[current_frame]);
+
+        // Present
+        vk::PresentInfoKHR present_info{};
+        vk::SwapchainKHR swapchains[] = {*swapchain.get()};
+        present_info.waitSemaphoreCount = 1;
+        present_info.pWaitSemaphores = &*render_finished_semaphores[image_index];
+        present_info.swapchainCount = 1;
+        present_info.pSwapchains = swapchains;
+        present_info.pImageIndices = &image_index;
+
+        vk::Result present_result = vk::Result::eSuccess;
+        try {
+            present_result = device.presentQueue().presentKHR(present_info);
+        } catch (const vk::OutOfDateKHRError&) {
+            if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
+                swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
+                rebuildPresentSemaphores();
+            }
+            continue;
+        }
+
+        if (present_result == vk::Result::eSuboptimalKHR || swapchain_suboptimal) {
+            if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
+                swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
+                rebuildPresentSemaphores();
+            }
+        }
+
+        current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+    }
+}
+
 int main()
 {
     LoggingLib::Logger logger;
@@ -202,13 +390,11 @@ int main()
         constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = sizeof(TRIANGLE_VERTICES);
 
         AllocatedBuffer vertex_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst), 0,
-            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
         // Staging buffer scoped so it is freed immediately after the copy completes
         {
-            AllocatedBuffer staging_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE,
-                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+            AllocatedBuffer staging_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
 
             VmaAllocationInfo staging_info = staging_buffer.allocationInfo();
@@ -241,57 +427,70 @@ int main()
 
         logger.logInfo("Triangle vertex buffer uploaded to GPU.");
 
-        // Frame synchronisation — per-frame fences and acquire semaphores
-        std::vector<vk::raii::Semaphore> image_available_semaphores;
-        std::vector<vk::raii::Fence> in_flight_fences;
+        // Render event signal — main thread emits, render thread consumes
+        SignalsLib::Signal<RenderEvent> render_signal;
+        std::mutex render_mutex;
+        std::condition_variable render_cv;
 
-        vk::SemaphoreCreateInfo sem_info{};
-        vk::FenceCreateInfo fence_info{};
-        fence_info.flags = vk::FenceCreateFlagBits::eSignaled; // Start signalled so first wait succeeds.
+        // Spawn the render thread
+        std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), vertex_buffer.buffer(), std::ref(command_pool),
+            std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-            image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
-            in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
-        }
-
-        // Per-swapchain-image semaphores for present — indexed by image_index
-        // so a semaphore is never reused while the presentation engine still holds it.
-        std::vector<vk::raii::Semaphore> render_finished_semaphores;
-
-        //! Rebuilds the per-image present semaphores to match the current swapchain image count.
-        auto rebuildPresentSemaphores = [&]() {
-            render_finished_semaphores.clear();
-            for (uint32_t i = 0; i < swapchain.imageCount(); ++i) {
-                render_finished_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
-            }
+        //! Emits a render event and wakes the render thread.
+        auto emitRenderEvent = [&](RenderEvent event) {
+            render_signal.emit(event);
+            render_cv.notify_one();
         };
-        rebuildPresentSemaphores();
 
-        uint32_t current_frame = 0;
+        // Immediate event callback — fires from wndProc/handleEvent, including during
+        // Win32 modal resize loops when the main event loop is blocked. This ensures the
+        // render thread receives resize/expose events without delay.
+        struct CallbackContext {
+            SignalsLib::Signal<RenderEvent>* signal;
+            std::condition_variable* cv;
+        };
 
-        // Resize signal — event loop emits, render loop consumes
-        SignalsLib::Signal<ResizeEvent> resize_signal;
+        CallbackContext cb_ctx{&render_signal, &render_cv};
+
+        window->setEventCallback(
+            [](const WindowLib::WindowEvent& ev, void* user_data) {
+                CallbackContext* ctx = static_cast<CallbackContext*>(user_data);
+                switch (ev.type) {
+                case WindowLib::WindowEvent::Type::Resize:
+                    ctx->signal->emit({RenderEvent::Type::Resize, ev.resize.width, ev.resize.height});
+                    ctx->cv->notify_one();
+                    break;
+                case WindowLib::WindowEvent::Type::Expose:
+                    ctx->signal->emit({RenderEvent::Type::Render, 0, 0});
+                    ctx->cv->notify_one();
+                    break;
+                default:
+                    break;
+                }
+            },
+            &cb_ctx);
+
+        // Request initial frame render
+        emitRenderEvent({RenderEvent::Type::Render, 0, 0});
 
         logger.logInfo("Press ESC to close.");
 
-        // Main loop
+        // Main loop — handles non-rendering events (Close, KeyDown).
+        // Resize and Expose are forwarded to the render thread via the immediate callback above.
+#ifdef _WIN32
+        constexpr uint32_t ESC_KEYCODE = 27;
+#else
+        constexpr uint32_t ESC_KEYCODE = 9;
+#endif
+
         while (!window->shouldClose()) {
-            window->pumpEvents();
+            window->waitEvents();
 
             WindowLib::WindowEvent ev;
-#ifdef _WIN32
-            constexpr uint32_t ESC_KEYCODE = 27; // Win32 virtual key code
-#else
-            constexpr uint32_t ESC_KEYCODE = 9; // X11 keycode
-#endif
             while (window->pollEvent(ev)) {
                 switch (ev.type) {
                 case WindowLib::WindowEvent::Type::Close:
                     logger.logInfo("Close requested.");
-                    break;
-
-                case WindowLib::WindowEvent::Type::Resize:
-                    resize_signal.emit({ev.resize.width, ev.resize.height});
                     break;
 
                 case WindowLib::WindowEvent::Type::KeyDown:
@@ -304,112 +503,11 @@ int main()
                     break;
                 }
             }
-
-            // Consume pending resize events — recreate swapchain with latest dimensions
-            {
-                ResizeEvent resize_ev;
-                bool needs_recreate = false;
-                while (resize_signal.consume(resize_ev)) {
-                    needs_recreate = true;
-                }
-                if (needs_recreate && resize_ev.width > 0 && resize_ev.height > 0) {
-                    swapchain.recreate(resize_ev.width, resize_ev.height);
-                    rebuildPresentSemaphores();
-                }
-            }
-
-            // Skip rendering while minimised
-            if (window->width() == 0 || window->height() == 0) {
-                continue;
-            }
-
-            // Wait for this frame's fence
-            vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, std::numeric_limits<uint64_t>::max());
-            if (wait_result != vk::Result::eSuccess) {
-                logger.logFatal("Failed to wait for fence.");
-                std::abort();
-                return 1;
-            }
-
-            // Acquire next swapchain image
-            uint32_t image_index = 0;
-            vk::Result acquire_result = vk::Result::eSuccess;
-            try {
-                vk::ResultValue<uint32_t> acquire = swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(), *image_available_semaphores[current_frame]);
-                acquire_result = acquire.result;
-                image_index = acquire.value;
-            } catch (const vk::OutOfDateKHRError&) {
-                if (window->width() > 0 && window->height() > 0) {
-                    swapchain.recreate(window->width(), window->height());
-                    rebuildPresentSemaphores();
-                }
-                continue;
-            }
-
-            bool swapchain_suboptimal = (acquire_result == vk::Result::eSuboptimalKHR);
-
-            // Only reset fence after we know we will submit work
-            device.get().resetFences({*in_flight_fences[current_frame]});
-
-            // Record command buffer
-            const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
-            cmd.reset();
-            recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], swapchain.extent(), pipeline, vertex_buffer.buffer());
-
-            // Submit
-            vk::SemaphoreSubmitInfo wait_sem{};
-            wait_sem.semaphore = *image_available_semaphores[current_frame];
-            wait_sem.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-
-            vk::SemaphoreSubmitInfo signal_sem{};
-            signal_sem.semaphore = *render_finished_semaphores[image_index];
-            signal_sem.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-
-            vk::CommandBufferSubmitInfo cmd_submit{};
-            cmd_submit.commandBuffer = *cmd;
-
-            vk::SubmitInfo2 submit_info{};
-            submit_info.waitSemaphoreInfoCount = 1;
-            submit_info.pWaitSemaphoreInfos = &wait_sem;
-            submit_info.commandBufferInfoCount = 1;
-            submit_info.pCommandBufferInfos = &cmd_submit;
-            submit_info.signalSemaphoreInfoCount = 1;
-            submit_info.pSignalSemaphoreInfos = &signal_sem;
-
-            device.graphicsQueue().submit2({submit_info}, *in_flight_fences[current_frame]);
-
-            // Present
-            vk::PresentInfoKHR present_info{};
-            vk::SwapchainKHR swapchains[] = {*swapchain.get()};
-            present_info.waitSemaphoreCount = 1;
-            present_info.pWaitSemaphores = &*render_finished_semaphores[image_index];
-            present_info.swapchainCount = 1;
-            present_info.pSwapchains = swapchains;
-            present_info.pImageIndices = &image_index;
-
-            vk::Result present_result = vk::Result::eSuccess;
-            try {
-                present_result = device.presentQueue().presentKHR(present_info);
-            } catch (const vk::OutOfDateKHRError&) {
-                if (window->width() > 0 && window->height() > 0) {
-                    swapchain.recreate(window->width(), window->height());
-                    rebuildPresentSemaphores();
-                }
-                continue;
-            }
-
-            if (present_result == vk::Result::eSuboptimalKHR || swapchain_suboptimal) {
-                if (window->width() > 0 && window->height() > 0) {
-                    swapchain.recreate(window->width(), window->height());
-                    rebuildPresentSemaphores();
-                }
-            }
-
-            current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
         }
 
-        // Wait for GPU to finish before destroying resources
-        device.get().waitIdle();
+        // Signal render thread to stop and wait for it
+        emitRenderEvent({RenderEvent::Type::Stop, 0, 0});
+        render_worker.join();
 
         logger.logInfo("Shutting down.");
 

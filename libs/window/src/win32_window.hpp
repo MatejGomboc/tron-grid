@@ -37,8 +37,11 @@ namespace WindowLib
         //! Destroys the Win32 window and releases platform resources.
         ~Win32Window() override;
 
-        //! Processes pending Win32 messages into the event queue.
+        //! Processes pending Win32 messages into the event queue (non-blocking).
         void pumpEvents() override;
+
+        //! Blocks until at least one Win32 message arrives, then drains all pending messages.
+        void waitEvents() override;
 
         //! Returns the HWND as a void pointer.
         [[nodiscard]] void* nativeHandle() const override;

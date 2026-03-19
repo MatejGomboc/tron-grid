@@ -31,8 +31,11 @@ namespace WindowLib
         //! Destroys the XCB window and disconnects from the X server.
         ~XcbWindow() override;
 
-        //! Polls pending XCB events into the event queue.
+        //! Polls pending XCB events into the event queue (non-blocking).
         void pumpEvents() override;
+
+        //! Blocks until at least one XCB event arrives, then drains all pending events.
+        void waitEvents() override;
 
         //! Returns the xcb_window_t as a void pointer.
         [[nodiscard]] void* nativeHandle() const override;
