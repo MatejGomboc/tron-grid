@@ -24,8 +24,9 @@ future mesh shader (Phase 3) and ray tracing (Phase 5-6) compatibility.
 
 - Vertex format: position + normal + UV (not just position + colour) — meshlet-ready,
   RT-ready (normals needed for shading, UVs for texturing)
-- Push constants for per-object model transform — GPU builds the matrix, CPU just sends
-  position + rotation + scale. This scales to thousands of objects in Phase 2
+- Push constants for per-object model transform — one `Mat4` (64 bytes) per draw call.
+  Sufficient for Phase 1's ~125 cubes. Phase 2 (1000 objects, 1 draw call) will replace
+  push constants with SSBO + indirect draw — but the shader interface stays the same
 - Bindless-ready descriptor layout — start simple (1 UBO for camera VP matrix), but the
   pipeline layout can grow to bindless arrays later
 - Depth buffer — required for rasterisation now and ray tracing comparison later
@@ -86,7 +87,10 @@ view matrix, quaternion rotation, and basic vector/matrix operations.
   `VK_FORMAT_D24_UNORM_S8_UINT`)
 - Create depth image view
 - Add depth attachment to `vk::RenderingInfo` in `recordFrame()`
-- Enable depth test + depth write in the graphics pipeline
+- Enable depth test + depth write in the graphics pipeline via
+  `VkPipelineDepthStencilStateCreateInfo` (`depthTestEnable`, `depthWriteEnable`,
+  `depthCompareOp = eLess`)
+- Chain depth format into `VkPipelineRenderingCreateInfo::depthAttachmentFormat`
 - Recreate depth image on swapchain resize (same dimensions as colour attachment)
 
 **3D vertex format (meshlet/RT-ready):**
@@ -134,7 +138,8 @@ projection and depth testing. The camera is at a fixed position looking at the o
 - Input state tracking: maintain a key-state map (pressed/released) on the render
   thread — camera movement reads "is W held?" not "W was pressed". Forward KeyDown,
   KeyUp, and MouseMove events to the render thread via `Signal<InputEvent>` or extend
-  `RenderEvent` with input payload
+  `RenderEvent` with input payload. Extend the immediate event callback to also forward
+  KeyDown, KeyUp, MouseMove, and MouseButtonDown events to the render thread
 - Mouse capture: right-click to engage FPS-style mouse look (hide cursor, capture
   relative movement). Win32: `SetCapture()` + `ShowCursor(FALSE)` + `ClipCursor()`.
   XCB: `xcb_grab_pointer()`. Right-click again or ESC to release
