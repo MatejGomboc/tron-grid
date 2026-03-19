@@ -509,6 +509,10 @@ int main()
         emitRenderEvent({RenderEvent::Type::Stop, 0, 0});
         render_worker.join();
 
+        // Clear the event callback before cb_ctx goes out of scope — prevents the
+        // window from invoking a dangling pointer during its own destruction.
+        window->setEventCallback(nullptr, nullptr);
+
         logger.logInfo("Shutting down.");
 
     } catch (const vk::SystemError& e) {
