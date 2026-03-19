@@ -23,23 +23,23 @@
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 //! Vulkan validation debug callback; routes messages through the Logger via pUserData.
-static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT /*type*/,
-    const VkDebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
+static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
+    vk::DebugUtilsMessageTypeFlagsEXT /*type*/, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
 {
     LoggingLib::Logger* logger = static_cast<LoggingLib::Logger*>(user_data);
     if (!logger) {
-        return VK_FALSE;
+        return vk::False;
     }
 
     std::string message = std::string("[Vulkan] ") + callback_data->pMessage;
-    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+    if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
         logger->logError(message);
-    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+    } else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
         logger->logWarning(message);
     } else {
         logger->logInfo(message);
     }
-    return VK_FALSE;
+    return vk::False;
 }
 
 //! Checks whether a named layer exists in the available list.
@@ -129,7 +129,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
         debug_create_info.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
         debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
             | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
-        debug_create_info.setPfnUserCallback(vulkanDebugCallback);
+        debug_create_info.pfnUserCallback = vulkanDebugCallback;
         debug_create_info.pUserData = &m_logger;
         create_info.pNext = &debug_create_info;
     }
