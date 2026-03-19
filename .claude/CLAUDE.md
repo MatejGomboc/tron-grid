@@ -60,6 +60,14 @@ When implementing engine systems, consult the official Vulkan tutorial series:
 7. **Use `Signal<T>`** for inter-system communication (see `src/signal.hpp`)
 8. **Use dynamic rendering** instead of traditional render passes
 
+## CI/CD Notes
+
+- **Dependabot** only updates `actions/cache` references in `.github/workflows/*.yml`. The custom
+  composite actions (`.github/actions/setup-vulkan-windows/action.yml` and
+  `.github/actions/setup-vulkan-linux/action.yml`) also use `actions/cache` but are **not** covered
+  by Dependabot. When reviewing a Dependabot PR that bumps `actions/cache`, manually update the
+  hash and version comment in both custom actions to match.
+
 ## Project Structure
 
 ```
