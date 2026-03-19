@@ -9,7 +9,9 @@ sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-Early development — currently building Vulkan infrastructure (Phase 0: triangle on screen).
+**Phase 0 complete** — colourful triangle on screen with event-driven rendering, separate render
+thread, VMA memory management, Slang shaders, and background logging. All 5 CI presets pass.
+Currently preparing Phase 1 (fly through cubes).
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 
@@ -26,7 +28,7 @@ TronGrid always starts as a console application. Two launch-time modes:
 
 The AI brain is a DLL (Windows) or SO (Linux) — an independent project with its own architecture.
 TronGrid provides a standalone C-linkage interface header; the brain's internals are none of
-TronGrid's business. See [docs/AI_INTERFACE.md](docs/AI_INTERFACE.md) for the full specification.
+TronGrid's business. The AI interface specification will be documented in a future phase.
 
 ---
 
@@ -133,7 +135,7 @@ cmake --build build/linux-x11-clang --config Debug
 |----------|---------|
 | [docs/VISION.md](docs/VISION.md) | Project vision, phased roadmap (single source of truth) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture and engine design |
-| [docs/AI_INTERFACE.md](docs/AI_INTERFACE.md) | AI brain plugin interface specification |
+| docs/AI_INTERFACE.md | AI brain plugin interface specification (future) |
 | [STYLE.md](STYLE.md) | Code style conventions |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines |
 | [TODO.md](TODO.md) | Active tasks and development journal |

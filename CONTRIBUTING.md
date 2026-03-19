@@ -130,13 +130,8 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ### Naming Conventions
 
-| Item | Convention | Example |
-|------|------------|---------|
-| Namespaces | PascalCase | `TronGrid` |
-| Types / Classes | PascalCase | `SwapchainImage` |
-| Functions | snake_case | `create_device` |
-| Constants | SCREAMING_SNAKE_CASE | `MAX_FRAMES_IN_FLIGHT` |
-| Variables | snake_case | `frame_index` |
+See [STYLE.md](STYLE.md) § Naming Conventions for the full table. Key rules:
+camelCase functions, PascalCase types, `m_` member prefix, SCREAMING_SNAKE_CASE constants.
 
 ### Documentation
 
@@ -226,7 +221,7 @@ chore: update Vulkan SDK to 1.4.335.0
 | `CHANGELOG.md` | User-facing change history |
 | `docs/ARCHITECTURE.md` | Technical architecture |
 | `docs/VISION.md` | Project vision and roadmap (single source of truth) |
-| `docs/AI_INTERFACE.md` | AI brain plugin interface specification |
+| `docs/AI_INTERFACE.md` | AI brain plugin interface specification (future) |
 
 ### Updating Documentation
 

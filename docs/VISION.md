@@ -198,8 +198,8 @@ Anyone can build an AI bot for TronGrid. The requirements are:
 Everything else — the language, the framework, the AI approach, the training pipeline — is
 entirely up to the bot author. TronGrid is agnostic.
 
-For the detailed bot interface specification (shared memory layout, staged protocol, packet
-structures), see [AI_INTERFACE.md](AI_INTERFACE.md).
+The detailed bot interface specification (shared memory layout, staged protocol, packet
+structures) will be documented in `AI_INTERFACE.md` in a future phase.
 
 ## Target Hardware
 
