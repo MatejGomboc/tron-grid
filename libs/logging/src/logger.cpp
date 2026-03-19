@@ -74,23 +74,9 @@ namespace LoggingLib
 
     void Logger::logFatal(std::string_view message)
     {
-        enqueue(Severity::Fatal, message);
-        flush();
-    }
-
-    void Logger::flush()
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_flush_requested = true;
-        m_flush_done = false;
-        lock.unlock();
-
-        m_cv.notify_one();
-
-        lock.lock();
-        m_flush_cv.wait(lock, [this]() {
-            return m_flush_done;
-        });
+        // Write directly to stderr — fatal messages must be visible
+        // before std::abort(), so we bypass the async queue entirely.
+        std::cerr << "[FATAL] " << message << "\n";
     }
 
     void Logger::enqueue(Severity severity, std::string_view message)
@@ -104,12 +90,10 @@ namespace LoggingLib
         while (true) {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_cv.wait(lock, [this]() {
-                return m_stop || m_flush_requested || !m_queue.empty();
+                return m_stop || !m_queue.empty();
             });
 
             bool stopping = m_stop;
-            bool flushing = m_flush_requested;
-            m_flush_requested = false;
             lock.unlock();
 
             // Drain all pending messages.
@@ -121,13 +105,6 @@ namespace LoggingLib
                 } else {
                     std::cout << prefix << " " << msg.text << "\n";
                 }
-            }
-
-            // Notify flush() caller that all messages have been written.
-            if (flushing) {
-                std::lock_guard<std::mutex> flush_lock(m_mutex);
-                m_flush_done = true;
-                m_flush_cv.notify_one();
             }
 
             if (stopping) {

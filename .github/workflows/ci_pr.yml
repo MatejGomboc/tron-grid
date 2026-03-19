@@ -17,11 +17,11 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
             - name: Setup Node.js
               id: setup-node
-              uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+              uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
               with:
                 node-version: "lts/*"
 
@@ -31,7 +31,7 @@ jobs:
 
             # Restore cache from main branch (read-only)
             - name: Restore npm cache
-              uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+              uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
               with:
                 path: ~/.npm
                 key: npm-markdownlint-${{ runner.os }}-node-${{ steps.setup-node.outputs.node-version }}-mdlint-${{ steps.mdlint-version.outputs.version }}
@@ -69,7 +69,7 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
             - name: Install XCB development headers (Linux)
               if: runner.os == 'Linux'
@@ -89,7 +89,7 @@ jobs:
 
             - name: Setup MSVC environment
               if: matrix.msvc-setup-needed
-              uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+              uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
             - name: Run CMake workflow
               run: cmake --workflow --preset=${{ matrix.preset }}

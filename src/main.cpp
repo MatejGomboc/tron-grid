@@ -64,8 +64,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     to_colour.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     to_colour.oldLayout = vk::ImageLayout::eUndefined;
     to_colour.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    to_colour.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_colour.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_colour.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    to_colour.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
     to_colour.image = image;
     to_colour.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     to_colour.subresourceRange.baseMipLevel = 0;
@@ -127,8 +127,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     to_present.dstAccessMask = vk::AccessFlagBits2::eNone;
     to_present.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
     to_present.newLayout = vk::ImageLayout::ePresentSrcKHR;
-    to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_present.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    to_present.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
     to_present.image = image;
     to_present.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     to_present.subresourceRange.baseMipLevel = 0;
@@ -199,14 +199,16 @@ int main()
         vk::raii::CommandBuffers command_buffers(device.get(), alloc_info);
 
         // Triangle vertex buffer — staging upload to GPU-local memory
-        constexpr VkDeviceSize VERTEX_BUFFER_SIZE = sizeof(TRIANGLE_VERTICES);
+        constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = sizeof(TRIANGLE_VERTICES);
 
-        AllocatedBuffer vertex_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 0,
+        AllocatedBuffer vertex_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst), 0,
             VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
         // Staging buffer scoped so it is freed immediately after the copy completes
         {
-            AllocatedBuffer staging_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            AllocatedBuffer staging_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
 
             VmaAllocationInfo staging_info = staging_buffer.allocationInfo();
@@ -322,7 +324,7 @@ int main()
             }
 
             // Wait for this frame's fence
-            vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, VK_TRUE, std::numeric_limits<uint64_t>::max());
+            vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, std::numeric_limits<uint64_t>::max());
             if (wait_result != vk::Result::eSuccess) {
                 logger.logFatal("Failed to wait for fence.");
                 std::abort();

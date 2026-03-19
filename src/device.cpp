@@ -174,11 +174,11 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
 
     // Enable synchronization2 (Vulkan 1.3 core)
     vk::PhysicalDeviceSynchronization2Features sync2_features{};
-    sync2_features.synchronization2 = VK_TRUE;
+    sync2_features.synchronization2 = vk::True;
 
     // Enable dynamic rendering (Vulkan 1.3 core)
     vk::PhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
-    dynamic_rendering_features.dynamicRendering = VK_TRUE;
+    dynamic_rendering_features.dynamicRendering = vk::True;
     dynamic_rendering_features.pNext = &sync2_features;
 
     vk::PhysicalDeviceFeatures2 features2{};

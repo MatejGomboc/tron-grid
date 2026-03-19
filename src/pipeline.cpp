@@ -120,7 +120,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, const std::ve
     // Input assembly
     vk::PipelineInputAssemblyStateCreateInfo input_assembly{};
     input_assembly.topology = vk::PrimitiveTopology::eTriangleList;
-    input_assembly.primitiveRestartEnable = VK_FALSE;
+    input_assembly.primitiveRestartEnable = vk::False;
 
     // Dynamic viewport + scissor
     std::array<vk::DynamicState, 2> dynamic_states = {
@@ -138,27 +138,27 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, const std::ve
 
     // Rasterisation
     vk::PipelineRasterizationStateCreateInfo rasterisation{};
-    rasterisation.depthClampEnable = VK_FALSE;
-    rasterisation.rasterizerDiscardEnable = VK_FALSE;
+    rasterisation.depthClampEnable = vk::False;
+    rasterisation.rasterizerDiscardEnable = vk::False;
     rasterisation.polygonMode = vk::PolygonMode::eFill;
     rasterisation.cullMode = vk::CullModeFlagBits::eNone;
     rasterisation.frontFace = vk::FrontFace::eCounterClockwise;
-    rasterisation.depthBiasEnable = VK_FALSE;
+    rasterisation.depthBiasEnable = vk::False;
     rasterisation.lineWidth = 1.0f;
 
     // Multisample — required even without MSAA
     vk::PipelineMultisampleStateCreateInfo multisample{};
     multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
-    multisample.sampleShadingEnable = VK_FALSE;
+    multisample.sampleShadingEnable = vk::False;
 
     // Colour blend — no blending, write RGBA
     vk::PipelineColorBlendAttachmentState colour_blend_attachment{};
-    colour_blend_attachment.blendEnable = VK_FALSE;
+    colour_blend_attachment.blendEnable = vk::False;
     colour_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
         | vk::ColorComponentFlagBits::eA;
 
     vk::PipelineColorBlendStateCreateInfo colour_blend{};
-    colour_blend.logicOpEnable = VK_FALSE;
+    colour_blend.logicOpEnable = vk::False;
     colour_blend.attachmentCount = 1;
     colour_blend.pAttachments = &colour_blend_attachment;
 
