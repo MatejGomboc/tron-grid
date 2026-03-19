@@ -65,6 +65,16 @@ libs/math/
 - Basic arithmetic: `+`, `-`, `*`, dot, cross, normalise, length
 - All `constexpr` where possible, `[[nodiscard]]` on all getters
 
+**Unit tests (critical — subtle bugs here show up as "scene looks wrong" with no error):**
+
+- Vec3/Vec4: dot, cross, normalise, length, operator arithmetic
+- Mat4: identity, multiply, transpose, inverse, translate/rotate/scale
+- Quat: from axis-angle, to Mat4, slerp, normalise, multiply, identity
+- Projection: perspective matrix produces correct clip-space coordinates
+  (test near/far plane mapping, aspect ratio, FOV)
+- View: lookAt matrix produces expected eye/target/up orientation
+- Edge cases: zero-length normalise, degenerate quaternion, near=far, aspect=0
+
 **After this step:** math library compiles, unit tests prove correctness of projection,
 view matrix, quaternion rotation, and basic vector/matrix operations.
 
