@@ -20,8 +20,9 @@ target_include_directories(window
 
 target_compile_features(window PUBLIC cxx_std_20)
 
-target_link_libraries(window PRIVATE
-    ${PLATFORM_LIBS}
+target_link_libraries(window
+    PUBLIC logging
+    PRIVATE ${PLATFORM_LIBS}
 )
 
 add_subdirectory(tests)

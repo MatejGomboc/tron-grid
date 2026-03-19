@@ -70,9 +70,128 @@ Key settings:
 
 ### Language Standard
 
-C++20. Do not throw exceptions in project code. Catch exceptions from third-party libraries
+C++20 (and **NOT** beyond it!). Do not throw exceptions in project code. Catch exceptions from third-party libraries
 (e.g., vulkan-hpp `vk::raii`) at API boundaries only. For unrecoverable errors in project code,
-log to `std::cerr` with a `[TronGrid] Fatal:` prefix and call `std::abort()` followed by a return statement to exit that function.
+log via `LoggingLib::Logger::logFatal()` and call `std::abort()` followed by a return statement to exit that function.
+
+### Type Explicitness
+
+Do not use `auto` — write the explicit type so the reader never has to guess. The only exception
+is where the type is impossible to spell (lambdas).
+
+```cpp
+// Correct
+vk::raii::Pipeline pipeline = device.createGraphicsPipeline(cache, info);
+uint32_t count = static_cast<uint32_t>(items.size());
+
+// Wrong
+auto pipeline = device.createGraphicsPipeline(cache, info);
+auto count = static_cast<uint32_t>(items.size());
+
+// Exception — lambdas have unspellable types
+auto on_resize = [&](const WindowLib::WindowEvent& ev) { ... };
+```
+
+### Attributes
+
+Use `[[nodiscard]]` on all functions that return a value the caller must not silently discard —
+getters, factory functions, query functions.
+
+```cpp
+[[nodiscard]] const vk::raii::Device& get() const;
+[[nodiscard]] uint32_t graphicsFamilyIndex() const;
+```
+
+### Constants
+
+Use `constexpr` for compile-time constants. Name them `SCREAMING_SNAKE_CASE`. Do not use
+plain `const` or magic numbers where `constexpr` applies.
+
+```cpp
+constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+constexpr float QUEUE_PRIORITY = 1.0f;
+```
+
+### Modern C++20 Idioms
+
+Prefer `std::ranges::` algorithms over `std::` + `.begin()/.end()`:
+
+```cpp
+// Correct
+std::ranges::find_if(devices, predicate);
+
+// Wrong
+std::find_if(devices.begin(), devices.end(), predicate);
+```
+
+Prefer `std::string_view` for read-only string parameters and comparisons — avoids
+unnecessary heap allocations.
+
+Use C++20 designated initialisers for aggregate/struct initialisation where applicable:
+
+```cpp
+vk::InstanceCreateInfo info{
+    .flags = {},
+    .pApplicationInfo = &app_info,
+    .enabledLayerCount = static_cast<uint32_t>(layers.size()),
+    .ppEnabledLayerNames = layers.data(),
+};
+```
+
+### Include Order
+
+All `#include` directives are flush — no blank lines between groups. Order:
+
+1. Same-module headers (`"device.hpp"`)
+2. Project library headers (`<log/logger.hpp>`, `<window/window.hpp>`)
+3. Standard library headers (`<vector>`, `<string>`)
+
+```cpp
+#include "device.hpp"
+#include "instance.hpp"
+#include <log/logger.hpp>
+#include <window/window.hpp>
+#include <cstdint>
+#include <string>
+#include <vector>
+```
+
+### Comment Alignment
+
+Do not column-align trailing comments. Use a single space before `//` or `//!<`:
+
+```cpp
+// Correct
+SignalsLib::Signal<LogMessage> m_queue; //!< Thread-safe message queue.
+std::thread m_worker; //!< Background writer thread.
+bool m_stop{false}; //!< Set to true when the logger is shutting down.
+
+// Wrong — padded to align
+SignalsLib::Signal<LogMessage> m_queue;  //!< Thread-safe message queue.
+std::thread m_worker;                   //!< Background writer thread.
+bool m_stop{false};                     //!< Set to true when the logger is shutting down.
+```
+
+The same applies to enum values — no extra spaces between the value and its comment.
+
+### Constructor Initialiser Lists
+
+Always break after the colon. Each initialiser gets its own line with 4-space indentation.
+A single initialiser is one line; multiple initialisers are one per line:
+
+```cpp
+Win32Window::Win32Window(const WindowConfig& config, LoggingLib::Logger& logger) :
+    Window(logger)
+{
+}
+
+Swapchain::Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger) :
+    m_logger(&logger),
+    m_device(&device),
+    m_surface(surface)
+{
+}
+```
 
 ### Member Initialisation
 
@@ -134,6 +253,18 @@ Multi-line doxygen blocks use 4-space indented content:
 */
 ```
 
+Use Qt-style backslash commands (`\param`, `\return`, `\brief`) — not Javadoc `@` prefix:
+
+```cpp
+/*!
+    Selects the best physical device for rendering.
+
+    \param instance The Vulkan instance to enumerate devices from.
+    \param surface The target surface used to check present support.
+    \return The selected physical device, or std::nullopt if none is suitable.
+*/
+```
+
 Licence headers use plain `/* */` (not doxygen) with the full GPL v3 notice:
 
 ```cpp
@@ -151,6 +282,57 @@ Licence headers use plain `/* */` (not doxygen) with the full GPL v3 notice:
     GNU General Public License for more details.
 */
 ```
+
+---
+
+## Slang Shaders
+
+Follow the C++ conventions where applicable — Slang is syntactically close to HLSL/C++.
+
+### Formatting
+
+| Setting | Value |
+|---------|-------|
+| Indent | 4 spaces |
+| Brace style | Allman for functions, attached for structs |
+| Column limit | 170 |
+
+### Naming Conventions
+
+| Item | Convention | Example |
+|------|------------|---------|
+| Structs | PascalCase | `VSInput`, `VSOutput` |
+| Entry points | camelCase | `vertMain`, `fragMain` |
+| Struct members | snake_case | `position`, `colour` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_LIGHT_COUNT` |
+
+### Semantics
+
+Use HLSL-style semantics (`POSITION`, `COLOR0`, `SV_Position`, `SV_Target`) — not
+`[[vk::location(N)]]` unless explicit location control is required.
+
+### Entry Points
+
+Mark entry points with `[shader("vertex")]`, `[shader("fragment")]`, etc. Use descriptive
+names — not `main`:
+
+```slang
+[shader("vertex")]
+VSOutput vertMain(VSInput input)
+{
+    ...
+}
+
+[shader("fragment")]
+float4 fragMain(VSOutput input) : SV_Target
+{
+    ...
+}
+```
+
+### Licence Header
+
+Same GPL v3 `/* */` block as C++ files.
 
 ---
 
@@ -289,4 +471,4 @@ Code identifiers may use American spelling where it matches library/API conventi
 
 ---
 
-*Last updated: 2026-03-08*
+*Last updated: 2026-03-17*

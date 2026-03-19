@@ -15,6 +15,7 @@
 #pragma once
 
 #include "window_event.hpp"
+#include <log/logger.hpp>
 #include <memory>
 #include <queue>
 #include <string>
@@ -88,7 +89,11 @@ namespace WindowLib
         }
 
     protected:
-        Window() = default;
+        //! Constructs the base window with a logger reference.
+        explicit Window(LoggingLib::Logger& logger) :
+            m_logger(logger)
+        {
+        }
 
         //! Pushes an event onto the internal event queue (for subclass use).
         void pushEvent(const WindowEvent& ev)
@@ -96,6 +101,7 @@ namespace WindowLib
             m_event_queue.push(ev);
         }
 
+        LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
         uint32_t m_width{0}; //!< Current client-area width in pixels.
         uint32_t m_height{0}; //!< Current client-area height in pixels.
         bool m_should_close{false}; //!< True after a close has been requested.
@@ -106,6 +112,6 @@ namespace WindowLib
 
     //! Factory — creates the platform-appropriate window (Win32 or XCB).
     //! Consumers never need to include platform headers.
-    [[nodiscard]] std::unique_ptr<Window> create(const WindowConfig& config);
+    [[nodiscard]] std::unique_ptr<Window> create(const WindowConfig& config, LoggingLib::Logger& logger);
 
 } // namespace WindowLib

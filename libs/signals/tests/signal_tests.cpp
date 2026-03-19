@@ -14,13 +14,12 @@
 
 #include "test_fixture/test_fixture.hpp"
 #include "signal/signal.hpp"
-
 #include <memory>
 #include <thread>
 
 TEST_CASE(emit_and_consume)
 {
-    SignalLib::Signal<int> sig;
+    SignalsLib::Signal<int> sig;
     sig.emit(42);
 
     int value = 0;
@@ -30,7 +29,7 @@ TEST_CASE(emit_and_consume)
 
 TEST_CASE(consume_empty_returns_false)
 {
-    SignalLib::Signal<int> sig;
+    SignalsLib::Signal<int> sig;
 
     int value = 0;
     TEST_CHECK(!sig.consume(value));
@@ -38,7 +37,7 @@ TEST_CASE(consume_empty_returns_false)
 
 TEST_CASE(fifo_order)
 {
-    SignalLib::Signal<int> sig;
+    SignalsLib::Signal<int> sig;
     sig.emit(1);
     sig.emit(2);
     sig.emit(3);
@@ -54,7 +53,7 @@ TEST_CASE(fifo_order)
 
 TEST_CASE(empty_and_size)
 {
-    SignalLib::Signal<int> sig;
+    SignalsLib::Signal<int> sig;
     TEST_CHECK(sig.empty());
     TEST_CHECK_EQUAL(sig.size(), static_cast<std::size_t>(0));
 
@@ -65,8 +64,8 @@ TEST_CASE(empty_and_size)
 
 TEST_CASE(weak_ptr_ownership_model)
 {
-    auto sig = std::make_shared<SignalLib::Signal<int>>();
-    std::weak_ptr<SignalLib::Signal<int>> weak = sig;
+    std::shared_ptr<SignalsLib::Signal<int>> sig = std::make_shared<SignalsLib::Signal<int>>();
+    std::weak_ptr<SignalsLib::Signal<int>> weak = sig;
 
     sig->emit(99);
     TEST_CHECK(!weak.expired());
@@ -77,7 +76,7 @@ TEST_CASE(weak_ptr_ownership_model)
 
 TEST_CASE(thread_safety)
 {
-    SignalLib::Signal<int> sig;
+    SignalsLib::Signal<int> sig;
     constexpr int count = 1000;
 
     std::thread producer([&] {

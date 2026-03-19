@@ -12,30 +12,6 @@
     GNU General Public License for more details.
 */
 
-#include "test_fixture/test_fixture.hpp"
-#include <stdexcept>
-
-TEST_CASE(check_true_passes)
-{
-    TEST_CHECK(true);
-    TEST_CHECK(1 == 1);
-    TEST_CHECK(42 > 0);
-}
-
-TEST_CASE(check_equal_same_values)
-{
-    TEST_CHECK_EQUAL(1, 1);
-    TEST_CHECK_EQUAL(0, 0);
-    TEST_CHECK_EQUAL(-5, -5);
-}
-
-TEST_CASE(check_throws_catches_exception)
-{
-    TEST_CHECK_THROWS(throw std::runtime_error("expected"));
-    TEST_CHECK_THROWS(throw 42);
-}
-
-int main()
-{
-    return static_cast<int>(TestFixtureLib::runAll());
-}
+#include <volk/volk.h>
+#define VMA_IMPLEMENTATION
+#include <vma/vk_mem_alloc.h>

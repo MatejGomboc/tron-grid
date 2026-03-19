@@ -17,6 +17,7 @@
 #include <volk/volk.h>
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
+#include <log/logger.hpp>
 #include <vector>
 
 class Device; // forward declaration
@@ -28,7 +29,7 @@ class Device; // forward declaration
 class Swapchain {
 public:
     //! Create a swapchain for the given device and surface.
-    Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height);
+    Swapchain(const Device& device, VkSurfaceKHR surface, uint32_t width, uint32_t height, LoggingLib::Logger& logger);
 
     // Non-copyable, movable
     Swapchain(const Swapchain&) = delete;
@@ -79,6 +80,7 @@ private:
     //! Internal: query surface and build swapchain + views.
     void build(uint32_t width, uint32_t height);
 
+    LoggingLib::Logger* m_logger{nullptr}; //!< Logger pointer (non-owning).
     const Device* m_device{nullptr}; //!< Back-pointer to the device (non-owning).
     VkSurfaceKHR m_surface{VK_NULL_HANDLE}; //!< Surface handle (non-owning).
     vk::raii::SwapchainKHR m_swapchain{nullptr}; //!< Swapchain handle.
