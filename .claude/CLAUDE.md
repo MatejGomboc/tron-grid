@@ -156,7 +156,7 @@ cmake --build build/linux-x11-gcc --config Debug
 | External deps | Minimal | Vulkan SDK, Volk, vulkan-hpp, VMA, Slang — nothing else |
 | Internal libraries | `libs/` static libs | Self-contained LEGO bricks, plain namespaces, future submodule-ready |
 | Logging | `LoggingLib::Logger` | Background thread, `Signal<LogMessage>`, severity routing |
-| Rendering model | Event-driven, separate thread | Main thread sleeps on events, render thread sleeps on `Signal<RenderEvent>` |
+| Threading model | Event-driven, separate render thread | Main thread sleeps on events, render thread sleeps on `Signal<RenderEvent>` |
 | Test fixture | Own `TestFixtureLib` | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
 
 ## Current Status
