@@ -60,37 +60,38 @@ CMake `target_link_libraries`. Each library has its own include directory, sourc
 
 ```text
 libs/
-├── test/                       # test framework (foundation brick)
-│   ├── CMakeLists.txt          # add_library(test STATIC ...)
-│   ├── include/test/test.hpp   # #include <test/test.hpp>
-│   └── src/test.cpp
-├── json/                       # JSON parser/creator
-│   ├── CMakeLists.txt          # add_library(json STATIC ...)
-│   ├── include/json/json.hpp   # #include <json/json.hpp>
-│   ├── src/json.cpp
+├── test_fixture/              # test fixture (foundation brick) *(implemented)*
+│   ├── CMakeLists.txt         # add_library(test_fixture STATIC ...)
+│   ├── include/test_fixture/test_fixture.hpp
+│   ├── src/test_fixture.cpp
 │   └── tests/
-│       ├── CMakeLists.txt      # links: json + test
-│       └── json_tests.cpp
-├── signal/                    # thread-safe Signal<T> message queues
-│   └── ...
-├── window/                    # platform windowing (Win32 / XCB)
-│   └── ...
-├── math/
+├── signals/                   # thread-safe SignalsLib::Signal<T> queues *(implemented)*
+│   ├── include/signal/signal.hpp
+│   └── tests/
+├── logging/                   # background LoggingLib::Logger *(implemented)*
+│   ├── include/log/logger.hpp
+│   ├── src/logger.cpp
+│   └── tests/
+├── window/                    # platform windowing — WindowLib (Win32 / XCB) *(implemented)*
+│   ├── include/window/window.hpp
+│   ├── src/win32_window.cpp, xcb_window.cpp
+│   └── tests/
+├── math/                      # (future)
 │   └── ...
 └── ...
 ```
 
 **Rules:**
 
-- **No TronGrid namespacing** — libraries use their own plain namespaces (`json::`, `math::`,
-  `test::`), not `tg::`. They are general-purpose and could be extracted into separate
+- **PascalCase + "Lib" suffix namespaces** — libraries use `SignalsLib`, `LoggingLib`,
+  `WindowLib`, `TestFixtureLib`. They are general-purpose and could be extracted into separate
   repositories as git submodules later
 - **Each library is self-contained** — own `CMakeLists.txt`, own `include/<lib>/` directory,
-  own `tests/` directory with unit tests linking the `test` library
-- **Plain CMake target names** — `test`, `json`, `math`, not prefixed
+  own `tests/` directory with unit tests linking the `test_fixture` library
+- **Plain CMake target names** — `test_fixture`, `signals`, `logging`, `window`
 - **Static libraries only** — linked into the final TronGrid executable
-- **Test framework is itself a library** — `test` is the foundation brick; all other libraries'
-  tests link against it. Macros: `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS`
+- **Test fixture is itself a library** — `test_fixture` is the foundation brick; all other
+  libraries' tests link against it. Macros: `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS`
 
 ### Coupling Model
 
@@ -212,7 +213,7 @@ auto* transform = entity.get_component<TransformComponent>(); // O(1) hash looku
 
 ---
 
-## Signal-Based Communication *(implemented — `src/signal.hpp`)*
+## Signal-Based Communication *(implemented — `libs/signals/include/signal/signal.hpp`)*
 
 Systems communicate through `Signal<T>` — a thread-safe, typed message queue. This avoids tight
 coupling between systems that don't need to know about each other.

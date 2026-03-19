@@ -18,7 +18,7 @@ A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tra
 |----------|----------|
 | Vision | `docs/VISION.md` |
 | Architecture | `docs/ARCHITECTURE.md` |
-| AI interface spec | `docs/AI_INTERFACE.md` |
+| AI interface spec | `docs/AI_INTERFACE.md` (future) |
 | Style guide | `STYLE.md` |
 | Contributing | `CONTRIBUTING.md` |
 
@@ -57,7 +57,7 @@ When implementing engine systems, consult the official Vulkan tutorial series:
 4. **Use British spelling** in documentation, comments, and user-facing strings
 5. **Use GPL v3-or-later** licence headers
 6. **Use `vk::raii`** for all Vulkan object ownership
-7. **Use `Signal<T>`** for inter-system communication (see `src/signal.hpp`)
+7. **Use `SignalsLib::Signal<T>`** for inter-system communication (see `libs/signals/include/signal/signal.hpp`)
 8. **Use dynamic rendering** instead of traditional render passes
 
 ## CI/CD Notes
@@ -88,14 +88,23 @@ tron_grid/
 │   ├── ARCHITECTURE.md   # Technical architecture
 │   └── VISION.md         # Project vision and roadmap
 ├── libs/                 # Internal static libraries (LEGO bricks)
-│   ├── test/             # Test framework (foundation brick)
-│   ├── json/             # JSON parser/creator
-│   ├── signal/           # Thread-safe Signal<T> message queues
-│   ├── window/           # Platform windowing (Win32 / XCB)
-│   └── .../              # math, physics, audio, etc.
+│   ├── test_fixture/     # Test fixture (TEST_CHECK, TEST_CHECK_EQUAL, TEST_CHECK_THROWS)
+│   ├── signals/          # Thread-safe SignalsLib::Signal<T> message queues
+│   ├── logging/          # Background LoggingLib::Logger via Signal<LogMessage>
+│   ├── window/           # Platform windowing — WindowLib (Win32 / XCB)
+│   └── .../              # math, physics, audio, etc. (future)
 ├── src/                  # C++ source files (main application)
-│   ├── CMakeLists.txt    # Target definition, platform detection
-│   └── main.cpp          # Entry point (currently hello world)
+│   ├── main.cpp          # Entry point, event loop, render thread
+│   ├── instance.hpp/cpp  # Vulkan instance + debug messenger
+│   ├── device.hpp/cpp    # GPU selection + logical device
+│   ├── surface.hpp/cpp   # Platform Vulkan surface
+│   ├── swapchain.hpp/cpp # Swapchain with MAILBOX + old-swapchain reuse
+│   ├── pipeline.hpp/cpp  # Graphics pipeline (dynamic rendering)
+│   ├── allocator.hpp/cpp # VMA RAII wrapper (Allocator + AllocatedBuffer)
+│   ├── triangle.slang    # Slang vertex + fragment shader
+│   ├── volk.cpp          # Volk dynamic loader translation unit
+│   ├── vma.cpp           # VMA implementation translation unit
+│   └── CMakeLists.txt    # Target definition, shader compilation
 ├── .clang-format         # LLVM-based, Allman braces, 170 col
 ├── .editorconfig         # 4-space indent, UTF-8, 170 col
 ├── .gitattributes        # Line ending normalisation
@@ -134,7 +143,7 @@ cmake --build build/linux-x11-gcc --config Debug
 | Vulkan C++ bindings | vulkan-hpp `vk::raii` | RAII ownership, type safety, no manual destroy |
 | Rendering model | Dynamic rendering | No VkRenderPass/VkFramebuffer boilerplate |
 | Entity model | Component-based | Composition over inheritance |
-| Inter-system comms | `Signal<T>` queues | Thread-safe, lifetime-safe via weak_ptr |
+| Inter-system comms | `SignalsLib::Signal<T>` queues | Thread-safe, lifetime-safe via weak_ptr |
 | Render orchestration | Rendergraph (DAG) | Automatic pass ordering and synchronisation |
 | Coordinate system | Right-handed, Y-up | Matches glTF, most tools |
 | Units | Metres | Physically-based lighting |
@@ -146,13 +155,15 @@ cmake --build build/linux-x11-gcc --config Debug
 | Core subsystems | All in-house | 3D rendering, physics, audio, sensory — no third-party libs |
 | External deps | Minimal | Vulkan SDK, Volk, vulkan-hpp, VMA, Slang — nothing else |
 | Internal libraries | `libs/` static libs | Self-contained LEGO bricks, plain namespaces, future submodule-ready |
-| Test framework | Own `test` library | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
+| Logging | `LoggingLib::Logger` | Background thread, `Signal<LogMessage>`, severity routing |
+| Threading model | Event-driven, separate render thread | Main thread sleeps on events, render thread sleeps on `Signal<RenderEvent>` |
+| Test fixture | Own `TestFixtureLib` | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
 
 ## Current Status
 
-Currently in **Phase 0 — Foundation** (triangle on screen).
+**Phase 0 — Foundation** is complete (colourful triangle on screen with event-driven rendering).
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
-See `TODO.md` for the active task checklist and development journal.
+See `TODO.md` for the development journal.
 
 ## Off Limits
 
