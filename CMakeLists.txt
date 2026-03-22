@@ -8,9 +8,11 @@ project(TronGrid
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Enable exception handling for MSVC (suppresses C4530 warning)
+# Compiler warnings — high level on all compilers
 if(MSVC)
-    add_compile_options(/EHsc)
+    add_compile_options(/EHsc /W4)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 if(NOT (WIN32 OR (UNIX AND NOT APPLE)))
