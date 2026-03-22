@@ -9,9 +9,10 @@ sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-**Phase 0 complete** — colourful triangle on screen with event-driven rendering, separate render
-thread, VMA memory management, Slang shaders, and background logging. All 5 CI presets pass.
-Currently preparing Phase 1 (fly through cubes).
+**Phase 1 complete** — fly through a 5x5x5 cube grid with WASD + mouse look. Free-flight camera
+(quaternion, no gimbal lock), depth buffer, MathLib (Vec, Mat4, Quat, 57 unit tests), UBO
+descriptors, push constants, event-driven rendering with separate render thread.
+All 5 CI presets pass.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 
