@@ -75,3 +75,32 @@ AllocatedBuffer Allocator::createBuffer(VkDeviceSize size, VkBufferUsageFlags bu
 
     return AllocatedBuffer(m_allocator, buffer, allocation);
 }
+
+AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage) const
+{
+    VkImageCreateInfo image_info{};
+    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.format = format;
+    image_info.extent = {width, height, 1};
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage = usage;
+    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo alloc_create_info{};
+    alloc_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+    VkImage image{VK_NULL_HANDLE};
+    VmaAllocation allocation{VK_NULL_HANDLE};
+    VkResult result = vmaCreateImage(m_allocator, &image_info, &alloc_create_info, &image, &allocation, nullptr);
+    if (result != VK_SUCCESS) {
+        m_logger.logFatal("Failed to create VMA image.");
+        std::abort();
+    }
+
+    return AllocatedImage(m_allocator, image, allocation);
+}

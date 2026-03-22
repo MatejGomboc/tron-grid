@@ -21,6 +21,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     window
     signals
     logging
+    math
     ${CMAKE_DL_LIBS}
 )
 

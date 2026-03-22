@@ -21,6 +21,8 @@
 #include <log/logger.hpp>
 #include <signal/signal.hpp>
 #include <window/window.hpp>
+#include <math/matrix.hpp>
+#include <math/projection.hpp>
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -51,24 +53,29 @@ struct RenderEvent {
 //! Maximum number of frames that can be in-flight simultaneously.
 constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
-//! Hardcoded triangle vertex data — red, green, blue corners.
+//! Depth buffer format used throughout.
+constexpr vk::Format DEPTH_FORMAT = vk::Format::eD32Sfloat;
+
+//! Hardcoded triangle vertex data — position + normal + UV.
 constexpr std::array<Vertex, 3> TRIANGLE_VERTICES = {{
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
-    {{0.0f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
+    {{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+    {{0.0f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 1.0f}},
 }};
 
 /*!
-    Records a command buffer that clears to dark teal, draws the triangle,
-    and transitions the swapchain image for presentation.
+    Records a command buffer that clears to dark teal, draws the triangle with
+    depth testing, binds descriptors and push constants, and transitions the
+    swapchain image for presentation.
 */
-static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView view, vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer)
+static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView colour_view, vk::ImageView depth_view, vk::Image depth_image,
+    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, vk::DescriptorSet descriptor_set, const MathLib::Mat4& model_matrix)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
 
-    // Transition: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
+    // Transition colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
     vk::ImageMemoryBarrier2 to_colour{};
     to_colour.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
     to_colour.srcAccessMask = vk::AccessFlagBits2::eNone;
@@ -85,18 +92,44 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     to_colour.subresourceRange.baseArrayLayer = 0;
     to_colour.subresourceRange.layerCount = 1;
 
-    vk::DependencyInfo dep_to_colour{};
-    dep_to_colour.imageMemoryBarrierCount = 1;
-    dep_to_colour.pImageMemoryBarriers = &to_colour;
-    cmd.pipelineBarrier2(dep_to_colour);
+    // Transition depth: UNDEFINED → DEPTH_ATTACHMENT_OPTIMAL
+    vk::ImageMemoryBarrier2 to_depth{};
+    to_depth.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+    to_depth.srcAccessMask = vk::AccessFlagBits2::eNone;
+    to_depth.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+    to_depth.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    to_depth.oldLayout = vk::ImageLayout::eUndefined;
+    to_depth.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+    to_depth.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    to_depth.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    to_depth.image = depth_image;
+    to_depth.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+    to_depth.subresourceRange.baseMipLevel = 0;
+    to_depth.subresourceRange.levelCount = 1;
+    to_depth.subresourceRange.baseArrayLayer = 0;
+    to_depth.subresourceRange.layerCount = 1;
+
+    std::array<vk::ImageMemoryBarrier2, 2> barriers = {to_colour, to_depth};
+    vk::DependencyInfo dep_to_render{};
+    dep_to_render.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
+    dep_to_render.pImageMemoryBarriers = barriers.data();
+    cmd.pipelineBarrier2(dep_to_render);
 
     // Clear colour — dark teal
     vk::RenderingAttachmentInfo colour_attachment{};
-    colour_attachment.imageView = view;
+    colour_attachment.imageView = colour_view;
     colour_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     colour_attachment.loadOp = vk::AttachmentLoadOp::eClear;
     colour_attachment.storeOp = vk::AttachmentStoreOp::eStore;
     colour_attachment.clearValue.color = vk::ClearColorValue{std::array{0.0f, 0.1f, 0.15f, 1.0f}};
+
+    // Clear depth to 1.0 (far plane)
+    vk::RenderingAttachmentInfo depth_attachment{};
+    depth_attachment.imageView = depth_view;
+    depth_attachment.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+    depth_attachment.loadOp = vk::AttachmentLoadOp::eClear;
+    depth_attachment.storeOp = vk::AttachmentStoreOp::eDontCare;
+    depth_attachment.clearValue.depthStencil = vk::ClearDepthStencilValue{1.0f, 0};
 
     vk::RenderingInfo rendering_info{};
     rendering_info.renderArea.offset = vk::Offset2D{0, 0};
@@ -104,6 +137,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     rendering_info.layerCount = 1;
     rendering_info.colorAttachmentCount = 1;
     rendering_info.pColorAttachments = &colour_attachment;
+    rendering_info.pDepthAttachment = &depth_attachment;
 
     cmd.beginRendering(rendering_info);
 
@@ -123,6 +157,12 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     scissor.offset = vk::Offset2D{0, 0};
     scissor.extent = extent;
     cmd.setScissor(0, {scissor});
+
+    // Bind descriptor set (camera UBO)
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
+
+    // Push model matrix
+    cmd.pushConstants<MathLib::Mat4>(*pipeline.layout(), vk::ShaderStageFlagBits::eVertex, 0, model_matrix);
 
     // Bind vertex buffer and draw
     vk::DeviceSize offset = 0;
@@ -161,7 +201,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline —
     command recording, submission, and presentation all happen here.
 */
-static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, VkBuffer vertex_buffer, vk::raii::CommandPool& command_pool,
+static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, VkBuffer vertex_buffer, vk::raii::CommandPool& command_pool,
     vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
     LoggingLib::Logger& logger)
 {
@@ -188,6 +228,40 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
     };
     rebuildPresentSemaphores();
+
+    // Depth buffer — same dimensions as swapchain, recreated on resize
+    AllocatedImage depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+
+    vk::ImageViewCreateInfo depth_view_info{};
+    depth_view_info.image = depth_image.image();
+    depth_view_info.viewType = vk::ImageViewType::e2D;
+    depth_view_info.format = DEPTH_FORMAT;
+    depth_view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
+    depth_view_info.subresourceRange.baseMipLevel = 0;
+    depth_view_info.subresourceRange.levelCount = 1;
+    depth_view_info.subresourceRange.baseArrayLayer = 0;
+    depth_view_info.subresourceRange.layerCount = 1;
+    vk::raii::ImageView depth_view(device.get(), depth_view_info);
+
+    //! Rebuilds the depth buffer to match the current swapchain extent.
+    auto rebuildDepthBuffer = [&]() {
+        depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+        depth_view_info.image = depth_image.image();
+        depth_view = vk::raii::ImageView(device.get(), depth_view_info);
+    };
+
+    // Per-frame camera UBOs (persistently mapped)
+    std::vector<AllocatedBuffer> ubo_buffers;
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        AllocatedBuffer ubo = allocator.createBuffer(sizeof(CameraUBO), static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eUniformBuffer),
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+        pipeline.bindUBO(i, ubo.buffer());
+        VmaAllocationInfo ubo_info = ubo.allocationInfo();
+        pipeline.setUBOMappedPtr(i, ubo_info.pMappedData);
+        ubo_buffers.push_back(std::move(ubo));
+    }
 
     uint32_t current_frame{0};
 
@@ -235,6 +309,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (resize_width > 0 && resize_height > 0) {
                 swapchain.recreate(resize_width, resize_height);
                 rebuildPresentSemaphores();
+                rebuildDepthBuffer();
             } else {
                 // Minimised — do not render
                 should_render = false;
@@ -265,6 +340,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
+                rebuildDepthBuffer();
             }
             continue;
         }
@@ -274,10 +350,23 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Only reset fence after we know we will submit work
         device.get().resetFences({*in_flight_fences[current_frame]});
 
+        // Update camera UBO — fixed camera looking at the triangle from the front
+        {
+            float aspect = static_cast<float>(swapchain.extent().width) / static_cast<float>(swapchain.extent().height);
+            CameraUBO ubo{};
+            ubo.view = MathLib::lookAt({0.0f, 0.0f, 2.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+            ubo.projection = MathLib::perspective(MathLib::PI / 4.0f, aspect, 0.1f, 100.0f);
+            pipeline.updateCameraUBO(current_frame, ubo);
+        }
+
+        // Model matrix — identity (triangle at origin)
+        MathLib::Mat4 model = MathLib::Mat4::identity();
+
         // Record command buffer
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
-        recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], swapchain.extent(), pipeline, vertex_buffer);
+        recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline, vertex_buffer,
+            pipeline.descriptorSet(current_frame), model);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -317,6 +406,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
+                rebuildDepthBuffer();
             }
             continue;
         }
@@ -325,6 +415,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
+                rebuildDepthBuffer();
             }
         }
 
@@ -371,8 +462,8 @@ int main()
         // Create swapchain
         Swapchain swapchain(device, *surface, config.width, config.height, logger);
 
-        // Graphics pipeline
-        Pipeline pipeline(device, swapchain.format().format, spirv, spirv, logger);
+        // Graphics pipeline (with depth testing, descriptors, push constants)
+        Pipeline pipeline(device, swapchain.format().format, DEPTH_FORMAT, spirv, spirv, MAX_FRAMES_IN_FLIGHT, logger);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
@@ -433,8 +524,8 @@ int main()
         std::condition_variable render_cv;
 
         // Spawn the render thread
-        std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), vertex_buffer.buffer(), std::ref(command_pool),
-            std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+        std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), vertex_buffer.buffer(),
+            std::ref(command_pool), std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {

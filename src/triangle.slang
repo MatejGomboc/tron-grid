@@ -12,29 +12,53 @@
     GNU General Public License for more details.
 */
 
-// Vertex input — matches C++ Vertex struct and VkVertexInputAttributeDescription layout.
+// Camera uniform buffer — matches C++ CameraUBO struct.
+struct CameraData {
+    float4x4 view;
+    float4x4 projection;
+};
+
+// Per-object model matrix via push constants.
+struct PushConstants {
+    float4x4 model;
+};
+
+[[vk::binding(0, 0)]]
+ConstantBuffer<CameraData> camera;
+
+[[vk::push_constant]]
+PushConstants push;
+
+// Vertex input — matches C++ Vertex struct (position + normal + UV).
 struct VSInput {
     float3 position : POSITION;
-    float4 colour : COLOR0;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
 };
 
 // Vertex-to-fragment interpolated data.
 struct VSOutput {
     float4 position : SV_Position;
-    float4 colour : COLOR0;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
 };
 
 [shader("vertex")]
 VSOutput vertMain(VSInput input)
 {
     VSOutput output;
-    output.position = float4(input.position, 1.0);
-    output.colour = input.colour;
+    float4 world_pos = mul(push.model, float4(input.position, 1.0));
+    output.position = mul(camera.projection, mul(camera.view, world_pos));
+    // Transform normal by model matrix (sufficient for uniform scale — no inverse transpose needed yet).
+    output.normal = mul((float3x3)push.model, input.normal);
+    output.uv = input.uv;
     return output;
 }
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target
 {
-    return input.colour;
+    // Visualise normals as colour until we have proper lighting.
+    float3 colour = input.normal * 0.5 + 0.5;
+    return float4(colour, 1.0);
 }

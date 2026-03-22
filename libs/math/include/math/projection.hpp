@@ -30,20 +30,20 @@ namespace MathLib
 
         \param fov_y Vertical field of view in radians.
         \param aspect Width / height aspect ratio.
-        \param near Near clipping plane distance (must be > 0).
-        \param far Far clipping plane distance (must be > near).
+        \param near_plane Near clipping plane distance (must be > 0).
+        \param far_plane Far clipping plane distance (must be > near_plane).
         \return Column-major 4x4 perspective projection matrix.
     */
-    [[nodiscard]] inline Mat4 perspective(float fov_y, float aspect, float near, float far)
+    [[nodiscard]] inline Mat4 perspective(float fov_y, float aspect, float near_plane, float far_plane)
     {
         float tan_half_fov = std::tan(fov_y * 0.5f);
 
         Mat4 result{};
         result.m[0][0] = 1.0f / (aspect * tan_half_fov);
         result.m[1][1] = -1.0f / tan_half_fov; // Vulkan Y-down: negate Y
-        result.m[2][2] = far / (near - far);
+        result.m[2][2] = far_plane / (near_plane - far_plane);
         result.m[2][3] = -1.0f;
-        result.m[3][2] = (near * far) / (near - far);
+        result.m[3][2] = (near_plane * far_plane) / (near_plane - far_plane);
         return result;
     }
 
