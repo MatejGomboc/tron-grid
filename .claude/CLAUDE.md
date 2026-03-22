@@ -88,11 +88,12 @@ tron_grid/
 │   ├── ARCHITECTURE.md   # Technical architecture
 │   └── VISION.md         # Project vision and roadmap
 ├── libs/                 # Internal static libraries (LEGO bricks)
-│   ├── testing/     # Test fixture (TEST_CHECK, TEST_CHECK_EQUAL, TEST_CHECK_THROWS)
+│   ├── testing/          # Testing library (TEST_CHECK, TEST_CHECK_EQUAL, TEST_CHECK_THROWS)
 │   ├── signals/          # Thread-safe SignalsLib::Signal<T> message queues
 │   ├── logging/          # Background LoggingLib::Logger via Signal<LogMessage>
+│   ├── math/             # Header-only MathLib (Vec2/3/4, Mat4, Quat, projection)
 │   ├── window/           # Platform windowing — WindowLib (Win32 / XCB)
-│   └── .../              # math, physics, audio, etc. (future)
+│   └── .../              # physics, audio, etc. (future)
 ├── src/                  # C++ source files (main application)
 │   ├── main.cpp          # Entry point, event loop, render thread
 │   ├── instance.hpp/cpp  # Vulkan instance + debug messenger
@@ -157,7 +158,7 @@ cmake --build build/linux-x11-gcc --config Debug
 | Internal libraries | `libs/` static libs | Self-contained LEGO bricks, plain namespaces, future submodule-ready |
 | Logging | `LoggingLib::Logger` | Background thread, `Signal<LogMessage>`, severity routing |
 | Threading model | Event-driven, separate render thread | Main thread sleeps on events, render thread sleeps on `Signal<RenderEvent>` |
-| Test fixture | Own `TestingLib` | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
+| Testing | Own `TestingLib` | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
 
 ## Current Status
 
