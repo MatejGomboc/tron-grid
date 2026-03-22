@@ -60,7 +60,7 @@ CMake `target_link_libraries`. Each library has its own include directory, sourc
 
 ```text
 libs/
-├── testing/              # test fixture (foundation brick) *(implemented)*
+├── testing/                   # testing library (foundation brick) *(implemented)*
 │   ├── CMakeLists.txt         # add_library(testing STATIC ...)
 │   ├── include/testing/testing.hpp
 │   ├── src/testing.cpp
@@ -72,12 +72,13 @@ libs/
 │   ├── include/log/logger.hpp
 │   ├── src/logger.cpp
 │   └── tests/
+├── math/                      # header-only MathLib (Vec, Mat4, Quat, projection) *(implemented)*
+│   ├── include/math/vector.hpp, matrix.hpp, quaternion.hpp, projection.hpp
+│   └── tests/
 ├── window/                    # platform windowing — WindowLib (Win32 / XCB) *(implemented)*
 │   ├── include/window/window.hpp
 │   ├── src/win32_window.cpp, xcb_window.cpp
 │   └── tests/
-├── math/                      # (future)
-│   └── ...
 └── ...
 ```
 
@@ -88,9 +89,9 @@ libs/
   repositories as git submodules later
 - **Each library is self-contained** — own `CMakeLists.txt`, own `include/<lib>/` directory,
   own `tests/` directory with unit tests linking the `testing` library
-- **Plain CMake target names** — `testing`, `signals`, `logging`, `window`
-- **Static libraries only** — linked into the final TronGrid executable
-- **Test fixture is itself a library** — `testing` is the foundation brick; all other
+- **Plain CMake target names** — `testing`, `signals`, `logging`, `math`, `window`
+- **Static libraries only** (except `math` which is header-only INTERFACE) — linked into the final TronGrid executable
+- **Testing library is itself a library** — `testing` is the foundation brick; all other
   libraries' tests link against it. Macros: `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS`
 
 ### Coupling Model
