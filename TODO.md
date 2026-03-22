@@ -13,6 +13,7 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 - **Etape 5** — Math Library. Completed 2026-03-22. PR #34.
 - **Etape 6** — Depth Buffer, 3D Vertex Format, Descriptors. Completed 2026-03-22. PR #37.
 - **Etape 7** — Camera, Input, Cube Scene (Phase 1 Finale). Completed 2026-03-22. PR #39.
+- **Etape 8** — Object SSBO and Indirect Draw. Completed 2026-03-22. PR #43.
 
 ---
 
@@ -221,6 +222,14 @@ Merge all mesh data into single vertex/index buffers and switch to bindless desc
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-03-22 — Etape 8: GPU-driven rendering
+
+Replaced CPU-driven per-object push constants with GPU-driven SSBO + indirect draw.
+1000 cubes (10x10x10) rendered via single `vkCmdDrawIndexedIndirect`. Object transforms
+in `StructuredBuffer<ObjectData>`, shader indexes via `SV_InstanceID`. Device features
+enabled: `multiDrawIndirect`, `shaderDrawParameters`, descriptor indexing. Push constants
+removed from pipeline layout. Vision concept art added to README.
 
 ### 2026-03-22 — Phase 1 complete
 
