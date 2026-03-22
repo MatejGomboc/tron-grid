@@ -1,5 +1,10 @@
 # TronGrid
 
+<p align="center">
+  <img src="images/landscape_dark.png" width="49%" alt="TronGrid vision — dark variant" />
+  <img src="images/landscape_light.png" width="49%" alt="TronGrid vision — light variant" />
+</p>
+
 A single-player Vulkan game engine and renderer for a digital world where AI creatures perceive and
 navigate through rendered images. One AI brain (DLL/SO plugin) can be loaded per instance.
 
@@ -9,10 +14,9 @@ sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-**Phase 1 complete** — fly through a 5x5x5 cube grid with WASD + mouse look. Free-flight camera
-(quaternion, no gimbal lock), depth buffer, MathLib (Vec, Mat4, Quat, 57 unit tests), UBO
-descriptors, push constants, event-driven rendering with separate render thread.
-All 5 CI presets pass.
+**Phase 2 in progress** — GPU-driven rendering with 1000 cubes in a single indirect draw call.
+SSBO for per-object transforms, free-flight camera (quaternion, WASD + mouse look), depth buffer,
+MathLib (57 unit tests), event-driven multi-threaded renderer. All 5 CI presets pass.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 
