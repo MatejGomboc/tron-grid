@@ -15,7 +15,6 @@
 #pragma once
 
 #include <cmath>
-#include <cstdint>
 
 namespace MathLib
 {

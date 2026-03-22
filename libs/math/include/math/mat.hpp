@@ -16,6 +16,7 @@
 
 #include "math/vec.hpp"
 #include <array>
+#include <cmath>
 
 namespace MathLib
 {
