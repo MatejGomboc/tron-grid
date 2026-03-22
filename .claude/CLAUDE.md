@@ -104,6 +104,7 @@ tron_grid/
 │   ├── allocator.hpp/cpp # VMA RAII wrapper (Allocator + AllocatedBuffer + AllocatedImage)
 │   ├── camera.hpp        # Free-flight camera (quaternion, WASD + mouse look)
 │   ├── triangle.slang    # Slang vertex + fragment shader (MVP transform, normal visualisation)
+│   ├── cull.slang        # Slang compute shader (frustum culling, compacted indices)
 │   ├── volk.cpp          # Volk dynamic loader translation unit
 │   ├── vma.cpp           # VMA implementation translation unit
 │   └── CMakeLists.txt    # Target definition, shader compilation
@@ -163,7 +164,7 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-**Phase 2 — GPU-Driven Resources** is in progress (1000 cubes via SSBO + indirect draw, compute culling next).
+**Phase 2 — GPU-Driven Resources** is in progress (1000 cubes via SSBO + indirect draw + compute frustum culling, merged buffers + bindless next).
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 See `TODO.md` for the development journal.
 

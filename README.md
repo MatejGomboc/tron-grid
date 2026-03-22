@@ -14,9 +14,10 @@ sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-**Phase 2 in progress** — GPU-driven rendering with 1000 cubes in a single indirect draw call.
-SSBO for per-object transforms, free-flight camera (quaternion, WASD + mouse look), depth buffer,
-MathLib (57 unit tests), event-driven multi-threaded renderer. All 5 CI presets pass.
+**Phase 2 in progress** — GPU-driven rendering with 1000 cubes, compute frustum culling,
+single indirect draw call. SSBO for per-object transforms, compute shader culls invisible
+objects before draw, free-flight camera (quaternion, WASD + mouse look), MathLib (63 unit
+tests), event-driven multi-threaded renderer. All 5 CI presets pass.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 
