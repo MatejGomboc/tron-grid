@@ -10,6 +10,8 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 - **Etape 2** — Vulkan Instance, Validation, and Device. Completed 2026-03-13. PR #20.
 - **Etape 3** — Swapchain, Command Buffers, and Clear Screen. Completed 2026-03-15. PRs #22, #23, #24.
 - **Etape 4** — Triangle on Screen (Phase 0 Finale). Completed 2026-03-19. PR #26.
+- **Etape 5** — Math Library. Completed 2026-03-22. PR #34.
+- **Etape 6** — Depth Buffer, 3D Vertex Format, Descriptors. Completed 2026-03-22. PR #37.
 
 ---
 
@@ -194,6 +196,15 @@ projection and depth testing. **Phase 1 complete — fly through cubes.**
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-03-22 — Phase 1 progress: math, depth, descriptors
+
+MathLib header-only library (Vec2/3/4, Mat4, Quat, projection, 57 unit tests).
+Depth buffer via VMA, 3D vertex format (position + normal + UV — meshlet/RT-ready),
+camera UBO with per-frame descriptor sets, push constants for per-object model matrix.
+Triangle now renders with perspective projection and depth testing.
+Event-driven rendering with separate render thread. `MathLib::PI` constant.
+`TestFixtureLib` → `TestingLib` rename.
 
 ### 2026-03-19 — Phase 0 complete
 
