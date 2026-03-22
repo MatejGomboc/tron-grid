@@ -88,7 +88,7 @@ tron_grid/
 │   ├── ARCHITECTURE.md   # Technical architecture
 │   └── VISION.md         # Project vision and roadmap
 ├── libs/                 # Internal static libraries (LEGO bricks)
-│   ├── test_fixture/     # Test fixture (TEST_CHECK, TEST_CHECK_EQUAL, TEST_CHECK_THROWS)
+│   ├── testing/     # Test fixture (TEST_CHECK, TEST_CHECK_EQUAL, TEST_CHECK_THROWS)
 │   ├── signals/          # Thread-safe SignalsLib::Signal<T> message queues
 │   ├── logging/          # Background LoggingLib::Logger via Signal<LogMessage>
 │   ├── window/           # Platform windowing — WindowLib (Win32 / XCB)
@@ -157,7 +157,7 @@ cmake --build build/linux-x11-gcc --config Debug
 | Internal libraries | `libs/` static libs | Self-contained LEGO bricks, plain namespaces, future submodule-ready |
 | Logging | `LoggingLib::Logger` | Background thread, `Signal<LogMessage>`, severity routing |
 | Threading model | Event-driven, separate render thread | Main thread sleeps on events, render thread sleeps on `Signal<RenderEvent>` |
-| Test fixture | Own `TestFixtureLib` | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
+| Test fixture | Own `TestingLib` | `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS` — no third-party |
 
 ## Current Status
 

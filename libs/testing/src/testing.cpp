@@ -12,11 +12,11 @@
     GNU General Public License for more details.
 */
 
-#include "test_fixture/test_fixture.hpp"
+#include "testing/testing.hpp"
 #include <iostream>
 #include <stdexcept>
 
-namespace TestFixtureLib
+namespace TestingLib
 {
 
     //! Internal exception thrown when a test check fails.
@@ -90,4 +90,4 @@ namespace TestFixtureLib
         throw CheckFailure(msg);
     }
 
-} // namespace TestFixtureLib
+} // namespace TestingLib

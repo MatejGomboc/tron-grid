@@ -12,7 +12,7 @@
     GNU General Public License for more details.
 */
 
-#include "test_fixture/test_fixture.hpp"
+#include "testing/testing.hpp"
 #include <math/matrix.hpp>
 #include <math/projection.hpp>
 #include <math/quaternion.hpp>
@@ -599,5 +599,5 @@ TEST_CASE(view_from_quaternion_rotated)
 
 int main()
 {
-    return static_cast<int>(TestFixtureLib::runAll());
+    return static_cast<int>(TestingLib::runAll());
 }
