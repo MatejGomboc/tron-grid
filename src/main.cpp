@@ -13,18 +13,20 @@
 */
 
 #include "allocator.hpp"
+#include "camera.hpp"
 #include "device.hpp"
 #include "instance.hpp"
 #include "pipeline.hpp"
 #include "surface.hpp"
 #include "swapchain.hpp"
 #include <log/logger.hpp>
-#include <signal/signal.hpp>
-#include <window/window.hpp>
 #include <math/matrix.hpp>
 #include <math/projection.hpp>
+#include <math/vector.hpp>
+#include <signal/signal.hpp>
+#include <window/window.hpp>
 #include <array>
-#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -34,6 +36,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 //! Event sent from the main (event) thread to the render thread via Signal<T>.
@@ -42,12 +45,19 @@ struct RenderEvent {
     enum class Type {
         Render, //!< Window needs redrawing (expose, initial frame).
         Resize, //!< Window was resized — recreate swapchain before rendering.
+        KeyDown, //!< Key was pressed.
+        KeyUp, //!< Key was released.
+        MouseMove, //!< Mouse cursor moved.
+        MouseButton, //!< Mouse button pressed or released.
         Stop //!< Render thread should shut down.
     };
 
     Type type{Type::Render}; //!< Event type.
-    uint32_t width{0}; //!< New width (only meaningful for Resize events).
-    uint32_t height{0}; //!< New height (only meaningful for Resize events).
+    uint32_t width{0}; //!< Resize width / keycode / button index.
+    uint32_t height{0}; //!< Resize height.
+    int32_t dx{0}; //!< Mouse delta X.
+    int32_t dy{0}; //!< Mouse delta Y.
+    bool pressed{false}; //!< True if button was pressed (MouseButton only).
 };
 
 //! Maximum number of frames that can be in-flight simultaneously.
@@ -56,20 +66,124 @@ constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 //! Depth buffer format used throughout.
 constexpr vk::Format DEPTH_FORMAT = vk::Format::eD32Sfloat;
 
-//! Hardcoded triangle vertex data — position + normal + UV.
-constexpr std::array<Vertex, 3> TRIANGLE_VERTICES = {{
-    {{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
-    {{0.0f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 1.0f}},
+//! Cube grid dimensions.
+constexpr int32_t CUBE_GRID_SIZE = 5;
+
+//! Spacing between cubes in the grid.
+constexpr float CUBE_SPACING = 3.0f;
+
+//! Camera movement speed (metres per second).
+constexpr float CAMERA_SPEED = 5.0f;
+
+//! Camera mouse sensitivity (radians per pixel).
+constexpr float MOUSE_SENSITIVITY = 0.003f;
+
+//! Platform-specific key codes for WASD, Space, Shift, and right mouse button.
+#ifdef _WIN32
+constexpr uint32_t KEY_W = 0x57;
+constexpr uint32_t KEY_A = 0x41;
+constexpr uint32_t KEY_S = 0x53;
+constexpr uint32_t KEY_D = 0x44;
+constexpr uint32_t KEY_SPACE = 0x20;
+constexpr uint32_t KEY_SHIFT = 0x10;
+constexpr uint32_t KEY_ESC = 27;
+constexpr uint32_t MOUSE_RIGHT = 1;
+#else
+constexpr uint32_t KEY_W = 25;
+constexpr uint32_t KEY_A = 38;
+constexpr uint32_t KEY_S = 39;
+constexpr uint32_t KEY_D = 40;
+constexpr uint32_t KEY_SPACE = 65;
+constexpr uint32_t KEY_SHIFT = 50;
+constexpr uint32_t KEY_ESC = 9;
+constexpr uint32_t MOUSE_RIGHT = 2;
+#endif
+
+//! Procedural cube — 24 vertices (4 per face, unique normals for flat shading).
+constexpr std::array<Vertex, 24> CUBE_VERTICES = {{
+    // Front face (Z+)
+    {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    // Back face (Z-)
+    {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
+    {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
+    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
+    // Top face (Y+)
+    {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+    // Bottom face (Y-)
+    {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
+    {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
+    // Right face (X+)
+    {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+    {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+    // Left face (X-)
+    {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+    {{-0.5f, -0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{-0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
 }};
 
+//! Cube index data — 36 indices (6 per face, 2 triangles each, counter-clockwise).
+constexpr std::array<uint32_t, 36> CUBE_INDICES = {{
+    0,
+    1,
+    2,
+    2,
+    3,
+    0, // Front
+    4,
+    5,
+    6,
+    6,
+    7,
+    4, // Back
+    8,
+    9,
+    10,
+    10,
+    11,
+    8, // Top
+    12,
+    13,
+    14,
+    14,
+    15,
+    12, // Bottom
+    16,
+    17,
+    18,
+    18,
+    19,
+    16, // Right
+    20,
+    21,
+    22,
+    22,
+    23,
+    20, // Left
+}};
+
+//! Number of indices per cube.
+constexpr uint32_t CUBE_INDEX_COUNT = static_cast<uint32_t>(CUBE_INDICES.size());
+
 /*!
-    Records a command buffer that clears to dark teal, draws the triangle with
+    Records a command buffer that clears to dark teal, draws cubes with
     depth testing, binds descriptors and push constants, and transitions the
     swapchain image for presentation.
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView colour_view, vk::ImageView depth_view, vk::Image depth_image,
-    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, vk::DescriptorSet descriptor_set, const MathLib::Mat4& model_matrix)
+    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, VkBuffer index_buffer, vk::DescriptorSet descriptor_set,
+    const std::vector<MathLib::Mat4>& model_matrices)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -161,13 +275,16 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     // Bind descriptor set (camera UBO)
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
 
-    // Push model matrix
-    cmd.pushConstants<MathLib::Mat4>(*pipeline.layout(), vk::ShaderStageFlagBits::eVertex, 0, model_matrix);
-
-    // Bind vertex buffer and draw
+    // Bind vertex and index buffers
     vk::DeviceSize offset = 0;
     cmd.bindVertexBuffers(0, {vertex_buffer}, {offset});
-    cmd.draw(3, 1, 0, 0);
+    cmd.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
+
+    // Draw each cube with its own model matrix via push constants
+    for (const MathLib::Mat4& model : model_matrices) {
+        cmd.pushConstants<MathLib::Mat4>(*pipeline.layout(), vk::ShaderStageFlagBits::eVertex, 0, model);
+        cmd.drawIndexed(CUBE_INDEX_COUNT, 1, 0, 0, 0);
+    }
 
     cmd.endRendering();
 
@@ -198,12 +315,12 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
 
 /*!
     Render thread entry point. Blocks on a condition variable until the main thread
-    sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline —
-    command recording, submission, and presentation all happen here.
+    sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline,
+    camera state, input processing, and delta time.
 */
-static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, VkBuffer vertex_buffer, vk::raii::CommandPool& command_pool,
-    vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
-    LoggingLib::Logger& logger)
+static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, VkBuffer vertex_buffer, VkBuffer index_buffer,
+    vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex,
+    std::condition_variable& render_cv, LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -263,18 +380,45 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         ubo_buffers.push_back(std::move(ubo));
     }
 
+    // Camera — start behind the cube grid, looking toward origin
+    float grid_centre = (CUBE_GRID_SIZE - 1) * CUBE_SPACING * 0.5f;
+    Camera camera({grid_centre, grid_centre + 2.0f, grid_centre + 15.0f});
+
+    // Input state
+    std::unordered_set<uint32_t> keys_held;
+    bool mouse_captured{false};
+
+    // Precompute cube model matrices
+    std::vector<MathLib::Mat4> cube_models;
+    for (int32_t x = 0; x < CUBE_GRID_SIZE; ++x) {
+        for (int32_t y = 0; y < CUBE_GRID_SIZE; ++y) {
+            for (int32_t z = 0; z < CUBE_GRID_SIZE; ++z) {
+                MathLib::Vec3 pos{
+                    static_cast<float>(x) * CUBE_SPACING,
+                    static_cast<float>(y) * CUBE_SPACING,
+                    static_cast<float>(z) * CUBE_SPACING,
+                };
+                cube_models.push_back(MathLib::Mat4::translate(pos));
+            }
+        }
+    }
+
+    // Delta time
+    std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
+
     uint32_t current_frame{0};
 
     while (true) {
         // Block until the main thread sends an event
         {
             std::unique_lock<std::mutex> lock(render_mutex);
-            render_cv.wait(lock, [&render_signal]() {
-                return !render_signal.empty();
+            render_cv.wait(lock, [&render_signal, &keys_held]() {
+                // Wake if there are events OR if keys are held (continuous movement)
+                return !render_signal.empty() || !keys_held.empty();
             });
         }
 
-        // Drain all pending events — coalesce multiple resizes into the last one
+        // Drain all pending events
         bool should_render{false};
         bool should_stop{false};
         bool needs_resize{false};
@@ -293,6 +437,26 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 resize_width = ev.width;
                 resize_height = ev.height;
                 break;
+            case RenderEvent::Type::KeyDown:
+                keys_held.insert(ev.width); // width field carries keycode
+                should_render = true;
+                break;
+            case RenderEvent::Type::KeyUp:
+                keys_held.erase(ev.width);
+                should_render = true;
+                break;
+            case RenderEvent::Type::MouseMove:
+                if (mouse_captured) {
+                    camera.rotate(static_cast<float>(-ev.dx) * MOUSE_SENSITIVITY, static_cast<float>(ev.dy) * MOUSE_SENSITIVITY);
+                    should_render = true;
+                }
+                break;
+            case RenderEvent::Type::MouseButton:
+                if (ev.width == MOUSE_RIGHT && ev.pressed) {
+                    mouse_captured = !mouse_captured;
+                    should_render = true;
+                }
+                break;
             case RenderEvent::Type::Stop:
                 should_stop = true;
                 break;
@@ -304,6 +468,40 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             return;
         }
 
+        // Delta time
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        float delta_time = std::chrono::duration<float>(now - last_time).count();
+        last_time = now;
+
+        // Clamp delta time to avoid huge jumps (e.g., after breakpoint or resize stall)
+        if (delta_time > 0.1f) {
+            delta_time = 0.1f;
+        }
+
+        // Process held keys — camera movement
+        if (!keys_held.empty()) {
+            float move_delta = CAMERA_SPEED * delta_time;
+            if (keys_held.count(KEY_W)) {
+                camera.moveForward(move_delta);
+            }
+            if (keys_held.count(KEY_S)) {
+                camera.moveForward(-move_delta);
+            }
+            if (keys_held.count(KEY_A)) {
+                camera.moveRight(-move_delta);
+            }
+            if (keys_held.count(KEY_D)) {
+                camera.moveRight(move_delta);
+            }
+            if (keys_held.count(KEY_SPACE)) {
+                camera.moveUp(move_delta);
+            }
+            if (keys_held.count(KEY_SHIFT)) {
+                camera.moveUp(-move_delta);
+            }
+            should_render = true;
+        }
+
         // Handle swapchain recreation — skip if minimised (0x0)
         if (needs_resize) {
             if (resize_width > 0 && resize_height > 0) {
@@ -311,13 +509,16 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
             } else {
-                // Minimised — do not render
                 should_render = false;
             }
         }
 
         // Skip rendering while minimised or if no render was requested
         if (!should_render || swapchain.extent().width == 0 || swapchain.extent().height == 0) {
+            // If keys are held, request another frame via self-notification
+            if (!keys_held.empty()) {
+                render_cv.notify_one();
+            }
             continue;
         }
 
@@ -350,23 +551,20 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Only reset fence after we know we will submit work
         device.get().resetFences({*in_flight_fences[current_frame]});
 
-        // Update camera UBO — fixed camera looking at the triangle from the front
+        // Update camera UBO
         {
             float aspect = static_cast<float>(swapchain.extent().width) / static_cast<float>(swapchain.extent().height);
             CameraUBO ubo{};
-            ubo.view = MathLib::lookAt({0.0f, 0.0f, 2.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
-            ubo.projection = MathLib::perspective(MathLib::PI / 4.0f, aspect, 0.1f, 100.0f);
+            ubo.view = camera.viewMatrix();
+            ubo.projection = camera.projectionMatrix(aspect);
             pipeline.updateCameraUBO(current_frame, ubo);
         }
-
-        // Model matrix — identity (triangle at origin)
-        MathLib::Mat4 model = MathLib::Mat4::identity();
 
         // Record command buffer
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
         recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline, vertex_buffer,
-            pipeline.descriptorSet(current_frame), model);
+            index_buffer, pipeline.descriptorSet(current_frame), cube_models);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -420,6 +618,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+        // If keys are still held, keep rendering (continuous movement)
+        if (!keys_held.empty()) {
+            render_cv.notify_one();
+        }
     }
 }
 
@@ -477,20 +680,33 @@ int main()
         alloc_info.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
         vk::raii::CommandBuffers command_buffers(device.get(), alloc_info);
 
-        // Triangle vertex buffer — staging upload to GPU-local memory
-        constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = sizeof(TRIANGLE_VERTICES);
+        // Cube vertex buffer — staging upload to GPU-local memory
+        constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = sizeof(CUBE_VERTICES);
 
         AllocatedBuffer vertex_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
-        // Staging buffer scoped so it is freed immediately after the copy completes
+        // Cube index buffer
+        constexpr vk::DeviceSize INDEX_BUFFER_SIZE = sizeof(CUBE_INDICES);
+
+        AllocatedBuffer index_buffer = allocator.createBuffer(INDEX_BUFFER_SIZE,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+
+        // Staging upload for both vertex and index buffers
         {
-            AllocatedBuffer staging_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+            // Vertex staging
+            AllocatedBuffer vertex_staging = allocator.createBuffer(VERTEX_BUFFER_SIZE, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+            VmaAllocationInfo vertex_staging_info = vertex_staging.allocationInfo();
+            std::memcpy(vertex_staging_info.pMappedData, CUBE_VERTICES.data(), VERTEX_BUFFER_SIZE);
 
-            VmaAllocationInfo staging_info = staging_buffer.allocationInfo();
-            std::memcpy(staging_info.pMappedData, TRIANGLE_VERTICES.data(), VERTEX_BUFFER_SIZE);
+            // Index staging
+            AllocatedBuffer index_staging = allocator.createBuffer(INDEX_BUFFER_SIZE, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+            VmaAllocationInfo index_staging_info = index_staging.allocationInfo();
+            std::memcpy(index_staging_info.pMappedData, CUBE_INDICES.data(), INDEX_BUFFER_SIZE);
 
+            // One-shot copy: staging → GPU
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
             copy_alloc.level = vk::CommandBufferLevel::ePrimary;
@@ -502,9 +718,13 @@ int main()
             copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
             copy_cmd.begin(copy_begin);
 
-            vk::BufferCopy region{};
-            region.size = VERTEX_BUFFER_SIZE;
-            copy_cmd.copyBuffer(staging_buffer.buffer(), vertex_buffer.buffer(), {region});
+            vk::BufferCopy vertex_region{};
+            vertex_region.size = VERTEX_BUFFER_SIZE;
+            copy_cmd.copyBuffer(vertex_staging.buffer(), vertex_buffer.buffer(), {vertex_region});
+
+            vk::BufferCopy index_region{};
+            index_region.size = INDEX_BUFFER_SIZE;
+            copy_cmd.copyBuffer(index_staging.buffer(), index_buffer.buffer(), {index_region});
 
             copy_cmd.end();
 
@@ -516,7 +736,7 @@ int main()
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Triangle vertex buffer uploaded to GPU.");
+        logger.logInfo("Cube mesh uploaded to GPU (" + std::to_string(CUBE_VERTICES.size()) + " vertices, " + std::to_string(CUBE_INDICES.size()) + " indices).");
 
         // Render event signal — main thread emits, render thread consumes
         SignalsLib::Signal<RenderEvent> render_signal;
@@ -525,7 +745,8 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), vertex_buffer.buffer(),
-            std::ref(command_pool), std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+            index_buffer.buffer(), std::ref(command_pool), std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv),
+            std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {
@@ -534,46 +755,71 @@ int main()
         };
 
         // Immediate event callback — fires from wndProc/handleEvent, including during
-        // Win32 modal resize loops when the main event loop is blocked. This ensures the
-        // render thread receives resize/expose events without delay.
+        // Win32 modal resize loops when the main event loop is blocked. Forwards all
+        // visual and input events to the render thread.
         struct CallbackContext {
             SignalsLib::Signal<RenderEvent>* signal;
             std::condition_variable* cv;
+            WindowLib::Window* window;
         };
 
-        CallbackContext cb_ctx{&render_signal, &render_cv};
+        CallbackContext cb_ctx{&render_signal, &render_cv, window.get()};
 
         window->setEventCallback(
             [](const WindowLib::WindowEvent& ev, void* user_data) {
                 CallbackContext* ctx = static_cast<CallbackContext*>(user_data);
+                RenderEvent re{};
                 switch (ev.type) {
                 case WindowLib::WindowEvent::Type::Resize:
-                    ctx->signal->emit({RenderEvent::Type::Resize, ev.resize.width, ev.resize.height});
-                    ctx->cv->notify_one();
+                    re.type = RenderEvent::Type::Resize;
+                    re.width = ev.resize.width;
+                    re.height = ev.resize.height;
                     break;
                 case WindowLib::WindowEvent::Type::Expose:
-                    ctx->signal->emit({RenderEvent::Type::Render, 0, 0});
-                    ctx->cv->notify_one();
+                    re.type = RenderEvent::Type::Render;
+                    break;
+                case WindowLib::WindowEvent::Type::KeyDown:
+                    re.type = RenderEvent::Type::KeyDown;
+                    re.width = ev.key.keycode;
+                    break;
+                case WindowLib::WindowEvent::Type::KeyUp:
+                    re.type = RenderEvent::Type::KeyUp;
+                    re.width = ev.key.keycode;
+                    break;
+                case WindowLib::WindowEvent::Type::MouseMove:
+                    re.type = RenderEvent::Type::MouseMove;
+                    re.dx = ev.mouse_move.dx;
+                    re.dy = ev.mouse_move.dy;
+                    break;
+                case WindowLib::WindowEvent::Type::MouseButtonDown:
+                    re.type = RenderEvent::Type::MouseButton;
+                    re.width = ev.mouse_button.button;
+                    re.pressed = true;
+                    // Toggle cursor capture on right-click (must be on main thread)
+                    if (ev.mouse_button.button == MOUSE_RIGHT) {
+                        ctx->window->setCursorCaptured(!ctx->window->cursorCaptured());
+                    }
+                    break;
+                case WindowLib::WindowEvent::Type::MouseButtonUp:
+                    re.type = RenderEvent::Type::MouseButton;
+                    re.width = ev.mouse_button.button;
+                    re.pressed = false;
                     break;
                 default:
-                    break;
+                    return; // Don't emit for unhandled events
                 }
+                ctx->signal->emit(re);
+                ctx->cv->notify_one();
             },
             &cb_ctx);
 
         // Request initial frame render
-        emitRenderEvent({RenderEvent::Type::Render, 0, 0});
+        emitRenderEvent({RenderEvent::Type::Render, 0, 0, 0, 0, false});
 
-        logger.logInfo("Press ESC to close.");
+        logger.logInfo("Press ESC to close. Right-click to toggle mouse look. WASD + Space/Shift to fly.");
 
-        // Main loop — handles non-rendering events (Close, KeyDown).
-        // Resize and Expose are forwarded to the render thread via the immediate callback above.
-#ifdef _WIN32
-        constexpr uint32_t ESC_KEYCODE = 27;
-#else
-        constexpr uint32_t ESC_KEYCODE = 9;
-#endif
-
+        // Main loop — handles Close and ESC. All other events are forwarded
+        // to the render thread via the immediate callback above.
         while (!window->shouldClose()) {
             window->waitEvents();
 
@@ -585,8 +831,12 @@ int main()
                     break;
 
                 case WindowLib::WindowEvent::Type::KeyDown:
-                    if (ev.key.keycode == ESC_KEYCODE) {
-                        window->requestClose();
+                    if (ev.key.keycode == KEY_ESC) {
+                        if (window->cursorCaptured()) {
+                            window->setCursorCaptured(false);
+                        } else {
+                            window->requestClose();
+                        }
                     }
                     break;
 
@@ -597,7 +847,7 @@ int main()
         }
 
         // Signal render thread to stop and wait for it
-        emitRenderEvent({RenderEvent::Type::Stop, 0, 0});
+        emitRenderEvent({RenderEvent::Type::Stop, 0, 0, 0, 0, false});
         render_worker.join();
 
         // Clear the event callback before cb_ctx goes out of scope — prevents the

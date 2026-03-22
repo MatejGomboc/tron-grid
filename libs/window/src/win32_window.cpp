@@ -118,6 +118,29 @@ namespace WindowLib
         pumpEvents();
     }
 
+    void Win32Window::setCursorCaptured(bool captured)
+    {
+        m_cursor_captured = captured;
+        if (captured) {
+            SetCapture(m_hwnd);
+            ShowCursor(FALSE);
+            // Clip cursor to client area
+            RECT rect{};
+            GetClientRect(m_hwnd, &rect);
+            MapWindowPoints(m_hwnd, nullptr, reinterpret_cast<POINT*>(&rect), 2);
+            ClipCursor(&rect);
+            // Centre cursor so first delta is zero
+            POINT centre{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+            SetCursorPos(centre.x, centre.y);
+            m_last_mouse_x = static_cast<int32_t>((rect.right - rect.left) / 2);
+            m_last_mouse_y = static_cast<int32_t>((rect.bottom - rect.top) / 2);
+        } else {
+            ClipCursor(nullptr);
+            ShowCursor(TRUE);
+            ReleaseCapture();
+        }
+    }
+
     void* Win32Window::nativeHandle() const
     {
         return static_cast<void*>(m_hwnd);
@@ -208,15 +231,31 @@ namespace WindowLib
             int32_t x = static_cast<int16_t>(LOWORD(lparam));
             int32_t y = static_cast<int16_t>(HIWORD(lparam));
 
+            int32_t dx = m_mouse_tracked ? (x - m_last_mouse_x) : 0;
+            int32_t dy = m_mouse_tracked ? (y - m_last_mouse_y) : 0;
+
+            if (m_cursor_captured && (dx != 0 || dy != 0)) {
+                // Recentre cursor to prevent hitting screen edges
+                RECT rect{};
+                GetClientRect(hwnd, &rect);
+                POINT centre{(rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2};
+                m_last_mouse_x = centre.x;
+                m_last_mouse_y = centre.y;
+                POINT screen_centre = centre;
+                ClientToScreen(hwnd, &screen_centre);
+                SetCursorPos(screen_centre.x, screen_centre.y);
+            } else {
+                m_last_mouse_x = x;
+                m_last_mouse_y = y;
+            }
+
             WindowEvent ev(WindowEvent::Type::MouseMove);
             ev.mouse_move.x = x;
             ev.mouse_move.y = y;
-            ev.mouse_move.dx = m_mouse_tracked ? (x - m_last_mouse_x) : 0;
-            ev.mouse_move.dy = m_mouse_tracked ? (y - m_last_mouse_y) : 0;
+            ev.mouse_move.dx = dx;
+            ev.mouse_move.dy = dy;
             pushEvent(ev);
 
-            m_last_mouse_x = x;
-            m_last_mouse_y = y;
             m_mouse_tracked = true;
             return 0;
         }

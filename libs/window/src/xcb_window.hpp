@@ -37,6 +37,9 @@ namespace WindowLib
         //! Blocks until at least one XCB event arrives, then drains all pending events.
         void waitEvents() override;
 
+        //! Captures or releases the mouse cursor.
+        void setCursorCaptured(bool captured) override;
+
         //! Returns the xcb_window_t as a void pointer.
         [[nodiscard]] void* nativeHandle() const override;
 

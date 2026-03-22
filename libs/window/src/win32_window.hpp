@@ -43,6 +43,9 @@ namespace WindowLib
         //! Blocks until at least one Win32 message arrives, then drains all pending messages.
         void waitEvents() override;
 
+        //! Captures or releases the mouse cursor.
+        void setCursorCaptured(bool captured) override;
+
         //! Returns the HWND as a void pointer.
         [[nodiscard]] void* nativeHandle() const override;
 
