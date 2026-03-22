@@ -128,4 +128,70 @@ namespace MathLib
         return lookAt(eye, target, {0.0f, 1.0f, 0.0f});
     }
 
+    //! A plane in the form ax + by + cz + d = 0, stored as Vec4(a, b, c, d).
+    using Plane = Vec4;
+
+    //! Six frustum planes: left, right, bottom, top, near_plane, far_plane.
+    struct Frustum {
+        Plane planes[6]; //!< Frustum planes (normals point inward).
+    };
+
+    /*!
+        Extracts 6 frustum planes from a view-projection matrix (Gribb-Hartmann method).
+
+        The planes are normalised so that distance tests return true world-space distances.
+        Normals point inward — a point is inside the frustum if it is on the positive side
+        of all 6 planes.
+
+        \param vp The combined view × projection matrix.
+        \return The 6 frustum planes.
+    */
+    [[nodiscard]] inline Frustum extractFrustum(const Mat4& vp)
+    {
+        Frustum f{};
+
+        // Left:   row3 + row0
+        f.planes[0] = {vp.m[0][3] + vp.m[0][0], vp.m[1][3] + vp.m[1][0], vp.m[2][3] + vp.m[2][0], vp.m[3][3] + vp.m[3][0]};
+        // Right:  row3 - row0
+        f.planes[1] = {vp.m[0][3] - vp.m[0][0], vp.m[1][3] - vp.m[1][0], vp.m[2][3] - vp.m[2][0], vp.m[3][3] - vp.m[3][0]};
+        // Bottom: row3 + row1
+        f.planes[2] = {vp.m[0][3] + vp.m[0][1], vp.m[1][3] + vp.m[1][1], vp.m[2][3] + vp.m[2][1], vp.m[3][3] + vp.m[3][1]};
+        // Top:    row3 - row1
+        f.planes[3] = {vp.m[0][3] - vp.m[0][1], vp.m[1][3] - vp.m[1][1], vp.m[2][3] - vp.m[2][1], vp.m[3][3] - vp.m[3][1]};
+        // Near:   row2 (Vulkan depth [0,1] — not row3 + row2 which is for OpenGL [-1,1])
+        f.planes[4] = {vp.m[0][2], vp.m[1][2], vp.m[2][2], vp.m[3][2]};
+        // Far:    row3 - row2
+        f.planes[5] = {vp.m[0][3] - vp.m[0][2], vp.m[1][3] - vp.m[1][2], vp.m[2][3] - vp.m[2][2], vp.m[3][3] - vp.m[3][2]};
+
+        // Normalise planes so distance tests give true distances
+        for (int i = 0; i < 6; ++i) {
+            float len = Vec3{f.planes[i].x, f.planes[i].y, f.planes[i].z}.length();
+            if (len > 0.0f) {
+                float inv = 1.0f / len;
+                f.planes[i] = {f.planes[i].x * inv, f.planes[i].y * inv, f.planes[i].z * inv, f.planes[i].w * inv};
+            }
+        }
+
+        return f;
+    }
+
+    /*!
+        Tests whether a bounding sphere is inside or intersects the frustum.
+
+        \param frustum The 6 frustum planes.
+        \param centre World-space centre of the bounding sphere.
+        \param radius Bounding sphere radius.
+        \return True if the sphere is at least partially inside the frustum.
+    */
+    [[nodiscard]] inline bool isInsideFrustum(const Frustum& frustum, const Vec3& centre, float radius)
+    {
+        for (int i = 0; i < 6; ++i) {
+            float distance = frustum.planes[i].x * centre.x + frustum.planes[i].y * centre.y + frustum.planes[i].z * centre.z + frustum.planes[i].w;
+            if (distance < -radius) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 } // namespace MathLib

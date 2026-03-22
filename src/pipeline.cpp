@@ -72,10 +72,12 @@ std::vector<uint32_t> loadSpirv(const std::string& path, LoggingLib::Logger& log
 }
 
 Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format depth_format, const std::vector<uint32_t>& vert_spirv,
-    const std::vector<uint32_t>& frag_spirv, uint32_t frames_in_flight, LoggingLib::Logger& logger) :
+    const std::vector<uint32_t>& frag_spirv, const std::vector<uint32_t>& cull_spirv, uint32_t frames_in_flight, LoggingLib::Logger& logger) :
     m_device(&device),
     m_logger(logger)
 {
+    // ── Graphics pipeline ──
+
     // Shader modules
     vk::ShaderModuleCreateInfo vert_module_info{};
     vert_module_info.codeSize = vert_spirv.size() * sizeof(uint32_t);
@@ -102,17 +104,14 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     binding.inputRate = vk::VertexInputRate::eVertex;
 
     std::array<vk::VertexInputAttributeDescription, 3> attributes{};
-    // Location 0: float3 position
     attributes[0].binding = 0;
     attributes[0].location = 0;
     attributes[0].format = vk::Format::eR32G32B32Sfloat;
     attributes[0].offset = offsetof(Vertex, position);
-    // Location 1: float3 normal
     attributes[1].binding = 0;
     attributes[1].location = 1;
     attributes[1].format = vk::Format::eR32G32B32Sfloat;
     attributes[1].offset = offsetof(Vertex, normal);
-    // Location 2: float2 UV
     attributes[2].binding = 0;
     attributes[2].location = 2;
     attributes[2].format = vk::Format::eR32G32Sfloat;
@@ -124,17 +123,11 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     vertex_input.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributes.size());
     vertex_input.pVertexAttributeDescriptions = attributes.data();
 
-    // Input assembly
     vk::PipelineInputAssemblyStateCreateInfo input_assembly{};
     input_assembly.topology = vk::PrimitiveTopology::eTriangleList;
     input_assembly.primitiveRestartEnable = vk::False;
 
-    // Dynamic viewport + scissor
-    std::array<vk::DynamicState, 2> dynamic_states = {
-        vk::DynamicState::eViewport,
-        vk::DynamicState::eScissor,
-    };
-
+    std::array<vk::DynamicState, 2> dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
     vk::PipelineDynamicStateCreateInfo dynamic_state{};
     dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
     dynamic_state.pDynamicStates = dynamic_states.data();
@@ -143,7 +136,6 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     viewport_state.viewportCount = 1;
     viewport_state.scissorCount = 1;
 
-    // Rasterisation
     vk::PipelineRasterizationStateCreateInfo rasterisation{};
     rasterisation.depthClampEnable = vk::False;
     rasterisation.rasterizerDiscardEnable = vk::False;
@@ -153,7 +145,6 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     rasterisation.depthBiasEnable = vk::False;
     rasterisation.lineWidth = 1.0f;
 
-    // Depth testing — enabled, write enabled, less-than comparison
     vk::PipelineDepthStencilStateCreateInfo depth_stencil{};
     depth_stencil.depthTestEnable = vk::True;
     depth_stencil.depthWriteEnable = vk::True;
@@ -161,12 +152,10 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     depth_stencil.depthBoundsTestEnable = vk::False;
     depth_stencil.stencilTestEnable = vk::False;
 
-    // Multisample — required even without MSAA
     vk::PipelineMultisampleStateCreateInfo multisample{};
     multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
     multisample.sampleShadingEnable = vk::False;
 
-    // Colour blend — no blending, write RGBA
     vk::PipelineColorBlendAttachmentState colour_blend_attachment{};
     colour_blend_attachment.blendEnable = vk::False;
     colour_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
@@ -177,37 +166,36 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     colour_blend.attachmentCount = 1;
     colour_blend.pAttachments = &colour_blend_attachment;
 
-    // Descriptor set layout — binding 0: camera UBO, binding 1: object SSBO
-    std::array<vk::DescriptorSetLayoutBinding, 2> bindings{};
-    // Binding 0: camera VP matrix UBO (vertex stage)
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
-    // Binding 1: object transforms SSBO (vertex stage)
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = vk::ShaderStageFlagBits::eVertex;
+    // Graphics descriptor set layout — binding 0: UBO, 1: object SSBO, 2: visible indices
+    std::array<vk::DescriptorSetLayoutBinding, 3> gfx_bindings{};
+    gfx_bindings[0].binding = 0;
+    gfx_bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+    gfx_bindings[0].descriptorCount = 1;
+    gfx_bindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
+    gfx_bindings[1].binding = 1;
+    gfx_bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    gfx_bindings[1].descriptorCount = 1;
+    gfx_bindings[1].stageFlags = vk::ShaderStageFlagBits::eVertex;
+    gfx_bindings[2].binding = 2;
+    gfx_bindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+    gfx_bindings[2].descriptorCount = 1;
+    gfx_bindings[2].stageFlags = vk::ShaderStageFlagBits::eVertex;
 
-    vk::DescriptorSetLayoutCreateInfo descriptor_layout_info{};
-    descriptor_layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
-    descriptor_layout_info.pBindings = bindings.data();
-    m_descriptor_set_layout = vk::raii::DescriptorSetLayout(device.get(), descriptor_layout_info);
+    vk::DescriptorSetLayoutCreateInfo gfx_layout_info{};
+    gfx_layout_info.bindingCount = static_cast<uint32_t>(gfx_bindings.size());
+    gfx_layout_info.pBindings = gfx_bindings.data();
+    m_graphics_descriptor_set_layout = vk::raii::DescriptorSetLayout(device.get(), gfx_layout_info);
 
-    // Pipeline layout — 1 descriptor set, no push constants (GPU-driven via SSBO)
-    vk::PipelineLayoutCreateInfo layout_info{};
-    layout_info.setLayoutCount = 1;
-    layout_info.pSetLayouts = &*m_descriptor_set_layout;
-    m_layout = vk::raii::PipelineLayout(device.get(), layout_info);
+    vk::PipelineLayoutCreateInfo gfx_pipeline_layout_info{};
+    gfx_pipeline_layout_info.setLayoutCount = 1;
+    gfx_pipeline_layout_info.pSetLayouts = &*m_graphics_descriptor_set_layout;
+    m_graphics_layout = vk::raii::PipelineLayout(device.get(), gfx_pipeline_layout_info);
 
-    // Dynamic rendering — attach colour and depth formats
     vk::PipelineRenderingCreateInfo rendering_info{};
     rendering_info.colorAttachmentCount = 1;
     rendering_info.pColorAttachmentFormats = &colour_format;
     rendering_info.depthAttachmentFormat = depth_format;
 
-    // Graphics pipeline
     vk::GraphicsPipelineCreateInfo pipeline_info{};
     pipeline_info.pNext = &rendering_info;
     pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
@@ -220,43 +208,116 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     pipeline_info.pDepthStencilState = &depth_stencil;
     pipeline_info.pColorBlendState = &colour_blend;
     pipeline_info.pDynamicState = &dynamic_state;
-    pipeline_info.layout = *m_layout;
+    pipeline_info.layout = *m_graphics_layout;
 
-    m_pipeline = vk::raii::Pipeline(device.get(), nullptr, pipeline_info);
+    m_graphics_pipeline = vk::raii::Pipeline(device.get(), nullptr, pipeline_info);
 
-    // Descriptor pool — UBO + SSBO per frame in flight
-    std::array<vk::DescriptorPoolSize, 2> pool_sizes{};
-    pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
-    pool_sizes[0].descriptorCount = frames_in_flight;
-    pool_sizes[1].type = vk::DescriptorType::eStorageBuffer;
-    pool_sizes[1].descriptorCount = frames_in_flight;
+    // Graphics descriptor pool — UBO + 2 SSBOs per frame
+    std::array<vk::DescriptorPoolSize, 2> gfx_pool_sizes{};
+    gfx_pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
+    gfx_pool_sizes[0].descriptorCount = frames_in_flight;
+    gfx_pool_sizes[1].type = vk::DescriptorType::eStorageBuffer;
+    gfx_pool_sizes[1].descriptorCount = frames_in_flight * 2; // object SSBO + visible indices
 
-    vk::DescriptorPoolCreateInfo pool_info{};
-    pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    pool_info.maxSets = frames_in_flight;
-    pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
-    pool_info.pPoolSizes = pool_sizes.data();
-    m_descriptor_pool = vk::raii::DescriptorPool(device.get(), pool_info);
+    vk::DescriptorPoolCreateInfo gfx_pool_info{};
+    gfx_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    gfx_pool_info.maxSets = frames_in_flight;
+    gfx_pool_info.poolSizeCount = static_cast<uint32_t>(gfx_pool_sizes.size());
+    gfx_pool_info.pPoolSizes = gfx_pool_sizes.data();
+    m_graphics_descriptor_pool = vk::raii::DescriptorPool(device.get(), gfx_pool_info);
 
-    // Allocate per-frame descriptor sets
-    std::vector<vk::DescriptorSetLayout> layouts(frames_in_flight, *m_descriptor_set_layout);
-    vk::DescriptorSetAllocateInfo alloc_info{};
-    alloc_info.descriptorPool = *m_descriptor_pool;
-    alloc_info.descriptorSetCount = frames_in_flight;
-    alloc_info.pSetLayouts = layouts.data();
-    m_descriptor_sets = device.get().allocateDescriptorSets(alloc_info);
+    std::vector<vk::DescriptorSetLayout> gfx_layouts(frames_in_flight, *m_graphics_descriptor_set_layout);
+    vk::DescriptorSetAllocateInfo gfx_alloc_info{};
+    gfx_alloc_info.descriptorPool = *m_graphics_descriptor_pool;
+    gfx_alloc_info.descriptorSetCount = frames_in_flight;
+    gfx_alloc_info.pSetLayouts = gfx_layouts.data();
+    m_graphics_descriptor_sets = device.get().allocateDescriptorSets(gfx_alloc_info);
 
-    // Create per-frame UBOs and write descriptors
     m_ubo_mapped_ptrs.resize(frames_in_flight);
     for (uint32_t i = 0; i < frames_in_flight; ++i) {
-        // The UBO buffers are stored externally (in the render thread) — but we need
-        // to defer descriptor writes until we have the buffer handles. The render thread
-        // will call updateCameraUBO() which writes the mapped pointer, and we need to
-        // write the descriptor binding once we have the VkBuffer.
         m_ubo_mapped_ptrs[i] = nullptr;
     }
 
     m_logger.logInfo("Graphics pipeline created.");
+
+    // ── Compute culling pipeline ──
+
+    vk::ShaderModuleCreateInfo cull_module_info{};
+    cull_module_info.codeSize = cull_spirv.size() * sizeof(uint32_t);
+    cull_module_info.pCode = cull_spirv.data();
+    vk::raii::ShaderModule cull_module(device.get(), cull_module_info);
+
+    // Compute descriptor set layout — 4 SSBOs
+    std::array<vk::DescriptorSetLayoutBinding, 4> compute_bindings{};
+    // Binding 0: object bounds (read-only)
+    compute_bindings[0].binding = 0;
+    compute_bindings[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+    compute_bindings[0].descriptorCount = 1;
+    compute_bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    // Binding 1: indirect draw commands (read-write)
+    compute_bindings[1].binding = 1;
+    compute_bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    compute_bindings[1].descriptorCount = 1;
+    compute_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    // Binding 2: draw count (read-write)
+    compute_bindings[2].binding = 2;
+    compute_bindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+    compute_bindings[2].descriptorCount = 1;
+    compute_bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    // Binding 3: visible indices (read-write)
+    compute_bindings[3].binding = 3;
+    compute_bindings[3].descriptorType = vk::DescriptorType::eStorageBuffer;
+    compute_bindings[3].descriptorCount = 1;
+    compute_bindings[3].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo compute_layout_info{};
+    compute_layout_info.bindingCount = static_cast<uint32_t>(compute_bindings.size());
+    compute_layout_info.pBindings = compute_bindings.data();
+    m_compute_descriptor_set_layout = vk::raii::DescriptorSetLayout(device.get(), compute_layout_info);
+
+    // Compute pipeline layout — 1 descriptor set + push constants for frustum planes
+    vk::PushConstantRange cull_push_range{};
+    cull_push_range.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    cull_push_range.offset = 0;
+    cull_push_range.size = sizeof(CullPushConstants);
+
+    vk::PipelineLayoutCreateInfo compute_pipeline_layout_info{};
+    compute_pipeline_layout_info.setLayoutCount = 1;
+    compute_pipeline_layout_info.pSetLayouts = &*m_compute_descriptor_set_layout;
+    compute_pipeline_layout_info.pushConstantRangeCount = 1;
+    compute_pipeline_layout_info.pPushConstantRanges = &cull_push_range;
+    m_compute_layout = vk::raii::PipelineLayout(device.get(), compute_pipeline_layout_info);
+
+    vk::PipelineShaderStageCreateInfo cull_stage{};
+    cull_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    cull_stage.module = *cull_module;
+    cull_stage.pName = "cullMain";
+
+    vk::ComputePipelineCreateInfo compute_create_info{};
+    compute_create_info.stage = cull_stage;
+    compute_create_info.layout = *m_compute_layout;
+
+    m_compute_pipeline = vk::raii::Pipeline(device.get(), nullptr, compute_create_info);
+
+    // Compute descriptor pool — 4 SSBOs × 1 set
+    vk::DescriptorPoolSize compute_pool_size{};
+    compute_pool_size.type = vk::DescriptorType::eStorageBuffer;
+    compute_pool_size.descriptorCount = 4;
+
+    vk::DescriptorPoolCreateInfo compute_pool_info{};
+    compute_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    compute_pool_info.maxSets = 1;
+    compute_pool_info.poolSizeCount = 1;
+    compute_pool_info.pPoolSizes = &compute_pool_size;
+    m_compute_descriptor_pool = vk::raii::DescriptorPool(device.get(), compute_pool_info);
+
+    vk::DescriptorSetAllocateInfo compute_alloc_info{};
+    compute_alloc_info.descriptorPool = *m_compute_descriptor_pool;
+    compute_alloc_info.descriptorSetCount = 1;
+    compute_alloc_info.pSetLayouts = &*m_compute_descriptor_set_layout;
+    m_compute_descriptor_sets = device.get().allocateDescriptorSets(compute_alloc_info);
+
+    m_logger.logInfo("Compute culling pipeline created.");
 }
 
 void Pipeline::bindUBO(uint32_t frame_index, VkBuffer buffer) const
@@ -267,7 +328,7 @@ void Pipeline::bindUBO(uint32_t frame_index, VkBuffer buffer) const
     buffer_info.range = sizeof(CameraUBO);
 
     vk::WriteDescriptorSet write{};
-    write.dstSet = *m_descriptor_sets[frame_index];
+    write.dstSet = *m_graphics_descriptor_sets[frame_index];
     write.dstBinding = 0;
     write.dstArrayElement = 0;
     write.descriptorType = vk::DescriptorType::eUniformBuffer;
@@ -285,7 +346,7 @@ void Pipeline::bindObjectSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSiz
     buffer_info.range = size;
 
     vk::WriteDescriptorSet write{};
-    write.dstSet = *m_descriptor_sets[frame_index];
+    write.dstSet = *m_graphics_descriptor_sets[frame_index];
     write.dstBinding = 1;
     write.dstArrayElement = 0;
     write.descriptorType = vk::DescriptorType::eStorageBuffer;
@@ -293,6 +354,54 @@ void Pipeline::bindObjectSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSiz
     write.pBufferInfo = &buffer_info;
 
     m_device->get().updateDescriptorSets({write}, {});
+}
+
+void Pipeline::bindVisibleIndices(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const
+{
+    vk::DescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = buffer;
+    buffer_info.offset = 0;
+    buffer_info.range = size;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = *m_graphics_descriptor_sets[frame_index];
+    write.dstBinding = 2;
+    write.dstArrayElement = 0;
+    write.descriptorType = vk::DescriptorType::eStorageBuffer;
+    write.descriptorCount = 1;
+    write.pBufferInfo = &buffer_info;
+
+    m_device->get().updateDescriptorSets({write}, {});
+}
+
+void Pipeline::bindComputeResources(VkBuffer bounds_buffer, VkDeviceSize bounds_size, VkBuffer indirect_buffer, VkDeviceSize indirect_size, VkBuffer draw_count_buffer,
+    VkDeviceSize draw_count_size, VkBuffer visible_indices_buffer, VkDeviceSize visible_indices_size) const
+{
+    std::array<vk::DescriptorBufferInfo, 4> buffer_infos{};
+    buffer_infos[0].buffer = bounds_buffer;
+    buffer_infos[0].offset = 0;
+    buffer_infos[0].range = bounds_size;
+    buffer_infos[1].buffer = indirect_buffer;
+    buffer_infos[1].offset = 0;
+    buffer_infos[1].range = indirect_size;
+    buffer_infos[2].buffer = draw_count_buffer;
+    buffer_infos[2].offset = 0;
+    buffer_infos[2].range = draw_count_size;
+    buffer_infos[3].buffer = visible_indices_buffer;
+    buffer_infos[3].offset = 0;
+    buffer_infos[3].range = visible_indices_size;
+
+    std::array<vk::WriteDescriptorSet, 4> writes{};
+    for (uint32_t i = 0; i < 4; ++i) {
+        writes[i].dstSet = *m_compute_descriptor_sets[0];
+        writes[i].dstBinding = i;
+        writes[i].dstArrayElement = 0;
+        writes[i].descriptorType = vk::DescriptorType::eStorageBuffer;
+        writes[i].descriptorCount = 1;
+        writes[i].pBufferInfo = &buffer_infos[i];
+    }
+
+    m_device->get().updateDescriptorSets(writes, {});
 }
 
 void Pipeline::updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const

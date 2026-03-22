@@ -29,6 +29,10 @@ ConstantBuffer<CameraData> camera;
 [[vk::binding(1, 0)]]
 StructuredBuffer<ObjectData> objects;
 
+// Compacted visible object indices — written by the compute culling shader.
+[[vk::binding(2, 0)]]
+StructuredBuffer<uint> visible_indices;
+
 // Vertex input — matches C++ Vertex struct (position + normal + UV).
 struct VSInput {
     float3 position : POSITION;
@@ -46,7 +50,9 @@ struct VSOutput {
 [shader("vertex")]
 VSOutput vertMain(VSInput input, uint instance_id : SV_InstanceID)
 {
-    ObjectData obj = objects[instance_id];
+    // Map the compacted instance index back to the original object index
+    uint object_index = visible_indices[instance_id];
+    ObjectData obj = objects[object_index];
 
     VSOutput output;
     float4 world_pos = mul(obj.model, float4(input.position, 1.0));

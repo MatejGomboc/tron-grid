@@ -232,7 +232,6 @@ TEST_CASE(mat4_scale)
 
 TEST_CASE(mat4_rotate_z_90)
 {
-    
     MathLib::Mat4 r = MathLib::Mat4::rotate({0.0f, 0.0f, 1.0f}, MathLib::PI / 2.0f);
     MathLib::Vec4 v{1.0f, 0.0f, 0.0f, 1.0f};
     MathLib::Vec4 result = r * v;
@@ -288,7 +287,6 @@ TEST_CASE(quat_from_axis_angle_identity)
 
 TEST_CASE(quat_rotate_vec3)
 {
-    
     MathLib::Quat q = MathLib::Quat::fromAxisAngle({0.0f, 0.0f, 1.0f}, MathLib::PI / 2.0f);
     MathLib::Vec3 v{1.0f, 0.0f, 0.0f};
     MathLib::Vec3 result = q.rotate(v);
@@ -297,7 +295,6 @@ TEST_CASE(quat_rotate_vec3)
 
 TEST_CASE(quat_to_mat4_matches_rotate)
 {
-    
     MathLib::Vec3 axis{0.0f, 1.0f, 0.0f};
     float angle = MathLib::PI / 3.0f;
 
@@ -309,7 +306,6 @@ TEST_CASE(quat_to_mat4_matches_rotate)
 
 TEST_CASE(quat_multiply_combines_rotations)
 {
-    
     MathLib::Quat q1 = MathLib::Quat::fromAxisAngle({0.0f, 0.0f, 1.0f}, MathLib::PI / 2.0f);
     MathLib::Quat q2 = MathLib::Quat::fromAxisAngle({0.0f, 0.0f, 1.0f}, MathLib::PI / 2.0f);
     MathLib::Quat combined = q1 * q2; // 180 degrees around Z
@@ -336,7 +332,7 @@ TEST_CASE(quat_normalised_zero)
 TEST_CASE(quat_slerp_endpoints)
 {
     MathLib::Quat a = MathLib::Quat::identity();
-    
+
     MathLib::Quat b = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, MathLib::PI / 2.0f);
 
     MathLib::Quat at0 = MathLib::Quat::slerp(a, b, 0.0f);
@@ -348,7 +344,6 @@ TEST_CASE(quat_slerp_endpoints)
 
 TEST_CASE(quat_slerp_midpoint)
 {
-    
     MathLib::Quat a = MathLib::Quat::identity();
     MathLib::Quat b = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, MathLib::PI / 2.0f);
     MathLib::Quat mid = MathLib::Quat::slerp(a, b, 0.5f);
@@ -361,7 +356,6 @@ TEST_CASE(quat_slerp_midpoint)
 
 TEST_CASE(perspective_near_plane_maps_to_zero)
 {
-    
     MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
     // A point on the near plane (z = -near in view space, right-handed)
     MathLib::Vec4 near_point{0.0f, 0.0f, -0.1f, 1.0f};
@@ -372,7 +366,6 @@ TEST_CASE(perspective_near_plane_maps_to_zero)
 
 TEST_CASE(perspective_far_plane_maps_to_one)
 {
-    
     MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
     // A point on the far plane (z = -far in view space)
     MathLib::Vec4 far_point{0.0f, 0.0f, -100.0f, 1.0f};
@@ -383,7 +376,6 @@ TEST_CASE(perspective_far_plane_maps_to_one)
 
 TEST_CASE(perspective_flips_y)
 {
-    
     MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
     // A point above centre in view space should have negative Y in clip space (Vulkan Y-down)
     MathLib::Vec4 above{0.0f, 1.0f, -1.0f, 1.0f};
@@ -473,7 +465,6 @@ TEST_CASE(vec4_arithmetic)
 
 TEST_CASE(mat4_rotate_x_90)
 {
-    
     MathLib::Mat4 r = MathLib::Mat4::rotate({1.0f, 0.0f, 0.0f}, MathLib::PI / 2.0f);
     MathLib::Vec4 v{0.0f, 1.0f, 0.0f, 1.0f};
     MathLib::Vec4 result = r * v;
@@ -482,7 +473,6 @@ TEST_CASE(mat4_rotate_x_90)
 
 TEST_CASE(mat4_rotate_y_90)
 {
-    
     MathLib::Mat4 r = MathLib::Mat4::rotate({0.0f, 1.0f, 0.0f}, MathLib::PI / 2.0f);
     MathLib::Vec4 v{1.0f, 0.0f, 0.0f, 1.0f};
     MathLib::Vec4 result = r * v;
@@ -491,7 +481,6 @@ TEST_CASE(mat4_rotate_y_90)
 
 TEST_CASE(mat4_rotate_360_identity)
 {
-    
     MathLib::Mat4 r = MathLib::Mat4::rotate({0.0f, 1.0f, 0.0f}, 2.0f * MathLib::PI);
     TEST_CHECK(approxMat4(r, MathLib::Mat4::identity(), 1e-4f));
 }
@@ -500,7 +489,6 @@ TEST_CASE(mat4_rotate_360_identity)
 
 TEST_CASE(quat_rotate_around_x)
 {
-    
     MathLib::Quat q = MathLib::Quat::fromAxisAngle({1.0f, 0.0f, 0.0f}, MathLib::PI / 2.0f);
     MathLib::Vec3 v{0.0f, 1.0f, 0.0f};
     MathLib::Vec3 result = q.rotate(v);
@@ -509,7 +497,6 @@ TEST_CASE(quat_rotate_around_x)
 
 TEST_CASE(quat_rotate_around_y)
 {
-    
     MathLib::Quat q = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, MathLib::PI / 2.0f);
     MathLib::Vec3 v{1.0f, 0.0f, 0.0f};
     MathLib::Vec3 result = q.rotate(v);
@@ -527,7 +514,7 @@ TEST_CASE(quat_slerp_short_path)
 {
     // Two quaternions that represent the same rotation but with opposite signs.
     // Slerp should take the short path (negate one).
-    
+
     MathLib::Quat a = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, 0.1f);
     MathLib::Quat b = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, 0.2f);
     MathLib::Quat neg_b{-b.w, -b.x, -b.y, -b.z};
@@ -544,7 +531,6 @@ TEST_CASE(quat_slerp_short_path)
 
 TEST_CASE(perspective_centre_maps_to_origin)
 {
-    
     MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
     // A point at the centre of the view (on the -Z axis) should map to (0, 0) in NDC
     MathLib::Vec4 centre{0.0f, 0.0f, -1.0f, 1.0f};
@@ -557,7 +543,6 @@ TEST_CASE(perspective_centre_maps_to_origin)
 
 TEST_CASE(perspective_aspect_ratio)
 {
-    
     MathLib::Mat4 proj_wide = MathLib::perspective(MathLib::PI / 2.0f, 2.0f, 0.1f, 100.0f);
     MathLib::Mat4 proj_tall = MathLib::perspective(MathLib::PI / 2.0f, 0.5f, 0.1f, 100.0f);
     // A point at (1, 0, -1) should have different NDC X for different aspect ratios
@@ -574,7 +559,6 @@ TEST_CASE(perspective_aspect_ratio)
 
 TEST_CASE(view_from_spherical_elevated)
 {
-    
     MathLib::Vec3 target{0.0f, 0.0f, 0.0f};
     // Camera directly above, looking down
     MathLib::Mat4 view = MathLib::viewFromSpherical(target, 0.0f, MathLib::PI / 2.0f, 10.0f);
@@ -586,7 +570,6 @@ TEST_CASE(view_from_spherical_elevated)
 
 TEST_CASE(view_from_quaternion_rotated)
 {
-    
     MathLib::Vec3 position{0.0f, 0.0f, 5.0f};
     // Rotate 180 degrees around Y — camera at (0,0,5) now looks along +Z (away from origin)
     MathLib::Quat orientation = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, MathLib::PI);
@@ -595,6 +578,58 @@ TEST_CASE(view_from_quaternion_rotated)
     MathLib::Vec4 result = view * origin;
     // Origin should now be BEHIND the camera (positive Z in view space)
     TEST_CHECK(result.z > 0.0f);
+}
+
+// ── Frustum culling ──
+
+TEST_CASE(frustum_point_in_front_is_visible)
+{
+    MathLib::Mat4 view = MathLib::lookAt({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+    MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
+    MathLib::Mat4 vp = proj * view;
+    MathLib::Frustum frustum = MathLib::extractFrustum(vp);
+    // Point directly in front of camera — should be visible
+    TEST_CHECK(MathLib::isInsideFrustum(frustum, {0.0f, 0.0f, -5.0f}, 0.5f));
+}
+
+TEST_CASE(frustum_point_behind_is_culled)
+{
+    MathLib::Mat4 view = MathLib::lookAt({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+    MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
+    MathLib::Mat4 vp = proj * view;
+    MathLib::Frustum frustum = MathLib::extractFrustum(vp);
+    // Point behind camera — should be culled
+    TEST_CHECK(!MathLib::isInsideFrustum(frustum, {0.0f, 0.0f, 5.0f}, 0.5f));
+}
+
+TEST_CASE(frustum_point_far_left_is_culled)
+{
+    MathLib::Mat4 view = MathLib::lookAt({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+    MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
+    MathLib::Mat4 vp = proj * view;
+    MathLib::Frustum frustum = MathLib::extractFrustum(vp);
+    // Point far to the left — should be culled
+    TEST_CHECK(!MathLib::isInsideFrustum(frustum, {-50.0f, 0.0f, -5.0f}, 0.5f));
+}
+
+TEST_CASE(frustum_point_beyond_far_plane_is_culled)
+{
+    MathLib::Mat4 view = MathLib::lookAt({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+    MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
+    MathLib::Mat4 vp = proj * view;
+    MathLib::Frustum frustum = MathLib::extractFrustum(vp);
+    // Point beyond far plane — should be culled
+    TEST_CHECK(!MathLib::isInsideFrustum(frustum, {0.0f, 0.0f, -200.0f}, 0.5f));
+}
+
+TEST_CASE(frustum_large_sphere_partially_visible)
+{
+    MathLib::Mat4 view = MathLib::lookAt({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f});
+    MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
+    MathLib::Mat4 vp = proj * view;
+    MathLib::Frustum frustum = MathLib::extractFrustum(vp);
+    // Large sphere centred behind camera but large enough to intersect frustum
+    TEST_CHECK(MathLib::isInsideFrustum(frustum, {0.0f, 0.0f, 5.0f}, 10.0f));
 }
 
 int main()
