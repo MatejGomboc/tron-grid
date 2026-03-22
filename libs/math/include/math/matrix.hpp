@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include "math/vec.hpp"
+#include "math/vector.hpp"
 #include <array>
 #include <cmath>
 

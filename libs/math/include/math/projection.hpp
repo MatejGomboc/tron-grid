@@ -14,9 +14,9 @@
 
 #pragma once
 
-#include "math/mat.hpp"
-#include "math/quat.hpp"
-#include "math/vec.hpp"
+#include "math/matrix.hpp"
+#include "math/quaternion.hpp"
+#include "math/vector.hpp"
 #include <cmath>
 
 namespace MathLib

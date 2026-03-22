@@ -13,10 +13,10 @@
 */
 
 #include "test_fixture/test_fixture.hpp"
-#include <math/mat.hpp>
+#include <math/matrix.hpp>
 #include <math/projection.hpp>
-#include <math/quat.hpp>
-#include <math/vec.hpp>
+#include <math/quaternion.hpp>
+#include <math/vector.hpp>
 #include <cmath>
 
 //! Approximate equality for floating-point comparisons.
