@@ -213,6 +213,232 @@ Merge all mesh data into single vertex/index buffers and switch to bindless desc
 - [ ] All existing + new tests pass on all 5 CI presets
 - [ ] **Phase 2 complete — 1000 objects, 1 draw call**
 
+## Phase 2.1 — Code Quality Infrastructure
+
+**Goal:** Set up static analysis, runtime sanitisers, and code quality tooling so that every
+future phase benefits from automated bug detection. After this phase, CI catches memory errors,
+data races, undefined behaviour, and style violations automatically.
+
+**Why now:** The codebase is complex enough (multi-threaded, GPU compute, Vulkan RAII) that
+manual review alone can't catch everything. Setting this up before Phase 3 (mesh shaders)
+prevents bugs from compounding.
+
+### Etape 11 — Clang-Tidy Static Analysis
+
+Add `.clang-tidy` configuration and integrate into CI.
+
+**`.clang-tidy` configuration:**
+
+```yaml
+Checks: >-
+    -*,
+    bugprone-*,
+    clang-analyzer-*,
+    concurrency-*,
+    cppcoreguidelines-*,
+    misc-*,
+    modernize-*,
+    performance-*,
+    readability-*,
+    -modernize-use-trailing-return-type,
+    -readability-identifier-length,
+    -cppcoreguidelines-avoid-magic-numbers,
+    -readability-magic-numbers,
+    -modernize-use-auto
+WarningsAsErrors: 'bugprone-*,clang-analyzer-*,concurrency-*'
+HeaderFilterRegex: '(src|libs)/.*'
+FormatStyle: 'file'
+```
+
+**Check categories and why:**
+
+- `bugprone-*` — dangling references, narrowing conversions, use-after-move (**errors**)
+- `clang-analyzer-*` — deep path-sensitive analysis (null deref, leaks) (**errors**)
+- `concurrency-*` — threading issues (our 3-thread architecture) (**errors**)
+- `cppcoreguidelines-*` — Core Guidelines (ownership, slicing, type safety)
+- `misc-*` — miscellaneous useful checks
+- `modernize-*` — C++20 idiom suggestions (minus `use-auto` which we ban)
+- `performance-*` — unnecessary copies, move semantics
+- `readability-*` — naming, braces, const-correctness
+
+**Disabled checks:**
+
+- `modernize-use-trailing-return-type` — we don't use trailing return
+- `readability-identifier-length` — we have short but clear names (`ev`, `cmd`)
+- `*-magic-numbers` — we use `constexpr` constants, but inline literals in
+  Vulkan struct setup are unavoidable
+- `modernize-use-auto` — we explicitly ban `auto` in STYLE.md
+
+**CMake integration:**
+
+- Set `CMAKE_CXX_CLANG_TIDY` in a new CMake preset `linux-x11-clang-tidy`
+- Only on Linux Clang (Clang-Tidy ships with the Clang toolchain)
+- CI runs it as a separate job — does not block other builds
+
+**Fix all warnings in the existing codebase** before enabling in CI. Existing code
+must be clean before the gate goes up.
+
+**Shader validation (also in this etape):**
+
+- Add `spirv-val` validation step after each `slangc` compilation in CMake — if the
+  compiled SPIR-V is malformed, the build fails immediately
+- Enable `slangc` warnings: add `-warnings-as-errors all` to the compilation flags
+- Add `spirv-opt` optimisation pass in Release builds: `-O` flag for dead code
+  elimination, constant folding, and redundancy elimination
+- All three tools ship with the Vulkan SDK — `find_program` from `$ENV{VULKAN_SDK}/bin`
+
+```cmake
+find_program(SPIRV_VAL_EXECUTABLE spirv-val HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+find_program(SPIRV_OPT_EXECUTABLE spirv-opt HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+
+# After slangc compilation, validate the output:
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/triangle.spv
+    COMMAND ${SLANGC_EXECUTABLE} ... -o ${SHADER_OUTPUT_DIR}/triangle.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/triangle.spv
+    ...
+)
+```
+
+**After this step:** Clang-Tidy runs on every PR. Bugprone and analyser warnings are errors.
+Shader SPIR-V is validated at build time.
+
+### Etape 12 — Runtime Sanitisers (ASan, UBSan, TSan) + GPU Validation
+
+Add CMake presets for sanitiser builds and run tests under sanitisation.
+
+**New CMake presets:**
+
+- `linux-x11-clang-asan` — AddressSanitizer + UndefinedBehaviorSanitizer
+    - Flags: `-fsanitize=address,undefined -fno-omit-frame-pointer -g`
+    - Detects: buffer overflows, use-after-free, double-free, UB, signed overflow
+    - Overhead: ~2x slowdown (acceptable for CI tests)
+- `linux-x11-clang-tsan` — ThreadSanitizer
+    - Flags: `-fsanitize=thread -g`
+    - Detects: data races between our 3 threads
+    - Cannot combine with ASan (separate preset)
+
+**CI integration:**
+
+- Add 2 new CI jobs: `Sanitizer (ASan+UBSan)` and `Sanitizer (TSan)`
+- Run `ctest` under sanitisation — all 5 test suites must pass clean
+- These jobs are informational initially (allow failure), then promoted to
+  required once the codebase is clean
+
+**GPU-Assisted Validation (shader runtime checks):**
+
+- Enable `VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT` in debug builds —
+  instruments shaders to detect out-of-bounds SSBO access, invalid descriptor
+  indexing, and other GPU-side errors at runtime
+- Enable `VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT` —
+  reserves a descriptor set binding slot for the validation layer's instrumentation
+- Add a `--gpu-validation` command-line flag or `#ifdef` to toggle this (it adds
+  ~10-20% GPU overhead, not suitable for performance testing)
+- Particularly valuable for our compute culling shader (SSBO atomic writes,
+  dynamic indexing into `visible_indices[visible_slot]`)
+
+**Vulkan Best Practices validation:**
+
+- Enable `VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT` in debug builds —
+  warns about non-optimal API usage: suboptimal present modes, unnecessary
+  barriers, oversized allocations, redundant state setting
+- Logs as warnings (not errors) — informational, helps optimise
+
+**Vulkan Synchronisation validation:**
+
+- Enable `VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT` — deep
+  analysis of barriers and synchronisation between pipeline stages
+- Catches missing/incorrect barriers between compute and graphics passes —
+  critical for our compute culling → indirect draw pipeline
+- More thorough than the standard validation layer's sync checks
+
+**Debug Printf for shaders (development aid):**
+
+- Enable `VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT` for shader debugging
+- Allows `debugPrintfEXT()` calls in Slang shaders — output appears in the
+  validation layer messages, routed through our Logger
+- Not for CI — developer-only tool for diagnosing GPU-side issues
+
+**Compiler warnings cranked up:**
+
+- GCC/Clang: `-Wall -Wextra -Wpedantic` — catches more issues than defaults
+- MSVC: `/W4` — highest practical warning level (beyond `/W3` default)
+- Add `-Werror` (GCC/Clang) and `/WX` (MSVC) to CI presets — zero-warning
+  builds enforced. Use a separate preset or CI step so local development
+  isn't blocked during work-in-progress
+
+**Windows memory leak detection (MSVC debug builds):**
+
+- Enable `_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF)` at
+  startup in debug builds — reports C++ heap leaks on exit (std::string,
+  std::vector, etc.). Does not cover VMA/Vulkan allocations (those are RAII),
+  but catches any accidental raw `new` without matching `delete`
+- Zero runtime cost — debug heap is already active in MSVC debug mode
+
+**Test coverage for sanitisers:**
+
+- The existing window/signal/logger/math tests exercise core library code
+- The render thread, compute dispatch, and event bridge are NOT covered by
+  unit tests — sanitisers catch runtime bugs in these paths during manual
+  testing or future integration tests
+
+**After this step:** every PR runs ASan+UBSan and TSan on Linux. GPU-Assisted
+and Synchronisation Validation catches shader-side and barrier bugs. Compiler
+warnings as errors enforce zero-warning builds. MSVC leak detection on Windows.
+
+### Etape 13 — CI Hardening and Quality Gate
+
+Polish the quality gate and make it mandatory.
+
+**Clang-Tidy in CI workflow:**
+
+- Add a `Quality` job in `ci_pr.yml` that runs the `linux-x11-clang-tidy` preset
+- Job fails if any warning is promoted to error (bugprone, analyser, concurrency)
+- Other warnings are logged but don't block
+
+**Sanitiser CI jobs:**
+
+- Promote ASan+UBSan and TSan jobs from informational to required
+- Tests must pass with zero sanitiser errors
+
+**STYLE.md updates:**
+
+- Document the `.clang-tidy` configuration and suppression rules (`NOLINT`)
+- Document the sanitiser presets and how to run them locally
+- Add a "Running Quality Checks Locally" section
+
+**VS Code integration:**
+
+- Add `clang-tidy` to `.vscode/settings.json` so the IDE shows warnings inline
+- Recommended extension: `clangd` (provides Clang-Tidy integration)
+
+**After this step:** the quality gate is fully operational. No PR merges with
+bugprone errors, data races, or memory corruption.
+
+### Acceptance Criteria
+
+- [ ] `.clang-tidy` configuration file with curated check list
+- [ ] Existing codebase passes Clang-Tidy with zero errors
+- [ ] CMake preset `linux-x11-clang-tidy` runs Clang-Tidy during build
+- [ ] `spirv-val` validates all compiled SPIR-V at build time
+- [ ] `slangc` warnings treated as errors
+- [ ] `spirv-opt` optimisation in Release builds
+- [ ] CMake preset `linux-x11-clang-asan` with ASan + UBSan
+- [ ] CMake preset `linux-x11-clang-tsan` with TSan
+- [ ] All 5 test suites pass under ASan + UBSan
+- [ ] All 5 test suites pass under TSan
+- [ ] GPU-Assisted Validation enabled in debug builds
+- [ ] Synchronisation Validation enabled in debug builds
+- [ ] Best Practices Validation enabled in debug builds (warnings, not errors)
+- [ ] Compiler warnings: `-Wall -Wextra -Wpedantic` (GCC/Clang), `/W4` (MSVC)
+- [ ] Warnings as errors in CI: `-Werror` (GCC/Clang), `/WX` (MSVC)
+- [ ] MSVC debug leak detection (`_CrtSetDbgFlag`) enabled
+- [ ] CI job for Clang-Tidy (blocks on bugprone/analyser errors)
+- [ ] CI jobs for ASan+UBSan and TSan (blocks on sanitiser errors)
+- [ ] STYLE.md documents quality tooling and local usage
+- [ ] VS Code integration for inline Clang-Tidy warnings
+- [ ] **Phase 2.1 complete — code quality infrastructure**
+
 ## Backlog
 
 <!-- Ideas, improvements, and tasks for later phases. -->
