@@ -50,6 +50,17 @@ namespace WindowLib
         //! Blocks until at least one platform event arrives, then drains all pending events.
         virtual void waitEvents() = 0;
 
+        //! Captures or releases the mouse cursor for FPS-style look.
+        //! When captured: cursor is hidden, locked to the window, and deltas are computed from centre.
+        //! Must be called from the main (event) thread.
+        virtual void setCursorCaptured(bool captured) = 0;
+
+        //! Returns true if the cursor is currently captured.
+        [[nodiscard]] bool cursorCaptured() const
+        {
+            return m_cursor_captured;
+        }
+
         //! Returns the platform-native window handle (HWND on Win32, xcb_window_t via void* on XCB).
         [[nodiscard]] virtual void* nativeHandle() const = 0;
 
@@ -121,6 +132,7 @@ namespace WindowLib
         uint32_t m_width{0}; //!< Current client-area width in pixels.
         uint32_t m_height{0}; //!< Current client-area height in pixels.
         bool m_should_close{false}; //!< True after a close has been requested.
+        bool m_cursor_captured{false}; //!< True when mouse cursor is captured for FPS look.
 
     private:
         std::queue<WindowEvent> m_event_queue; //!< Pending window events waiting to be polled.

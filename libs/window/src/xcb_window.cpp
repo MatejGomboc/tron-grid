@@ -154,6 +154,34 @@ namespace WindowLib
         pumpEvents();
     }
 
+    void XcbWindow::setCursorCaptured(bool captured)
+    {
+        m_cursor_captured = captured;
+        if (captured) {
+            // Create invisible cursor
+            xcb_pixmap_t pixmap = xcb_generate_id(m_connection);
+            xcb_cursor_t cursor = xcb_generate_id(m_connection);
+            xcb_create_pixmap(m_connection, 1, pixmap, m_window, 1, 1);
+            xcb_create_cursor(m_connection, cursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 0, 0);
+            xcb_free_pixmap(m_connection, pixmap);
+
+            // Grab pointer with invisible cursor
+            xcb_grab_pointer(m_connection, 1, m_window, XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION, XCB_GRAB_MODE_ASYNC,
+                XCB_GRAB_MODE_ASYNC, m_window, cursor, XCB_CURRENT_TIME);
+
+            // Centre cursor
+            xcb_warp_pointer(m_connection, XCB_NONE, m_window, 0, 0, 0, 0, static_cast<int16_t>(m_width / 2), static_cast<int16_t>(m_height / 2));
+            m_last_mouse_x = static_cast<int32_t>(m_width / 2);
+            m_last_mouse_y = static_cast<int32_t>(m_height / 2);
+
+            xcb_free_cursor(m_connection, cursor);
+            xcb_flush(m_connection);
+        } else {
+            xcb_ungrab_pointer(m_connection, XCB_CURRENT_TIME);
+            xcb_flush(m_connection);
+        }
+    }
+
     void XcbWindow::handleEvent(xcb_generic_event_t* event)
     {
         uint8_t event_type = event->response_type & 0x7F;
@@ -207,16 +235,32 @@ namespace WindowLib
         }
 
         case XCB_MOTION_NOTIFY: {
-            auto* mn = reinterpret_cast<xcb_motion_notify_event_t*>(event);
+            xcb_motion_notify_event_t* mn = reinterpret_cast<xcb_motion_notify_event_t*>(event);
+            int32_t x = static_cast<int32_t>(mn->event_x);
+            int32_t y = static_cast<int32_t>(mn->event_y);
+            int32_t dx = m_mouse_tracked ? (x - m_last_mouse_x) : 0;
+            int32_t dy = m_mouse_tracked ? (y - m_last_mouse_y) : 0;
+
+            if (m_cursor_captured && (dx != 0 || dy != 0)) {
+                // Recentre cursor to prevent hitting screen edges
+                int16_t cx = static_cast<int16_t>(m_width / 2);
+                int16_t cy = static_cast<int16_t>(m_height / 2);
+                m_last_mouse_x = static_cast<int32_t>(cx);
+                m_last_mouse_y = static_cast<int32_t>(cy);
+                xcb_warp_pointer(m_connection, XCB_NONE, m_window, 0, 0, 0, 0, cx, cy);
+                xcb_flush(m_connection);
+            } else {
+                m_last_mouse_x = x;
+                m_last_mouse_y = y;
+            }
+
             WindowEvent ev(WindowEvent::Type::MouseMove);
-            ev.mouse_move.x = mn->event_x;
-            ev.mouse_move.y = mn->event_y;
-            ev.mouse_move.dx = m_mouse_tracked ? (mn->event_x - m_last_mouse_x) : 0;
-            ev.mouse_move.dy = m_mouse_tracked ? (mn->event_y - m_last_mouse_y) : 0;
+            ev.mouse_move.x = x;
+            ev.mouse_move.y = y;
+            ev.mouse_move.dx = dx;
+            ev.mouse_move.dy = dy;
             pushEvent(ev);
 
-            m_last_mouse_x = mn->event_x;
-            m_last_mouse_y = mn->event_y;
             m_mouse_tracked = true;
             break;
         }
