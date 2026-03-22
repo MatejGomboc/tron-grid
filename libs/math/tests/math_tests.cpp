@@ -432,6 +432,171 @@ TEST_CASE(view_from_spherical_at_zero_elevation)
     TEST_CHECK(approx(result.z, -5.0f, 1e-4f));
 }
 
+// ── Additional Vec2 coverage ──
+
+TEST_CASE(vec2_negate)
+{
+    MathLib::Vec2 v{3.0f, -4.0f};
+    TEST_CHECK((-v == MathLib::Vec2{-3.0f, 4.0f}));
+}
+
+TEST_CASE(vec2_compound_assignment)
+{
+    MathLib::Vec2 v{1.0f, 2.0f};
+    v += MathLib::Vec2{3.0f, 4.0f};
+    TEST_CHECK((v == MathLib::Vec2{4.0f, 6.0f}));
+    v -= MathLib::Vec2{1.0f, 1.0f};
+    TEST_CHECK((v == MathLib::Vec2{3.0f, 5.0f}));
+    v *= 2.0f;
+    TEST_CHECK((v == MathLib::Vec2{6.0f, 10.0f}));
+}
+
+// ── Additional Vec4 coverage ──
+
+TEST_CASE(vec4_default_zero)
+{
+    MathLib::Vec4 v;
+    TEST_CHECK(v.x == 0.0f && v.y == 0.0f && v.z == 0.0f && v.w == 0.0f);
+}
+
+TEST_CASE(vec4_arithmetic)
+{
+    MathLib::Vec4 a{1.0f, 2.0f, 3.0f, 4.0f};
+    MathLib::Vec4 b{5.0f, 6.0f, 7.0f, 8.0f};
+    TEST_CHECK(((a + b) == MathLib::Vec4{6.0f, 8.0f, 10.0f, 12.0f}));
+    TEST_CHECK(((a - b) == MathLib::Vec4{-4.0f, -4.0f, -4.0f, -4.0f}));
+    TEST_CHECK(((a * 2.0f) == MathLib::Vec4{2.0f, 4.0f, 6.0f, 8.0f}));
+    TEST_CHECK(((-a) == MathLib::Vec4{-1.0f, -2.0f, -3.0f, -4.0f}));
+}
+
+// ── Additional Mat4 coverage ──
+
+TEST_CASE(mat4_rotate_x_90)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Mat4 r = MathLib::Mat4::rotate({1.0f, 0.0f, 0.0f}, PI / 2.0f);
+    MathLib::Vec4 v{0.0f, 1.0f, 0.0f, 1.0f};
+    MathLib::Vec4 result = r * v;
+    TEST_CHECK(approxVec4(result, {0.0f, 0.0f, 1.0f, 1.0f}, 1e-4f));
+}
+
+TEST_CASE(mat4_rotate_y_90)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Mat4 r = MathLib::Mat4::rotate({0.0f, 1.0f, 0.0f}, PI / 2.0f);
+    MathLib::Vec4 v{1.0f, 0.0f, 0.0f, 1.0f};
+    MathLib::Vec4 result = r * v;
+    TEST_CHECK(approxVec4(result, {0.0f, 0.0f, -1.0f, 1.0f}, 1e-4f));
+}
+
+TEST_CASE(mat4_rotate_360_identity)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Mat4 r = MathLib::Mat4::rotate({0.0f, 1.0f, 0.0f}, 2.0f * PI);
+    TEST_CHECK(approxMat4(r, MathLib::Mat4::identity(), 1e-4f));
+}
+
+// ── Additional Quat coverage ──
+
+TEST_CASE(quat_rotate_around_x)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Quat q = MathLib::Quat::fromAxisAngle({1.0f, 0.0f, 0.0f}, PI / 2.0f);
+    MathLib::Vec3 v{0.0f, 1.0f, 0.0f};
+    MathLib::Vec3 result = q.rotate(v);
+    TEST_CHECK(approxVec3(result, {0.0f, 0.0f, 1.0f}, 1e-4f));
+}
+
+TEST_CASE(quat_rotate_around_y)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Quat q = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, PI / 2.0f);
+    MathLib::Vec3 v{1.0f, 0.0f, 0.0f};
+    MathLib::Vec3 result = q.rotate(v);
+    TEST_CHECK(approxVec3(result, {0.0f, 0.0f, -1.0f}, 1e-4f));
+}
+
+TEST_CASE(quat_length)
+{
+    MathLib::Quat q{1.0f, 2.0f, 3.0f, 4.0f};
+    float expected = std::sqrt(1.0f + 4.0f + 9.0f + 16.0f);
+    TEST_CHECK(approx(q.length(), expected));
+}
+
+TEST_CASE(quat_slerp_short_path)
+{
+    // Two quaternions that represent the same rotation but with opposite signs.
+    // Slerp should take the short path (negate one).
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Quat a = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, 0.1f);
+    MathLib::Quat b = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, 0.2f);
+    MathLib::Quat neg_b{-b.w, -b.x, -b.y, -b.z};
+    // Slerp with negated b should produce the same result as slerp with b
+    // (the short path logic adjusts internally)
+    MathLib::Quat result_pos = MathLib::Quat::slerp(a, b, 0.5f);
+    MathLib::Quat result_neg = MathLib::Quat::slerp(a, neg_b, 0.5f);
+    // Both should rotate a vector the same way
+    MathLib::Vec3 v{1.0f, 0.0f, 0.0f};
+    TEST_CHECK(approxVec3(result_pos.rotate(v), result_neg.rotate(v), 1e-4f));
+}
+
+// ── Additional Projection coverage ──
+
+TEST_CASE(perspective_centre_maps_to_origin)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Mat4 proj = MathLib::perspective(PI / 2.0f, 1.0f, 0.1f, 100.0f);
+    // A point at the centre of the view (on the -Z axis) should map to (0, 0) in NDC
+    MathLib::Vec4 centre{0.0f, 0.0f, -1.0f, 1.0f};
+    MathLib::Vec4 clip = proj * centre;
+    float ndc_x = clip.x / clip.w;
+    float ndc_y = clip.y / clip.w;
+    TEST_CHECK(approx(ndc_x, 0.0f, 1e-4f));
+    TEST_CHECK(approx(ndc_y, 0.0f, 1e-4f));
+}
+
+TEST_CASE(perspective_aspect_ratio)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Mat4 proj_wide = MathLib::perspective(PI / 2.0f, 2.0f, 0.1f, 100.0f);
+    MathLib::Mat4 proj_tall = MathLib::perspective(PI / 2.0f, 0.5f, 0.1f, 100.0f);
+    // A point at (1, 0, -1) should have different NDC X for different aspect ratios
+    MathLib::Vec4 point{1.0f, 0.0f, -1.0f, 1.0f};
+    MathLib::Vec4 clip_wide = proj_wide * point;
+    MathLib::Vec4 clip_tall = proj_tall * point;
+    float ndc_x_wide = clip_wide.x / clip_wide.w;
+    float ndc_x_tall = clip_tall.x / clip_tall.w;
+    // Wide aspect should compress X more (smaller NDC X)
+    TEST_CHECK(std::fabs(ndc_x_wide) < std::fabs(ndc_x_tall));
+}
+
+// ── Additional View coverage ──
+
+TEST_CASE(view_from_spherical_elevated)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Vec3 target{0.0f, 0.0f, 0.0f};
+    // Camera directly above, looking down
+    MathLib::Mat4 view = MathLib::viewFromSpherical(target, 0.0f, PI / 2.0f, 10.0f);
+    MathLib::Vec4 origin{0.0f, 0.0f, 0.0f, 1.0f};
+    MathLib::Vec4 result = view * origin;
+    // Origin should be at z = -10 in view space (10 units in front of camera)
+    TEST_CHECK(approx(result.z, -10.0f, 1e-3f));
+}
+
+TEST_CASE(view_from_quaternion_rotated)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    MathLib::Vec3 position{0.0f, 0.0f, 5.0f};
+    // Rotate 180 degrees around Y — camera at (0,0,5) now looks along +Z (away from origin)
+    MathLib::Quat orientation = MathLib::Quat::fromAxisAngle({0.0f, 1.0f, 0.0f}, PI);
+    MathLib::Mat4 view = MathLib::viewFromQuaternion(position, orientation);
+    MathLib::Vec4 origin{0.0f, 0.0f, 0.0f, 1.0f};
+    MathLib::Vec4 result = view * origin;
+    // Origin should now be BEHIND the camera (positive Z in view space)
+    TEST_CHECK(result.z > 0.0f);
+}
+
 int main()
 {
     return static_cast<int>(TestFixtureLib::runAll());
