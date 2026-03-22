@@ -14,6 +14,7 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 - **Etape 6** — Depth Buffer, 3D Vertex Format, Descriptors. Completed 2026-03-22. PR #37.
 - **Etape 7** — Camera, Input, Cube Scene (Phase 1 Finale). Completed 2026-03-22. PR #39.
 - **Etape 8** — Object SSBO and Indirect Draw. Completed 2026-03-22. PR #43.
+- **Etape 9** — Compute Frustum Culling. Completed 2026-03-22. PR #46.
 
 ---
 
@@ -222,6 +223,14 @@ Merge all mesh data into single vertex/index buffers and switch to bindless desc
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-03-22 — Etape 9: Compute frustum culling
+
+GPU compute shader culls objects outside the camera frustum before graphics pass.
+cull.slang tests bounding spheres against 6 frustum planes (Gribb-Hartmann extraction),
+atomically compacts visible indices. Separate compute pipeline + layout, vkCmdFillBuffer
+reset, barriers (fill→compute, compute→draw). MathLib Frustum/extractFrustum/isInsideFrustum
+with 5 unit tests. 63 math tests total.
 
 ### 2026-03-22 — Etape 8: GPU-driven rendering
 

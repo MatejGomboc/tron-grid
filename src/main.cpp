@@ -177,16 +177,61 @@ constexpr std::array<uint32_t, 36> CUBE_INDICES = {{
 constexpr uint32_t CUBE_INDEX_COUNT = static_cast<uint32_t>(CUBE_INDICES.size());
 
 /*!
-    Records a command buffer that clears to dark teal, draws cubes via indirect
-    draw with depth testing, and transitions the swapchain image for presentation.
+    Records a command buffer with compute frustum culling followed by GPU-driven
+    indirect draw with depth testing.
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView colour_view, vk::ImageView depth_view, vk::Image depth_image,
-    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, VkBuffer index_buffer, VkBuffer indirect_buffer, uint32_t draw_count,
-    vk::DescriptorSet descriptor_set)
+    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, VkBuffer index_buffer, VkBuffer indirect_buffer, VkBuffer draw_count_buffer,
+    vk::DescriptorSet graphics_descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
+
+    // ── Compute culling pass ──
+
+    // Reset indirect buffer instance_count to 0
+    cmd.fillBuffer(indirect_buffer, offsetof(VkDrawIndexedIndirectCommand, instanceCount), sizeof(uint32_t), 0);
+
+    // Barrier: fill → compute
+    vk::MemoryBarrier2 fill_to_compute{};
+    fill_to_compute.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+    fill_to_compute.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+    fill_to_compute.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    fill_to_compute.dstAccessMask = vk::AccessFlagBits2::eShaderWrite | vk::AccessFlagBits2::eShaderRead;
+
+    vk::DependencyInfo fill_dep{};
+    fill_dep.memoryBarrierCount = 1;
+    fill_dep.pMemoryBarriers = &fill_to_compute;
+    cmd.pipelineBarrier2(fill_dep);
+
+    // Dispatch compute culling
+    CullPushConstants cull_push{};
+    for (int i = 0; i < 6; ++i) {
+        cull_push.planes[i] = frustum.planes[i];
+    }
+    cull_push.object_count = total_objects;
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline.cullPipeline());
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipeline.cullLayout(), 0, {pipeline.computeDescriptorSet()}, {});
+    cmd.pushConstants<CullPushConstants>(*pipeline.cullLayout(), vk::ShaderStageFlagBits::eCompute, 0, cull_push);
+
+    uint32_t workgroup_count = (total_objects + 63) / 64;
+    cmd.dispatch(workgroup_count, 1, 1);
+
+    // Barrier: compute → indirect draw + vertex shader read
+    vk::MemoryBarrier2 compute_to_draw{};
+    compute_to_draw.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    compute_to_draw.srcAccessMask = vk::AccessFlagBits2::eShaderWrite;
+    compute_to_draw.dstStageMask = vk::PipelineStageFlagBits2::eDrawIndirect | vk::PipelineStageFlagBits2::eVertexShader;
+    compute_to_draw.dstAccessMask = vk::AccessFlagBits2::eIndirectCommandRead | vk::AccessFlagBits2::eShaderRead;
+
+    vk::DependencyInfo compute_dep{};
+    compute_dep.memoryBarrierCount = 1;
+    compute_dep.pMemoryBarriers = &compute_to_draw;
+    cmd.pipelineBarrier2(compute_dep);
+
+    // ── Graphics pass ──
 
     // Transition colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
     vk::ImageMemoryBarrier2 to_colour{};
@@ -271,16 +316,16 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     scissor.extent = extent;
     cmd.setScissor(0, {scissor});
 
-    // Bind descriptor set (camera UBO + object SSBO)
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
+    // Bind descriptor set (camera UBO + object SSBO + visible indices)
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {graphics_descriptor_set}, {});
 
     // Bind vertex and index buffers
     vk::DeviceSize offset = 0;
     cmd.bindVertexBuffers(0, {vertex_buffer}, {offset});
     cmd.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
 
-    // GPU-driven draw — single indirect call renders all cubes
-    cmd.drawIndexedIndirect(indirect_buffer, 0, draw_count, sizeof(VkDrawIndexedIndirectCommand));
+    // GPU-driven draw — single indirect call, instance count set by compute culling
+    cmd.drawIndexedIndirect(indirect_buffer, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
 
     cmd.endRendering();
 
@@ -315,7 +360,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     camera state, input processing, and delta time.
 */
 static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, VkBuffer vertex_buffer, VkBuffer index_buffer,
-    VkBuffer indirect_buffer, uint32_t draw_count, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers,
+    VkBuffer indirect_buffer, VkBuffer draw_count_buffer, uint32_t total_objects, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers,
     SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv, LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
@@ -532,20 +577,22 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Only reset fence after we know we will submit work
         device.get().resetFences({*in_flight_fences[current_frame]});
 
-        // Update camera UBO
+        // Update camera UBO and extract frustum planes
+        MathLib::Frustum frustum{};
         {
             float aspect = static_cast<float>(swapchain.extent().width) / static_cast<float>(swapchain.extent().height);
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
             pipeline.updateCameraUBO(current_frame, ubo);
+            frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
         }
 
-        // Record command buffer
+        // Record command buffer — compute culling + graphics rendering in one submission
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
         recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline, vertex_buffer,
-            index_buffer, indirect_buffer, draw_count, pipeline.descriptorSet(current_frame));
+            index_buffer, indirect_buffer, draw_count_buffer, pipeline.graphicsDescriptorSet(current_frame), frustum, total_objects);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -639,15 +686,16 @@ int main()
         // VMA allocator
         Allocator allocator(instance, device, logger);
 
-        // Load shaders and create pipeline
+        // Load shaders and create pipelines
         std::string exe_dir = executableDirectory();
-        std::vector<uint32_t> spirv = loadSpirv(exe_dir + "triangle.spv", logger);
+        std::vector<uint32_t> triangle_spirv = loadSpirv(exe_dir + "triangle.spv", logger);
+        std::vector<uint32_t> cull_spirv = loadSpirv(exe_dir + "cull.spv", logger);
 
         // Create swapchain
         Swapchain swapchain(device, *surface, config.width, config.height, logger);
 
-        // Graphics pipeline (with depth testing, descriptors, push constants)
-        Pipeline pipeline(device, swapchain.format().format, DEPTH_FORMAT, spirv, spirv, MAX_FRAMES_IN_FLIGHT, logger);
+        // Graphics + compute pipelines
+        Pipeline pipeline(device, swapchain.format().format, DEPTH_FORMAT, triangle_spirv, triangle_spirv, cull_spirv, MAX_FRAMES_IN_FLIGHT, logger);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
@@ -783,7 +831,8 @@ int main()
         draw_cmd.firstInstance = 0;
 
         AllocatedBuffer indirect_draw_buffer = allocator.createBuffer(sizeof(VkDrawIndexedIndirectCommand),
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
         // Upload indirect command
         {
@@ -820,10 +869,78 @@ int main()
 
         logger.logInfo("Indirect draw buffer created (1 batch, " + std::to_string(TOTAL_CUBES) + " instances).");
 
-        // Bind object SSBO to all per-frame descriptor sets
+        // Object bounds SSBO — bounding spheres for frustum culling
+        constexpr float CUBE_BOUNDING_RADIUS = 0.866025f; // sqrt(3) * 0.5 — half-diagonal of unit cube
+        std::vector<ObjectBounds> object_bounds;
+        object_bounds.reserve(TOTAL_CUBES);
+        for (int32_t x = 0; x < CUBE_GRID_SIZE; ++x) {
+            for (int32_t y = 0; y < CUBE_GRID_SIZE; ++y) {
+                for (int32_t z = 0; z < CUBE_GRID_SIZE; ++z) {
+                    MathLib::Vec3 pos{
+                        static_cast<float>(x) * CUBE_SPACING,
+                        static_cast<float>(y) * CUBE_SPACING,
+                        static_cast<float>(z) * CUBE_SPACING,
+                    };
+                    object_bounds.push_back({pos, CUBE_BOUNDING_RADIUS});
+                }
+            }
+        }
+
+        VkDeviceSize bounds_size = static_cast<VkDeviceSize>(object_bounds.size() * sizeof(ObjectBounds));
+        AllocatedBuffer bounds_ssbo = allocator.createBuffer(bounds_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+
+        // Upload bounds SSBO
+        {
+            AllocatedBuffer bounds_staging = allocator.createBuffer(bounds_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+            VmaAllocationInfo bounds_staging_info = bounds_staging.allocationInfo();
+            std::memcpy(bounds_staging_info.pMappedData, object_bounds.data(), bounds_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+            vk::BufferCopy bounds_region{};
+            bounds_region.size = bounds_size;
+            copy_cmd.copyBuffer(bounds_staging.buffer(), bounds_ssbo.buffer(), {bounds_region});
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd = *copy_cmd;
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Bounds SSBO uploaded (" + std::to_string(TOTAL_CUBES) + " bounding spheres).");
+
+        // Visible indices buffer — compute shader writes visible object indices here
+        VkDeviceSize visible_indices_size = static_cast<VkDeviceSize>(TOTAL_CUBES * sizeof(uint32_t));
+        AllocatedBuffer visible_indices_buffer = allocator.createBuffer(visible_indices_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+
+        // Draw count buffer — compute shader writes the number of visible batches here
+        VkDeviceSize draw_count_size = sizeof(uint32_t);
+        AllocatedBuffer draw_count_buffer = allocator.createBuffer(draw_count_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+
+        // Bind all descriptor sets
         for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             pipeline.bindObjectSSBO(i, object_ssbo.buffer(), ssbo_size);
+            pipeline.bindVisibleIndices(i, visible_indices_buffer.buffer(), visible_indices_size);
         }
+
+        pipeline.bindComputeResources(bounds_ssbo.buffer(), bounds_size, indirect_draw_buffer.buffer(), sizeof(VkDrawIndexedIndirectCommand), draw_count_buffer.buffer(),
+            draw_count_size, visible_indices_buffer.buffer(), visible_indices_size);
 
         // Render event signal — main thread emits, render thread consumes
         SignalsLib::Signal<RenderEvent> render_signal;
@@ -832,8 +949,8 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), vertex_buffer.buffer(),
-            index_buffer.buffer(), indirect_draw_buffer.buffer(), 1u, std::ref(command_pool), std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex),
-            std::ref(render_cv), std::ref(logger));
+            index_buffer.buffer(), indirect_draw_buffer.buffer(), draw_count_buffer.buffer(), static_cast<uint32_t>(TOTAL_CUBES), std::ref(command_pool),
+            std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {

@@ -28,13 +28,14 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # Slang shader compilation — slangc from Vulkan SDK
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 
-set(SHADER_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/triangle.slang)
 set(SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
+# Triangle shader (vertex + fragment)
+set(TRIANGLE_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/triangle.slang)
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT_DIR}/triangle.spv
     COMMAND ${SLANGC_EXECUTABLE}
-        ${SHADER_SOURCE}
+        ${TRIANGLE_SOURCE}
         -target spirv
         -profile spirv_1_4
         -emit-spirv-directly
@@ -43,19 +44,42 @@ add_custom_command(
         -entry vertMain
         -entry fragMain
         -o ${SHADER_OUTPUT_DIR}/triangle.spv
-    DEPENDS ${SHADER_SOURCE}
+    DEPENDS ${TRIANGLE_SOURCE}
     COMMENT "Compiling triangle.slang -> triangle.spv"
     VERBATIM
 )
 
-add_custom_target(shaders DEPENDS ${SHADER_OUTPUT_DIR}/triangle.spv)
+# Cull shader (compute)
+set(CULL_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cull.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/cull.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${CULL_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -entry cullMain
+        -o ${SHADER_OUTPUT_DIR}/cull.spv
+    DEPENDS ${CULL_SOURCE}
+    COMMENT "Compiling cull.slang -> cull.spv"
+    VERBATIM
+)
+
+add_custom_target(shaders DEPENDS
+    ${SHADER_OUTPUT_DIR}/triangle.spv
+    ${SHADER_OUTPUT_DIR}/cull.spv
+)
 add_dependencies(${PROJECT_NAME} shaders)
 
-# Copy compiled shader next to the executable
+# Copy compiled shaders next to the executable
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/triangle.spv
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/triangle.spv
-    COMMENT "Copying triangle.spv to output directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/cull.spv
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/cull.spv
+    COMMENT "Copying shaders to output directory"
     VERBATIM
 )
