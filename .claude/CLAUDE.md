@@ -163,7 +163,7 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-**Phase 1 — Solid Foundation** is complete (fly through 5x5x5 cube grid with WASD + mouse look).
+**Phase 2 — GPU-Driven Resources** is in progress (1000 cubes via SSBO + indirect draw, compute culling next).
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 See `TODO.md` for the development journal.
 
