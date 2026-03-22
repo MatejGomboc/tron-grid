@@ -1,0 +1,131 @@
+/*
+    Copyright (C) 2026 Matej Gomboc https://github.com/MatejGomboc/tron-grid
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+*/
+
+#pragma once
+
+#include "math/matrix.hpp"
+#include "math/quaternion.hpp"
+#include "math/vector.hpp"
+#include <cmath>
+
+namespace MathLib
+{
+
+    /*!
+        Returns a Vulkan-compatible perspective projection matrix.
+
+        Vulkan clip space: X right, Y down, Z into screen, depth [0, 1].
+        Right-handed with Y-up world coordinates — the matrix flips Y.
+
+        \param fov_y Vertical field of view in radians.
+        \param aspect Width / height aspect ratio.
+        \param near Near clipping plane distance (must be > 0).
+        \param far Far clipping plane distance (must be > near).
+        \return Column-major 4x4 perspective projection matrix.
+    */
+    [[nodiscard]] inline Mat4 perspective(float fov_y, float aspect, float near, float far)
+    {
+        float tan_half_fov = std::tan(fov_y * 0.5f);
+
+        Mat4 result{};
+        result.m[0][0] = 1.0f / (aspect * tan_half_fov);
+        result.m[1][1] = -1.0f / tan_half_fov; // Vulkan Y-down: negate Y
+        result.m[2][2] = far / (near - far);
+        result.m[2][3] = -1.0f;
+        result.m[3][2] = (near * far) / (near - far);
+        return result;
+    }
+
+    /*!
+        Returns a view matrix for a camera at \p eye looking at \p target.
+
+        Aviation / free-flight mode: the camera is positioned at \p eye and
+        oriented to look at \p target with \p up defining the world up direction.
+
+        \param eye Camera position in world space.
+        \param target Point the camera looks at.
+        \param up World up direction (typically {0, 1, 0}).
+        \return Column-major 4x4 view matrix.
+    */
+    [[nodiscard]] inline Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up)
+    {
+        Vec3 f = (target - eye).normalised(); // Forward
+        Vec3 r = f.cross(up).normalised(); // Right
+        Vec3 u = r.cross(f); // Recomputed up
+
+        Mat4 result = Mat4::identity();
+        result.m[0][0] = r.x;
+        result.m[1][0] = r.y;
+        result.m[2][0] = r.z;
+
+        result.m[0][1] = u.x;
+        result.m[1][1] = u.y;
+        result.m[2][1] = u.z;
+
+        result.m[0][2] = -f.x;
+        result.m[1][2] = -f.y;
+        result.m[2][2] = -f.z;
+
+        result.m[3][0] = -r.dot(eye);
+        result.m[3][1] = -u.dot(eye);
+        result.m[3][2] = f.dot(eye);
+        return result;
+    }
+
+    /*!
+        Returns a view matrix from a position and quaternion orientation.
+
+        Aviation / free-flight mode: the camera is at \p position with
+        orientation defined by \p orientation. The quaternion encodes the
+        camera's rotation relative to the default forward direction (0, 0, -1).
+
+        \param position Camera position in world space.
+        \param orientation Camera orientation as a unit quaternion.
+        \return Column-major 4x4 view matrix.
+    */
+    [[nodiscard]] inline Mat4 viewFromQuaternion(const Vec3& position, const Quat& orientation)
+    {
+        // The view matrix is the inverse of the camera's model matrix.
+        // For a rotation quaternion, inverse = conjugate (transpose of rotation part).
+        Mat4 rotation = orientation.toMat4().transposed();
+        Mat4 translation = Mat4::translate(-position);
+        return rotation * translation;
+    }
+
+    /*!
+        Returns a view matrix for an orbit camera in spherical polar coordinates.
+
+        The camera orbits around \p target at the given \p radius, positioned
+        by \p azimuth (horizontal angle, radians) and \p elevation (vertical
+        angle, radians). Elevation of 0 is on the horizontal plane; positive
+        looks from above.
+
+        \param target The point the camera orbits around.
+        \param azimuth Horizontal angle in radians (0 = +X direction).
+        \param elevation Vertical angle in radians (0 = horizontal, +pi/2 = top).
+        \param radius Distance from the target.
+        \return Column-major 4x4 view matrix.
+    */
+    [[nodiscard]] inline Mat4 viewFromSpherical(const Vec3& target, float azimuth, float elevation, float radius)
+    {
+        float cos_elev = std::cos(elevation);
+        Vec3 eye{
+            target.x + radius * cos_elev * std::cos(azimuth),
+            target.y + radius * std::sin(elevation),
+            target.z + radius * cos_elev * std::sin(azimuth),
+        };
+        return lookAt(eye, target, {0.0f, 1.0f, 0.0f});
+    }
+
+} // namespace MathLib
