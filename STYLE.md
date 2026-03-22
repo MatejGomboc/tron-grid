@@ -289,6 +289,19 @@ Licence headers use plain `/* */` (not doxygen) with the full GPL v3 notice:
 
 Follow the C++ conventions where applicable — Slang is syntactically close to HLSL/C++.
 
+**Use HLSL flavour exclusively** — not GLSL. Slang supports both, but we standardise on HLSL
+for consistency:
+
+| HLSL (correct) | GLSL (wrong) |
+|----------------|--------------|
+| `float2`, `float3`, `float4` | `vec2`, `vec3`, `vec4` |
+| `float3x3`, `float4x4` | `mat3`, `mat4` |
+| `mul(A, B)` | `A * B` for matrices |
+| `ConstantBuffer<T>` | `uniform` block |
+| `StructuredBuffer<T>` | `buffer` block |
+| `SV_Position`, `SV_Target` | `gl_Position`, layout location |
+| `(float3x3)matrix` | constructor cast |
+
 ### Formatting
 
 | Setting | Value |
