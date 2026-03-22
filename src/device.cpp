@@ -186,17 +186,18 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     shader_draw_params.shaderDrawParameters = vk::True;
     shader_draw_params.pNext = &dynamic_rendering_features;
 
-    // Enable descriptor indexing features (Vulkan 1.2 core) — needed for bindless/GPU-driven
-    vk::PhysicalDeviceDescriptorIndexingFeatures descriptor_indexing_features{};
-    descriptor_indexing_features.descriptorBindingStorageBufferUpdateAfterBind = vk::True;
-    descriptor_indexing_features.descriptorBindingPartiallyBound = vk::True;
-    descriptor_indexing_features.runtimeDescriptorArray = vk::True;
-    descriptor_indexing_features.pNext = &shader_draw_params;
+    // Enable Vulkan 1.2 features — all promoted features go here (not separate structs)
+    vk::PhysicalDeviceVulkan12Features vulkan12_features{};
+    vulkan12_features.drawIndirectCount = vk::True;
+    vulkan12_features.descriptorBindingStorageBufferUpdateAfterBind = vk::True;
+    vulkan12_features.descriptorBindingPartiallyBound = vk::True;
+    vulkan12_features.runtimeDescriptorArray = vk::True;
+    vulkan12_features.pNext = &shader_draw_params;
 
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.multiDrawIndirect = vk::True;
     features2.features.shaderStorageBufferArrayDynamicIndexing = vk::True;
-    features2.pNext = &descriptor_indexing_features;
+    features2.pNext = &vulkan12_features;
 
     vk::DeviceCreateInfo device_info{};
     device_info.pNext = &features2;

@@ -81,5 +81,8 @@ void cullMain(uint3 thread_id : SV_DispatchThreadID)
 
         // Write the object index to the compacted visible indices buffer
         visible_indices[visible_slot] = object_index;
+
+        // Ensure draw count is 1 (at least one visible object → one draw batch)
+        InterlockedMax(draw_count[0], 1);
     }
 }
