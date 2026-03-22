@@ -31,6 +31,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#if defined(_MSC_VER) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -188,6 +191,21 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
 
+    // Cross-frame synchronisation: the fence guarantees execution completion, but the
+    // sync validator requires explicit memory barriers for cross-submit hazards.
+    // This covers: previous frame's drawIndexedIndirectCount read → this frame's fillBuffer write,
+    // and previous frame's depth write → this frame's depth layout transition.
+    vk::MemoryBarrier2 cross_frame{};
+    cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eDrawIndirect | vk::PipelineStageFlagBits2::eLateFragmentTests;
+    cross_frame.srcAccessMask = vk::AccessFlagBits2::eIndirectCommandRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eTransfer | vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+    cross_frame.dstAccessMask = vk::AccessFlagBits2::eTransferWrite | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+
+    vk::DependencyInfo cross_frame_dep{};
+    cross_frame_dep.memoryBarrierCount = 1;
+    cross_frame_dep.pMemoryBarriers = &cross_frame;
+    cmd.pipelineBarrier2(cross_frame_dep);
+
     // ── Compute culling pass ──
 
     // Reset indirect buffer instance_count and draw count to 0
@@ -242,8 +260,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     // ── Graphics pass ──
 
     // Transition colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
+    // srcStageMask must include eColorAttachmentOutput to synchronise with the acquire semaphore.
     vk::ImageMemoryBarrier2 to_colour{};
-    to_colour.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+    to_colour.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     to_colour.srcAccessMask = vk::AccessFlagBits2::eNone;
     to_colour.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     to_colour.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
@@ -259,9 +278,10 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     to_colour.subresourceRange.layerCount = 1;
 
     // Transition depth: UNDEFINED → DEPTH_ATTACHMENT_OPTIMAL
+    // srcStageMask covers previous frame's depth writes (cross-frame sync).
     vk::ImageMemoryBarrier2 to_depth{};
-    to_depth.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
-    to_depth.srcAccessMask = vk::AccessFlagBits2::eNone;
+    to_depth.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+    to_depth.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
     to_depth.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
     to_depth.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
     to_depth.oldLayout = vk::ImageLayout::eUndefined;
@@ -638,7 +658,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         vk::SemaphoreSubmitInfo signal_sem{};
         signal_sem.semaphore = *render_finished_semaphores[image_index];
-        signal_sem.stageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+        signal_sem.stageMask = vk::PipelineStageFlagBits2::eAllCommands;
 
         vk::CommandBufferSubmitInfo cmd_submit{};
         cmd_submit.commandBuffer = *cmd;
@@ -694,6 +714,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
 int main()
 {
+#if defined(_MSC_VER) && defined(_DEBUG)
+    // Enable MSVC debug heap leak detection — reports C++ heap leaks on exit.
+    _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+#endif
+
     LoggingLib::Logger logger;
 
     try {
