@@ -100,8 +100,8 @@ tron_grid/
 │   ├── device.hpp/cpp    # GPU selection + logical device
 │   ├── surface.hpp/cpp   # Platform Vulkan surface
 │   ├── swapchain.hpp/cpp # Swapchain with MAILBOX + old-swapchain reuse
-│   ├── pipeline.hpp/cpp  # Graphics pipeline (dynamic rendering)
-│   ├── allocator.hpp/cpp # VMA RAII wrapper (Allocator + AllocatedBuffer)
+│   ├── pipeline.hpp/cpp  # Graphics pipeline (dynamic rendering, depth, descriptors, push constants)
+│   ├── allocator.hpp/cpp # VMA RAII wrapper (Allocator + AllocatedBuffer + AllocatedImage)
 │   ├── triangle.slang    # Slang vertex + fragment shader
 │   ├── volk.cpp          # Volk dynamic loader translation unit
 │   ├── vma.cpp           # VMA implementation translation unit
