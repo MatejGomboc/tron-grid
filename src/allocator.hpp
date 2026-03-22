@@ -94,6 +94,65 @@ private:
     VmaAllocation m_allocation{VK_NULL_HANDLE}; //!< Owned allocation handle.
 };
 
+//! RAII wrapper for a VMA image and its allocation.
+class AllocatedImage {
+public:
+    //! Takes ownership of a VMA image+allocation pair.
+    AllocatedImage(VmaAllocator allocator, VkImage image, VmaAllocation allocation) :
+        m_allocator(allocator),
+        m_image(image),
+        m_allocation(allocation)
+    {
+    }
+
+    ~AllocatedImage()
+    {
+        if (m_image != VK_NULL_HANDLE) {
+            vmaDestroyImage(m_allocator, m_image, m_allocation);
+        }
+    }
+
+    // Non-copyable
+    AllocatedImage(const AllocatedImage&) = delete;
+    AllocatedImage& operator=(const AllocatedImage&) = delete;
+
+    // Movable
+    AllocatedImage(AllocatedImage&& other) noexcept :
+        m_allocator(other.m_allocator),
+        m_image(other.m_image),
+        m_allocation(other.m_allocation)
+    {
+        other.m_image = VK_NULL_HANDLE;
+        other.m_allocation = VK_NULL_HANDLE;
+    }
+
+    AllocatedImage& operator=(AllocatedImage&& other) noexcept
+    {
+        if (this != &other) {
+            if (m_image != VK_NULL_HANDLE) {
+                vmaDestroyImage(m_allocator, m_image, m_allocation);
+            }
+            m_allocator = other.m_allocator;
+            m_image = other.m_image;
+            m_allocation = other.m_allocation;
+            other.m_image = VK_NULL_HANDLE;
+            other.m_allocation = VK_NULL_HANDLE;
+        }
+        return *this;
+    }
+
+    //! Raw VkImage handle.
+    [[nodiscard]] VkImage image() const
+    {
+        return m_image;
+    }
+
+private:
+    VmaAllocator m_allocator{VK_NULL_HANDLE}; //!< Non-owning reference to the parent allocator.
+    VkImage m_image{VK_NULL_HANDLE}; //!< Owned image handle.
+    VmaAllocation m_allocation{VK_NULL_HANDLE}; //!< Owned allocation handle.
+};
+
 //! RAII wrapper around VmaAllocator — creates and destroys the allocator automatically.
 class Allocator {
 public:
@@ -119,6 +178,17 @@ public:
     */
     [[nodiscard]] AllocatedBuffer createBuffer(VkDeviceSize size, VkBufferUsageFlags buffer_usage, VmaAllocationCreateFlags alloc_flags,
         VmaMemoryUsage memory_usage) const;
+
+    /*!
+        Creates a GPU image with a VMA allocation.
+
+        \param width Image width in pixels.
+        \param height Image height in pixels.
+        \param format Vulkan image format.
+        \param usage Vulkan image usage flags.
+        \return An RAII wrapper owning the image and its allocation.
+    */
+    [[nodiscard]] AllocatedImage createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage) const;
 
     //! Raw VmaAllocator handle.
     [[nodiscard]] VmaAllocator handle() const

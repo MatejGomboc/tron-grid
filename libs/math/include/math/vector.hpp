@@ -19,6 +19,9 @@
 namespace MathLib
 {
 
+    //! Pi constant (3.14159...).
+    constexpr float PI = 3.14159265358979323846f;
+
     //! 2D vector (UV coordinates, screen positions).
     struct Vec2 {
         float x{0.0f}; //!< X component.
