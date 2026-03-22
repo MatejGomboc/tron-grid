@@ -182,7 +182,7 @@ constexpr uint32_t CUBE_INDEX_COUNT = static_cast<uint32_t>(CUBE_INDICES.size())
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView colour_view, vk::ImageView depth_view, vk::Image depth_image,
     vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, VkBuffer index_buffer, VkBuffer indirect_buffer, VkBuffer draw_count_buffer,
-    vk::DescriptorSet graphics_descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects)
+    vk::DescriptorSet graphics_descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects, vk::QueryPool timestamp_pool, uint32_t query_base)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -190,8 +190,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
 
     // ── Compute culling pass ──
 
-    // Reset indirect buffer instance_count to 0
+    // Reset indirect buffer instance_count and draw count to 0
     cmd.fillBuffer(indirect_buffer, offsetof(VkDrawIndexedIndirectCommand, instanceCount), sizeof(uint32_t), 0);
+    cmd.fillBuffer(draw_count_buffer, 0, sizeof(uint32_t), 0);
 
     // Barrier: fill → compute
     vk::MemoryBarrier2 fill_to_compute{};
@@ -204,6 +205,10 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     fill_dep.memoryBarrierCount = 1;
     fill_dep.pMemoryBarriers = &fill_to_compute;
     cmd.pipelineBarrier2(fill_dep);
+
+    // Reset and write timestamp before compute dispatch
+    cmd.resetQueryPool(timestamp_pool, query_base, 2);
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eTopOfPipe, timestamp_pool, query_base);
 
     // Dispatch compute culling
     CullPushConstants cull_push{};
@@ -218,6 +223,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
 
     uint32_t workgroup_count = (total_objects + 63) / 64;
     cmd.dispatch(workgroup_count, 1, 1);
+
+    // Write timestamp after compute dispatch
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eComputeShader, timestamp_pool, query_base + 1);
 
     // Barrier: compute → indirect draw + vertex shader read
     vk::MemoryBarrier2 compute_to_draw{};
@@ -324,8 +332,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     cmd.bindVertexBuffers(0, {vertex_buffer}, {offset});
     cmd.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
 
-    // GPU-driven draw — single indirect call, instance count set by compute culling
-    cmd.drawIndexedIndirect(indirect_buffer, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
+    // Fully GPU-driven draw — both draw parameters AND draw count come from the GPU
+    cmd.drawIndexedIndirectCount(indirect_buffer, 0, draw_count_buffer, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
 
     cmd.endRendering();
 
@@ -375,6 +383,16 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
     }
+
+    // GPU timestamp query pool — 2 queries per frame (before + after compute dispatch)
+    vk::QueryPoolCreateInfo query_pool_info{};
+    query_pool_info.queryType = vk::QueryType::eTimestamp;
+    query_pool_info.queryCount = MAX_FRAMES_IN_FLIGHT * 2;
+    vk::raii::QueryPool timestamp_pool(device.get(), query_pool_info);
+
+    // Get the timestamp period (nanoseconds per tick)
+    vk::PhysicalDeviceProperties gpu_props = device.physicalDevice().getProperties();
+    float timestamp_period = gpu_props.limits.timestampPeriod; // nanoseconds per tick
 
     // Per-swapchain-image semaphores for present
     std::vector<vk::raii::Semaphore> render_finished_semaphores;
@@ -433,6 +451,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 
     uint32_t current_frame{0};
+    uint32_t frame_counter{0}; //!< For periodic cull time logging.
+    std::array<bool, MAX_FRAMES_IN_FLIGHT> queries_submitted{}; //!< Per-frame: true after that frame's queries have been recorded.
 
     while (true) {
         // Block until the main thread sends an event
@@ -556,6 +576,22 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             return;
         }
 
+        // Read back timestamp results (only if this frame slot has been submitted before)
+        if (queries_submitted[current_frame]) {
+            uint32_t query_base = current_frame * 2;
+            std::array<uint64_t, 2> timestamps{};
+            vk::Result query_result = static_cast<vk::Device>(*device.get())
+                                          .getQueryPoolResults(*timestamp_pool, query_base, 2, sizeof(timestamps), timestamps.data(), sizeof(uint64_t),
+                                              vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+            if (query_result == vk::Result::eSuccess && timestamps[1] > timestamps[0]) {
+                float cull_time_ms = static_cast<float>(timestamps[1] - timestamps[0]) * timestamp_period / 1'000'000.0f;
+                // Log once per ~60 frames to avoid spam
+                if ((++frame_counter) % 60 == 0) {
+                    logger.logInfo("Cull time: " + std::to_string(cull_time_ms) + " ms (" + std::to_string(total_objects) + " objects).");
+                }
+            }
+        }
+
         // Acquire next swapchain image
         uint32_t image_index{0};
         vk::Result acquire_result = vk::Result::eSuccess;
@@ -591,8 +627,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Record command buffer — compute culling + graphics rendering in one submission
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
+        uint32_t query_base = current_frame * 2;
         recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline, vertex_buffer,
-            index_buffer, indirect_buffer, draw_count_buffer, pipeline.graphicsDescriptorSet(current_frame), frustum, total_objects);
+            index_buffer, indirect_buffer, draw_count_buffer, pipeline.graphicsDescriptorSet(current_frame), frustum, total_objects, *timestamp_pool, query_base);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -645,6 +682,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             }
         }
 
+        queries_submitted[current_frame] = true;
         current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         // If keys are still held, keep rendering (continuous movement)
@@ -1020,6 +1058,8 @@ int main()
         // Request initial frame render
         emitRenderEvent({RenderEvent::Type::Render, 0, 0, 0, 0, false});
 
+        logger.logInfo("Scene: " + std::to_string(TOTAL_CUBES) + " objects, " + std::to_string(CUBE_GRID_SIZE) + "x" + std::to_string(CUBE_GRID_SIZE) + "x"
+            + std::to_string(CUBE_GRID_SIZE) + " grid, GPU-driven indirect draw + compute culling.");
         logger.logInfo("Press ESC to close. Right-click to toggle mouse look. WASD + Space/Shift to fly.");
 
         // Main loop — handles Close and ESC. All other events are forwarded

@@ -57,7 +57,7 @@ std::vector<uint32_t> loadSpirv(const std::string& path, LoggingLib::Logger& log
     }
 
     std::streamsize file_size = static_cast<std::streamsize>(file.tellg());
-    if (file_size <= 0 || file_size % sizeof(uint32_t) != 0) {
+    if ((file_size <= 0) || (file_size % sizeof(uint32_t) != 0)) {
         logger.logFatal("Invalid SPIR-V file size: " + path + ".");
         std::abort();
     }

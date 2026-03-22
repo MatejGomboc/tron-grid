@@ -102,6 +102,31 @@ getters, factory functions, query functions.
 [[nodiscard]] uint32_t graphicsFamilyIndex() const;
 ```
 
+### Operator Precedence
+
+Use explicit parentheses when combining arithmetic, bitwise, or increment/decrement operators
+with comparison or logical operators. Do not rely on the reader knowing precedence rules:
+
+```cpp
+// Correct — each sub-expression is explicit
+if ((++frame_counter) % 60 == 0) { ... }
+if ((a & mask) != 0) { ... }
+if ((file_size <= 0) || (file_size % sizeof(uint32_t) != 0)) { ... }
+
+// Wrong — relies on implicit precedence
+if (++frame_counter % 60 == 0) { ... }
+if (a & mask != 0) { ... }
+```
+
+Simple boolean chains with comparisons are fine without extra parentheses — the precedence
+of `==`, `!=`, `<`, `>` relative to `&&` and `||` is universally understood:
+
+```cpp
+// Fine — no extra parentheses needed
+if (width == 0 || height == 0) { ... }
+if (!indices.isComplete() || !hasRequiredExtensions(device)) { ... }
+```
+
 ### Constants
 
 Use `constexpr` for compile-time constants. Name them `SCREAMING_SNAKE_CASE`. Do not use
