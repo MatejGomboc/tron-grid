@@ -181,8 +181,22 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     dynamic_rendering_features.dynamicRendering = vk::True;
     dynamic_rendering_features.pNext = &sync2_features;
 
+    // Enable shader draw parameters (Vulkan 1.1 core) — needed for SV_InstanceID in SSBO indexing
+    vk::PhysicalDeviceShaderDrawParametersFeatures shader_draw_params{};
+    shader_draw_params.shaderDrawParameters = vk::True;
+    shader_draw_params.pNext = &dynamic_rendering_features;
+
+    // Enable descriptor indexing features (Vulkan 1.2 core) — needed for bindless/GPU-driven
+    vk::PhysicalDeviceDescriptorIndexingFeatures descriptor_indexing_features{};
+    descriptor_indexing_features.descriptorBindingStorageBufferUpdateAfterBind = vk::True;
+    descriptor_indexing_features.descriptorBindingPartiallyBound = vk::True;
+    descriptor_indexing_features.runtimeDescriptorArray = vk::True;
+    descriptor_indexing_features.pNext = &shader_draw_params;
+
     vk::PhysicalDeviceFeatures2 features2{};
-    features2.pNext = &dynamic_rendering_features;
+    features2.features.multiDrawIndirect = vk::True;
+    features2.features.shaderStorageBufferArrayDynamicIndexing = vk::True;
+    features2.pNext = &descriptor_indexing_features;
 
     vk::DeviceCreateInfo device_info{};
     device_info.pNext = &features2;

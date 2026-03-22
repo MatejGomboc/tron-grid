@@ -67,7 +67,7 @@ constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 constexpr vk::Format DEPTH_FORMAT = vk::Format::eD32Sfloat;
 
 //! Cube grid dimensions.
-constexpr int32_t CUBE_GRID_SIZE = 5;
+constexpr int32_t CUBE_GRID_SIZE = 10;
 
 //! Spacing between cubes in the grid.
 constexpr float CUBE_SPACING = 3.0f;
@@ -177,13 +177,12 @@ constexpr std::array<uint32_t, 36> CUBE_INDICES = {{
 constexpr uint32_t CUBE_INDEX_COUNT = static_cast<uint32_t>(CUBE_INDICES.size());
 
 /*!
-    Records a command buffer that clears to dark teal, draws cubes with
-    depth testing, binds descriptors and push constants, and transitions the
-    swapchain image for presentation.
+    Records a command buffer that clears to dark teal, draws cubes via indirect
+    draw with depth testing, and transitions the swapchain image for presentation.
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView colour_view, vk::ImageView depth_view, vk::Image depth_image,
-    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, VkBuffer index_buffer, vk::DescriptorSet descriptor_set,
-    const std::vector<MathLib::Mat4>& model_matrices)
+    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, VkBuffer index_buffer, VkBuffer indirect_buffer, uint32_t draw_count,
+    vk::DescriptorSet descriptor_set)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -272,7 +271,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     scissor.extent = extent;
     cmd.setScissor(0, {scissor});
 
-    // Bind descriptor set (camera UBO)
+    // Bind descriptor set (camera UBO + object SSBO)
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
 
     // Bind vertex and index buffers
@@ -280,11 +279,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     cmd.bindVertexBuffers(0, {vertex_buffer}, {offset});
     cmd.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
 
-    // Draw each cube with its own model matrix via push constants
-    for (const MathLib::Mat4& model : model_matrices) {
-        cmd.pushConstants<MathLib::Mat4>(*pipeline.layout(), vk::ShaderStageFlagBits::eVertex, 0, model);
-        cmd.drawIndexed(CUBE_INDEX_COUNT, 1, 0, 0, 0);
-    }
+    // GPU-driven draw — single indirect call renders all cubes
+    cmd.drawIndexedIndirect(indirect_buffer, 0, draw_count, sizeof(VkDrawIndexedIndirectCommand));
 
     cmd.endRendering();
 
@@ -319,8 +315,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     camera state, input processing, and delta time.
 */
 static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, VkBuffer vertex_buffer, VkBuffer index_buffer,
-    vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex,
-    std::condition_variable& render_cv, LoggingLib::Logger& logger)
+    VkBuffer indirect_buffer, uint32_t draw_count, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers,
+    SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv, LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -387,21 +383,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     // Input state
     std::unordered_set<uint32_t> keys_held;
     bool mouse_captured{false};
-
-    // Precompute cube model matrices
-    std::vector<MathLib::Mat4> cube_models;
-    for (int32_t x = 0; x < CUBE_GRID_SIZE; ++x) {
-        for (int32_t y = 0; y < CUBE_GRID_SIZE; ++y) {
-            for (int32_t z = 0; z < CUBE_GRID_SIZE; ++z) {
-                MathLib::Vec3 pos{
-                    static_cast<float>(x) * CUBE_SPACING,
-                    static_cast<float>(y) * CUBE_SPACING,
-                    static_cast<float>(z) * CUBE_SPACING,
-                };
-                cube_models.push_back(MathLib::Mat4::translate(pos));
-            }
-        }
-    }
 
     // Delta time
     std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
@@ -564,7 +545,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
         recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline, vertex_buffer,
-            index_buffer, pipeline.descriptorSet(current_frame), cube_models);
+            index_buffer, indirect_buffer, draw_count, pipeline.descriptorSet(current_frame));
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -738,6 +719,112 @@ int main()
 
         logger.logInfo("Cube mesh uploaded to GPU (" + std::to_string(CUBE_VERTICES.size()) + " vertices, " + std::to_string(CUBE_INDICES.size()) + " indices).");
 
+        // Object SSBO — all cube transforms in a single GPU buffer
+        constexpr int32_t TOTAL_CUBES = CUBE_GRID_SIZE * CUBE_GRID_SIZE * CUBE_GRID_SIZE;
+        std::vector<ObjectData> object_data;
+        object_data.reserve(TOTAL_CUBES);
+        for (int32_t x = 0; x < CUBE_GRID_SIZE; ++x) {
+            for (int32_t y = 0; y < CUBE_GRID_SIZE; ++y) {
+                for (int32_t z = 0; z < CUBE_GRID_SIZE; ++z) {
+                    MathLib::Vec3 pos{
+                        static_cast<float>(x) * CUBE_SPACING,
+                        static_cast<float>(y) * CUBE_SPACING,
+                        static_cast<float>(z) * CUBE_SPACING,
+                    };
+                    object_data.push_back({MathLib::Mat4::translate(pos)});
+                }
+            }
+        }
+
+        VkDeviceSize ssbo_size = static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData));
+        AllocatedBuffer object_ssbo = allocator.createBuffer(ssbo_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+
+        // Staging upload for SSBO
+        {
+            AllocatedBuffer ssbo_staging = allocator.createBuffer(ssbo_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+            VmaAllocationInfo ssbo_staging_info = ssbo_staging.allocationInfo();
+            std::memcpy(ssbo_staging_info.pMappedData, object_data.data(), ssbo_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy ssbo_region{};
+            ssbo_region.size = ssbo_size;
+            copy_cmd.copyBuffer(ssbo_staging.buffer(), object_ssbo.buffer(), {ssbo_region});
+
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd = *copy_cmd;
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Object SSBO uploaded (" + std::to_string(TOTAL_CUBES) + " objects, " + std::to_string(ssbo_size) + " bytes).");
+
+        // Indirect draw buffer — one command for the entire cube batch
+        VkDrawIndexedIndirectCommand draw_cmd{};
+        draw_cmd.indexCount = CUBE_INDEX_COUNT;
+        draw_cmd.instanceCount = static_cast<uint32_t>(TOTAL_CUBES);
+        draw_cmd.firstIndex = 0;
+        draw_cmd.vertexOffset = 0;
+        draw_cmd.firstInstance = 0;
+
+        AllocatedBuffer indirect_draw_buffer = allocator.createBuffer(sizeof(VkDrawIndexedIndirectCommand),
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+
+        // Upload indirect command
+        {
+            AllocatedBuffer indirect_staging = allocator.createBuffer(sizeof(VkDrawIndexedIndirectCommand),
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+            VmaAllocationInfo indirect_staging_info = indirect_staging.allocationInfo();
+            std::memcpy(indirect_staging_info.pMappedData, &draw_cmd, sizeof(VkDrawIndexedIndirectCommand));
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy indirect_region{};
+            indirect_region.size = sizeof(VkDrawIndexedIndirectCommand);
+            copy_cmd.copyBuffer(indirect_staging.buffer(), indirect_draw_buffer.buffer(), {indirect_region});
+
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd = *copy_cmd;
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Indirect draw buffer created (1 batch, " + std::to_string(TOTAL_CUBES) + " instances).");
+
+        // Bind object SSBO to all per-frame descriptor sets
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            pipeline.bindObjectSSBO(i, object_ssbo.buffer(), ssbo_size);
+        }
+
         // Render event signal — main thread emits, render thread consumes
         SignalsLib::Signal<RenderEvent> render_signal;
         std::mutex render_mutex;
@@ -745,8 +832,8 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), vertex_buffer.buffer(),
-            index_buffer.buffer(), std::ref(command_pool), std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv),
-            std::ref(logger));
+            index_buffer.buffer(), indirect_draw_buffer.buffer(), 1u, std::ref(command_pool), std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex),
+            std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {

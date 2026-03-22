@@ -38,6 +38,11 @@ struct Vertex {
     float uv[2]; //!< Texture coordinates.
 };
 
+//! Per-object data stored in the SSBO — matches the Slang ObjectData struct.
+struct ObjectData {
+    MathLib::Mat4 model; //!< Model-to-world transform.
+};
+
 //! Camera uniform buffer — view and projection matrices, uploaded once per frame.
 struct CameraUBO {
     MathLib::Mat4 view; //!< View matrix.
@@ -91,6 +96,9 @@ public:
     //! Binds a UBO buffer to the descriptor set for the given frame index.
     void bindUBO(uint32_t frame_index, VkBuffer buffer) const;
 
+    //! Binds an object SSBO to the descriptor set for the given frame index.
+    void bindObjectSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const;
+
     //! Updates the camera UBO for the given frame index via its mapped pointer.
     void updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const;
 
@@ -103,8 +111,8 @@ public:
 private:
     const Device* m_device{nullptr}; //!< Non-owning device reference (for descriptor writes).
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
-    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< Descriptor set layout (binding 0 = camera UBO).
-    vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constant range).
+    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< Descriptor set layout (binding 0 = UBO, binding 1 = SSBO).
+    vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set, no push constants).
     vk::raii::Pipeline m_pipeline{nullptr}; //!< Graphics pipeline handle.
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool for per-frame sets.
     std::vector<vk::raii::DescriptorSet> m_descriptor_sets; //!< Per-frame descriptor sets.

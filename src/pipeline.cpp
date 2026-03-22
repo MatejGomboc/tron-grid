@@ -177,30 +177,28 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     colour_blend.attachmentCount = 1;
     colour_blend.pAttachments = &colour_blend_attachment;
 
-    // Descriptor set layout — binding 0: camera UBO (vertex stage)
-    vk::DescriptorSetLayoutBinding ubo_binding{};
-    ubo_binding.binding = 0;
-    ubo_binding.descriptorType = vk::DescriptorType::eUniformBuffer;
-    ubo_binding.descriptorCount = 1;
-    ubo_binding.stageFlags = vk::ShaderStageFlagBits::eVertex;
+    // Descriptor set layout — binding 0: camera UBO, binding 1: object SSBO
+    std::array<vk::DescriptorSetLayoutBinding, 2> bindings{};
+    // Binding 0: camera VP matrix UBO (vertex stage)
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = vk::ShaderStageFlagBits::eVertex;
+    // Binding 1: object transforms SSBO (vertex stage)
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = vk::ShaderStageFlagBits::eVertex;
 
     vk::DescriptorSetLayoutCreateInfo descriptor_layout_info{};
-    descriptor_layout_info.bindingCount = 1;
-    descriptor_layout_info.pBindings = &ubo_binding;
+    descriptor_layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+    descriptor_layout_info.pBindings = bindings.data();
     m_descriptor_set_layout = vk::raii::DescriptorSetLayout(device.get(), descriptor_layout_info);
 
-    // Push constant range — per-object model matrix (64 bytes, vertex stage)
-    vk::PushConstantRange push_constant_range{};
-    push_constant_range.stageFlags = vk::ShaderStageFlagBits::eVertex;
-    push_constant_range.offset = 0;
-    push_constant_range.size = sizeof(MathLib::Mat4);
-
-    // Pipeline layout — 1 descriptor set + 1 push constant range
+    // Pipeline layout — 1 descriptor set, no push constants (GPU-driven via SSBO)
     vk::PipelineLayoutCreateInfo layout_info{};
     layout_info.setLayoutCount = 1;
     layout_info.pSetLayouts = &*m_descriptor_set_layout;
-    layout_info.pushConstantRangeCount = 1;
-    layout_info.pPushConstantRanges = &push_constant_range;
     m_layout = vk::raii::PipelineLayout(device.get(), layout_info);
 
     // Dynamic rendering — attach colour and depth formats
@@ -226,16 +224,18 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     m_pipeline = vk::raii::Pipeline(device.get(), nullptr, pipeline_info);
 
-    // Descriptor pool — one UBO per frame in flight
-    vk::DescriptorPoolSize pool_size{};
-    pool_size.type = vk::DescriptorType::eUniformBuffer;
-    pool_size.descriptorCount = frames_in_flight;
+    // Descriptor pool — UBO + SSBO per frame in flight
+    std::array<vk::DescriptorPoolSize, 2> pool_sizes{};
+    pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
+    pool_sizes[0].descriptorCount = frames_in_flight;
+    pool_sizes[1].type = vk::DescriptorType::eStorageBuffer;
+    pool_sizes[1].descriptorCount = frames_in_flight;
 
     vk::DescriptorPoolCreateInfo pool_info{};
     pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     pool_info.maxSets = frames_in_flight;
-    pool_info.poolSizeCount = 1;
-    pool_info.pPoolSizes = &pool_size;
+    pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+    pool_info.pPoolSizes = pool_sizes.data();
     m_descriptor_pool = vk::raii::DescriptorPool(device.get(), pool_info);
 
     // Allocate per-frame descriptor sets
@@ -271,6 +271,24 @@ void Pipeline::bindUBO(uint32_t frame_index, VkBuffer buffer) const
     write.dstBinding = 0;
     write.dstArrayElement = 0;
     write.descriptorType = vk::DescriptorType::eUniformBuffer;
+    write.descriptorCount = 1;
+    write.pBufferInfo = &buffer_info;
+
+    m_device->get().updateDescriptorSets({write}, {});
+}
+
+void Pipeline::bindObjectSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const
+{
+    vk::DescriptorBufferInfo buffer_info{};
+    buffer_info.buffer = buffer;
+    buffer_info.offset = 0;
+    buffer_info.range = size;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = *m_descriptor_sets[frame_index];
+    write.dstBinding = 1;
+    write.dstArrayElement = 0;
+    write.descriptorType = vk::DescriptorType::eStorageBuffer;
     write.descriptorCount = 1;
     write.pBufferInfo = &buffer_info;
 
