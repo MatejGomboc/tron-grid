@@ -40,6 +40,13 @@ renderer handles 1000+ objects at negligible CPU cost with frustum culling on th
 
 Replace push constants with a GPU-resident object buffer and indirect draw calls.
 
+**Device features to enable (at device creation):**
+
+- `multiDrawIndirect` — required for `vkCmdDrawIndexedIndirect` with `drawCount > 1`
+- `shaderStorageBufferArrayDynamicIndexing` — SSBO array indexing in shaders
+- `descriptorBindingStorageBufferUpdateAfterBind` — update descriptors while bound
+- `descriptorBindingPartiallyBound` — not all descriptors need to be valid
+
 **Object data buffer (SSBO):**
 
 ```cpp
@@ -49,7 +56,9 @@ struct ObjectData {
 ```
 
 - Create a large SSBO (`VK_BUFFER_USAGE_STORAGE_BUFFER_BIT`) sized for `MAX_OBJECTS`
-- Upload all object transforms once (or update only changed objects per frame)
+- Upload all object transforms once (static scene for now). When animation arrives in
+  later phases, use per-frame SSBOs (double-buffered, like the camera UBO) to avoid
+  writing data the GPU is still reading
 - Descriptor set binding 1 = SSBO, vertex stage
 - Shader indexes into the SSBO using `SV_InstanceID`
 
@@ -102,6 +111,21 @@ struct ObjectBounds {
 - Add `ObjectBounds` SSBO alongside the `ObjectData` SSBO
 - For cubes: centre = cube position, radius = `sqrt(3) * 0.5` (half-diagonal)
 
+**Compute pipeline:**
+
+- Create a separate `vk::raii::Pipeline` for compute (not reusing the graphics pipeline)
+- Compute pipeline layout: push constants for frustum planes (6 × `Vec4` = 96 bytes),
+  SSBO bindings for object data, object bounds, indirect commands, and compacted indices
+- The compute pipeline is created once alongside the graphics pipeline
+
+**Indirect buffer reset:**
+
+- Use `vkCmdFillBuffer` to zero the indirect buffer's `instance_count` fields before
+  each cull dispatch — simpler and faster than a compute pass
+- Barrier between fill and compute: `VK_PIPELINE_STAGE_TRANSFER_BIT` →
+  `VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT` with `VK_ACCESS_TRANSFER_WRITE_BIT` →
+  `VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT`
+
 **Compute culling shader (`cull.slang`):**
 
 - One thread per object
@@ -118,6 +142,9 @@ struct ObjectBounds {
   (`VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT` → `VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT`)
 - The graphics pipeline reads the compacted index buffer to map `SV_InstanceID` back
   to the original object index in the SSBO
+- Use `vkCmdDrawIndexedIndirectCount` (Vulkan 1.2 core) — the compute shader writes
+  the draw count to a separate buffer, so even the number of draw calls is GPU-driven.
+  The CPU only provides the maximum possible count
 
 **After this step:** only visible cubes are drawn. Moving the camera so cubes are behind
 you drops the draw count. GPU culling runs in <0.1ms for 1000 objects.
@@ -146,11 +173,22 @@ Merge all mesh data into single vertex/index buffers and switch to bindless desc
     - Binding 3+: future texture array, material SSBO, etc.
 - Bind the descriptor set once per frame — no per-object rebinding
 
+**Non-uniform indexing (future-proofing note):**
+
+- When objects index into per-material texture arrays in later phases, the index
+  will be non-uniform across invocations. At that point, use Slang's
+  `NonUniformResourceIndex()` on the material/texture index. For Phase 2, all
+  instances share the same mesh and material, so uniform indexing is sufficient
+
 **Scene scale-up:**
 
 - Increase grid from 5x5x5 (125) to 10x10x10 (1000) cubes
 - Verify 1000 cubes render at full frame rate with frustum culling
-- Log draw statistics: total objects, visible objects, cull time
+- Log draw statistics once at startup: total objects, grid dimensions
+- GPU timestamp queries (`vkCmdWriteTimestamp2`) around the compute cull dispatch —
+  read back on the CPU to log cull time in milliseconds. Use a query pool with
+  `VK_QUERY_TYPE_TIMESTAMP`, 2 queries per frame (before + after compute). Read
+  results with `vkGetQueryPoolResults` on the next frame (avoids GPU stall)
 
 **After this step:** 1000 cubes, single draw call, frustum culling, bindless descriptors.
 **Phase 2 complete — GPU-driven resources.**
@@ -158,14 +196,15 @@ Merge all mesh data into single vertex/index buffers and switch to bindless desc
 ### Acceptance Criteria
 
 - [ ] Object transforms in SSBO (no push constants for model matrix)
-- [ ] `vkCmdDrawIndexedIndirect` replaces per-object draw loop
+- [ ] `vkCmdDrawIndexedIndirectCount` replaces per-object draw loop (GPU-driven draw count)
 - [ ] Compute shader frustum culling (6 plane tests per bounding sphere)
 - [ ] Only visible objects drawn (verify by rotating camera)
 - [ ] Merged vertex/index buffers with BaseVertex offsets
 - [ ] Bindless descriptor set (bind once per frame)
 - [ ] 1000+ cubes at full frame rate (10x10x10 grid)
-- [ ] GPU cull time logged (should be <0.1ms)
-- [ ] Memory barrier between compute and draw stages
+- [ ] GPU cull time measured via timestamp queries (should be <0.1ms for 1000 objects)
+- [ ] Memory barriers: fill→compute, compute→indirect draw
+- [ ] Compute pipeline created for culling (separate from graphics pipeline)
 - [ ] `vk::raii` for all new Vulkan objects — no manual destroy
 - [ ] Slang compute shader for culling (`cull.slang`)
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
