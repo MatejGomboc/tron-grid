@@ -27,10 +27,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 # Slang shader compilation — slangc from Vulkan SDK
 find_program(SLANGC_EXECUTABLE slangc HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
+find_program(SPIRV_VAL_EXECUTABLE spirv-val HINTS $ENV{VULKAN_SDK}/bin REQUIRED)
 
 set(SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
-# Triangle shader (vertex + fragment)
+# Triangle shader (vertex + fragment) — compile, then validate SPIR-V
 set(TRIANGLE_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/triangle.slang)
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT_DIR}/triangle.spv
@@ -41,15 +42,17 @@ add_custom_command(
         -emit-spirv-directly
         -fvk-use-entrypoint-name
         -fvk-invert-y
+        -warnings-as-errors all
         -entry vertMain
         -entry fragMain
         -o ${SHADER_OUTPUT_DIR}/triangle.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/triangle.spv
     DEPENDS ${TRIANGLE_SOURCE}
-    COMMENT "Compiling triangle.slang -> triangle.spv"
+    COMMENT "Compiling triangle.slang -> triangle.spv (with validation)"
     VERBATIM
 )
 
-# Cull shader (compute)
+# Cull shader (compute) — compile, then validate SPIR-V
 set(CULL_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/cull.slang)
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT_DIR}/cull.spv
@@ -59,10 +62,12 @@ add_custom_command(
         -profile spirv_1_4
         -emit-spirv-directly
         -fvk-use-entrypoint-name
+        -warnings-as-errors all
         -entry cullMain
         -o ${SHADER_OUTPUT_DIR}/cull.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/cull.spv
     DEPENDS ${CULL_SOURCE}
-    COMMENT "Compiling cull.slang -> cull.spv"
+    COMMENT "Compiling cull.slang -> cull.spv (with validation)"
     VERBATIM
 )
 

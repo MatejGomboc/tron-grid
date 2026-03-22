@@ -368,7 +368,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     camera state, input processing, and delta time.
 */
 static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, VkBuffer vertex_buffer, VkBuffer index_buffer,
-    VkBuffer indirect_buffer, VkBuffer draw_count_buffer, uint32_t total_objects, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers,
+    VkBuffer indirect_buffer, VkBuffer draw_count_buffer, uint32_t total_objects, vk::raii::CommandBuffers& command_buffers,
     SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv, LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
@@ -987,8 +987,8 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), vertex_buffer.buffer(),
-            index_buffer.buffer(), indirect_draw_buffer.buffer(), draw_count_buffer.buffer(), static_cast<uint32_t>(TOTAL_CUBES), std::ref(command_pool),
-            std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+            index_buffer.buffer(), indirect_draw_buffer.buffer(), draw_count_buffer.buffer(), static_cast<uint32_t>(TOTAL_CUBES), std::ref(command_buffers),
+            std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {

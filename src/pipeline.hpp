@@ -20,6 +20,7 @@
 #include <math/matrix.hpp>
 #include <math/vector.hpp>
 #include <log/logger.hpp>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -34,9 +35,9 @@ class Device; // forward declaration
 
 //! Vertex layout — position (float3) + normal (float3) + UV (float2). Meshlet/RT-ready.
 struct Vertex {
-    float position[3]; //!< World-space position.
-    float normal[3]; //!< Surface normal.
-    float uv[2]; //!< Texture coordinates.
+    std::array<float, 3> position; //!< World-space position.
+    std::array<float, 3> normal; //!< Surface normal.
+    std::array<float, 2> uv; //!< Texture coordinates.
 };
 
 //! Per-object data stored in the SSBO — matches the Slang ObjectData struct.
