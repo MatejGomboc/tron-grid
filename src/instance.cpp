@@ -14,6 +14,7 @@
 
 #include "instance.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <ranges>
 #include <string>
@@ -23,8 +24,8 @@
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 //! Vulkan validation debug callback; routes messages through the Logger via pUserData.
-static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
-    vk::DebugUtilsMessageTypeFlagsEXT /*type*/, const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
+static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT /*type*/,
+    const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
 {
     LoggingLib::Logger* logger = static_cast<LoggingLib::Logger*>(user_data);
     if (!logger) {
@@ -123,15 +124,28 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
 
-    // Chain debug messenger to instance creation so we catch create/destroy messages
+    // Chain debug messenger and validation features to instance creation
     vk::DebugUtilsMessengerCreateInfoEXT debug_create_info{};
+    vk::ValidationFeaturesEXT validation_features{};
+
     if (enable_validation && !layers.empty()) {
         debug_create_info.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
         debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
             | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
         debug_create_info.pfnUserCallback = vulkanDebugCallback;
         debug_create_info.pUserData = &m_logger;
-        create_info.pNext = &debug_create_info;
+
+        // Enable GPU-assisted, synchronisation, and best practices validation
+        static constexpr std::array<vk::ValidationFeatureEnableEXT, 3> ENABLED_VALIDATION_FEATURES = {
+            vk::ValidationFeatureEnableEXT::eGpuAssisted,
+            vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
+            vk::ValidationFeatureEnableEXT::eBestPractices,
+        };
+        validation_features.enabledValidationFeatureCount = static_cast<uint32_t>(ENABLED_VALIDATION_FEATURES.size());
+        validation_features.pEnabledValidationFeatures = ENABLED_VALIDATION_FEATURES.data();
+        validation_features.pNext = &debug_create_info;
+
+        create_info.pNext = &validation_features;
     }
 
     m_instance = vk::raii::Instance(m_context, create_info);

@@ -40,6 +40,30 @@
             }
         },
         {
+            "name": "linux-x11-clang-asan",
+            "displayName": "Linux X11 Clang ASan+UBSan",
+            "inherits": "linux-x11-clang",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+                "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
+            }
+        },
+        {
+            "name": "linux-x11-clang-tsan",
+            "displayName": "Linux X11 Clang TSan",
+            "inherits": "linux-x11-clang",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_C_FLAGS": "-fsanitize=thread",
+                "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+            }
+        },
+        {
             "name": "windows-msvc",
             "displayName": "Windows MSVC",
             "inherits": "base",
@@ -120,6 +144,18 @@
             "configuration": "Release"
         },
         {
+            "name": "linux-x11-clang-asan-debug",
+            "displayName": "Debug (ASan+UBSan)",
+            "configurePreset": "linux-x11-clang-asan",
+            "configuration": "Debug"
+        },
+        {
+            "name": "linux-x11-clang-tsan-debug",
+            "displayName": "Debug (TSan)",
+            "configurePreset": "linux-x11-clang-tsan",
+            "configuration": "Debug"
+        },
+        {
             "name": "windows-msvc-debug",
             "displayName": "Debug",
             "configurePreset": "windows-msvc",
@@ -189,6 +225,24 @@
             "displayName": "Release",
             "configurePreset": "linux-x11-clang",
             "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "linux-x11-clang-asan-debug",
+            "displayName": "Debug (ASan+UBSan)",
+            "configurePreset": "linux-x11-clang-asan",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "linux-x11-clang-tsan-debug",
+            "displayName": "Debug (TSan)",
+            "configurePreset": "linux-x11-clang-tsan",
+            "configuration": "Debug",
             "output": {
                 "outputOnFailure": true
             }
@@ -269,6 +323,24 @@
                 { "type": "test", "name": "linux-x11-clang-debug" },
                 { "type": "build", "name": "linux-x11-clang-release" },
                 { "type": "test", "name": "linux-x11-clang-release" }
+            ]
+        },
+        {
+            "name": "linux-x11-clang-asan",
+            "displayName": "Linux X11 Clang ASan+UBSan — Build & Test",
+            "steps": [
+                { "type": "configure", "name": "linux-x11-clang-asan" },
+                { "type": "build", "name": "linux-x11-clang-asan-debug" },
+                { "type": "test", "name": "linux-x11-clang-asan-debug" }
+            ]
+        },
+        {
+            "name": "linux-x11-clang-tsan",
+            "displayName": "Linux X11 Clang TSan — Build & Test",
+            "steps": [
+                { "type": "configure", "name": "linux-x11-clang-tsan" },
+                { "type": "build", "name": "linux-x11-clang-tsan-debug" },
+                { "type": "test", "name": "linux-x11-clang-tsan-debug" }
             ]
         },
         {
