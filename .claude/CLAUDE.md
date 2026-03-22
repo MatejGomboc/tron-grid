@@ -102,7 +102,8 @@ tron_grid/
 │   ├── swapchain.hpp/cpp # Swapchain with MAILBOX + old-swapchain reuse
 │   ├── pipeline.hpp/cpp  # Graphics pipeline (dynamic rendering, depth, descriptors, push constants)
 │   ├── allocator.hpp/cpp # VMA RAII wrapper (Allocator + AllocatedBuffer + AllocatedImage)
-│   ├── triangle.slang    # Slang vertex + fragment shader
+│   ├── camera.hpp        # Free-flight camera (quaternion, WASD + mouse look)
+│   ├── triangle.slang    # Slang vertex + fragment shader (MVP transform, normal visualisation)
 │   ├── volk.cpp          # Volk dynamic loader translation unit
 │   ├── vma.cpp           # VMA implementation translation unit
 │   └── CMakeLists.txt    # Target definition, shader compilation
@@ -162,7 +163,7 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-**Phase 0 — Foundation** is complete (colourful triangle on screen with event-driven rendering).
+**Phase 1 — Solid Foundation** is complete (fly through 5x5x5 cube grid with WASD + mouse look).
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 See `TODO.md` for the development journal.
 
