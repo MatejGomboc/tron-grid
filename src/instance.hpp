@@ -14,7 +14,11 @@
 
 #pragma once
 
+#ifdef _WIN32
+#include <Volk/volk.h>
+#else
 #include <volk/volk.h>
+#endif
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
 #include <log/logger.hpp>
@@ -33,8 +37,8 @@ public:
     // Non-copyable, movable
     Instance(const Instance&) = delete;
     Instance& operator=(const Instance&) = delete;
-    Instance(Instance&&) = default;
-    Instance& operator=(Instance&&) = default;
+    Instance(Instance&&) = delete;
+    Instance& operator=(Instance&&) = delete;
 
     //! Raw VkInstance handle (for surface creation, etc.).
     [[nodiscard]] VkInstance handle() const

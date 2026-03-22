@@ -14,7 +14,11 @@
 
 #pragma once
 
+#ifdef _WIN32
+#include <Volk/volk.h>
+#else
 #include <volk/volk.h>
+#endif
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
 #include <math/matrix.hpp>
@@ -87,8 +91,8 @@ public:
     // Non-copyable, movable
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
-    Pipeline(Pipeline&&) = default;
-    Pipeline& operator=(Pipeline&&) = default;
+    Pipeline(Pipeline&&) = delete;
+    Pipeline& operator=(Pipeline&&) = delete;
 
     //! Graphics pipeline handle.
     [[nodiscard]] const vk::raii::Pipeline& get() const

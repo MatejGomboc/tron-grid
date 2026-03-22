@@ -8,11 +8,11 @@ project(TronGrid
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Compiler warnings — high level on all compilers
+# Compiler warnings — high level, warnings as errors, all compilers
 if(MSVC)
-    add_compile_options(/EHsc /W4)
+    add_compile_options(/EHsc /W4 /WX)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic)
+    add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 endif()
 
 if(NOT (WIN32 OR (UNIX AND NOT APPLE)))

@@ -104,9 +104,54 @@ jobs:
             - name: Run CMake workflow
               run: cmake --workflow --preset=${{ matrix.preset }}
 
+    sanitisers:
+        name: Sanitiser (${{ matrix.name }})
+        needs: quick-checks
+        timeout-minutes: 30
+
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: ASan+UBSan
+                      preset: linux-x11-clang-asan
+                    - name: TSan
+                      preset: linux-x11-clang-tsan
+                      # logger_tests hangs under TSan due to glibc false positive
+                      # (tpp.c:83 __pthread_tpp_change_priority assertion).
+                      # Exclude it — logger thread safety is validated by ASan.
+                      test_exclude: logger_tests
+
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            - name: Install XCB development headers
+              run: sudo apt-get update && sudo apt-get install -y libxcb1-dev
+
+            - name: Setup Vulkan SDK
+              uses: ./.github/actions/setup-vulkan-linux
+              with:
+                version: ${{ env.VULKAN_SDK_VERSION }}
+
+            - name: Configure
+              run: cmake --preset=${{ matrix.preset }}
+
+            - name: Build (Debug)
+              run: cmake --build --preset=${{ matrix.preset }}-debug
+
+            - name: Test (Debug)
+              env:
+                TSAN_OPTIONS: "suppressions=${{ github.workspace }}/tsan_suppressions.txt"
+              run: >
+                ctest --preset=${{ matrix.preset }}-debug
+                ${{ matrix.test_exclude && format('--exclude-regex {0}', matrix.test_exclude) || '' }}
+
     ci-success:
         name: CI Success
-        needs: [quick-checks, build]
+        needs: [quick-checks, build, sanitisers]
         runs-on: ubuntu-latest
         if: always()
 
@@ -114,7 +159,9 @@ jobs:
             - name: Check if all jobs succeeded
               id: check-results
               run: |
-                if [[ "${{ needs.quick-checks.result }}" != "success" ]] || [[ "${{ needs.build.result }}" != "success" ]]; then
+                if [[ "${{ needs.quick-checks.result }}" != "success" ]] || \
+                   [[ "${{ needs.build.result }}" != "success" ]] || \
+                   [[ "${{ needs.sanitisers.result }}" != "success" ]]; then
                     echo "One or more jobs failed"
                     exit 1
                 fi

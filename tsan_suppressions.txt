@@ -1,0 +1,6 @@
+# TSan suppressions for TronGrid
+# See: https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+
+# glibc pthread_tpp_change_priority false positive — known TSan + glibc interaction
+# on Ubuntu runners. Not a bug in our code.
+deadlock:__pthread_tpp_change_priority

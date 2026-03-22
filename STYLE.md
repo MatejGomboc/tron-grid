@@ -509,4 +509,54 @@ Code identifiers may use American spelling where it matches library/API conventi
 
 ---
 
-*Last updated: 2026-03-17*
+## Code Quality Tooling
+
+### Compiler Warnings
+
+Warnings are errors on all compilers — zero-warning policy:
+
+- **MSVC:** `/W4 /WX`
+- **GCC/Clang:** `-Wall -Wextra -Wpedantic -Werror`
+
+### Static Analysis (Clang-Tidy)
+
+Configuration in `.clang-tidy`. Runs via `clangd` in VS Code. Bugprone, analyser, and
+concurrency checks are promoted to errors. To suppress a specific check on a line:
+
+```cpp
+int x = legacy_function(); // NOLINT(bugprone-unused-return-value)
+```
+
+### Runtime Sanitisers
+
+CMake presets for sanitiser builds (Linux Clang only):
+
+```bash
+# AddressSanitizer + UndefinedBehaviorSanitizer
+cmake --workflow --preset=linux-x11-clang-asan
+
+# ThreadSanitizer (cannot combine with ASan)
+cmake --workflow --preset=linux-x11-clang-tsan
+```
+
+### Shader Validation
+
+- `spirv-val` validates compiled SPIR-V at build time (malformed bytecode = build failure)
+- `slangc -warnings-as-errors all` treats shader warnings as errors
+
+### Vulkan Validation (Debug Builds)
+
+Enabled automatically in debug builds via `VkValidationFeaturesEXT`:
+
+- **GPU-Assisted Validation** — instruments shaders at runtime
+- **Synchronisation Validation** — deep barrier analysis
+- **Best Practices** — non-optimal API usage warnings
+
+### MSVC Debug Leak Detection
+
+`_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF)` is enabled at startup in
+MSVC debug builds. Reports C++ heap leaks on exit.
+
+---
+
+*Last updated: 2026-03-22*

@@ -12,15 +12,33 @@
     GNU General Public License for more details.
 */
 
-// Suppress warnings from third-party VMA header — we cannot modify it.
-#ifdef _MSC_VER
+// Suppress ALL warnings from third-party VMA header — we cannot modify it.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#elif defined(_MSC_VER)
 #pragma warning(push, 0)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
 #endif
 
+#ifdef _WIN32
+#include <Volk/volk.h>
+#else
 #include <volk/volk.h>
+#endif
 #define VMA_IMPLEMENTATION
 #include <vma/vk_mem_alloc.h>
 
-#ifdef _MSC_VER
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(_MSC_VER)
 #pragma warning(pop)
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
 #endif
