@@ -60,10 +60,10 @@ CMake `target_link_libraries`. Each library has its own include directory, sourc
 
 ```text
 libs/
-├── test_fixture/              # test fixture (foundation brick) *(implemented)*
-│   ├── CMakeLists.txt         # add_library(test_fixture STATIC ...)
-│   ├── include/test_fixture/test_fixture.hpp
-│   ├── src/test_fixture.cpp
+├── testing/              # test fixture (foundation brick) *(implemented)*
+│   ├── CMakeLists.txt         # add_library(testing STATIC ...)
+│   ├── include/testing/testing.hpp
+│   ├── src/testing.cpp
 │   └── tests/
 ├── signals/                   # thread-safe SignalsLib::Signal<T> queues *(implemented)*
 │   ├── include/signal/signal.hpp
@@ -84,13 +84,13 @@ libs/
 **Rules:**
 
 - **PascalCase + "Lib" suffix namespaces** — libraries use `SignalsLib`, `LoggingLib`,
-  `WindowLib`, `TestFixtureLib`. They are general-purpose and could be extracted into separate
+  `WindowLib`, `TestingLib`. They are general-purpose and could be extracted into separate
   repositories as git submodules later
 - **Each library is self-contained** — own `CMakeLists.txt`, own `include/<lib>/` directory,
-  own `tests/` directory with unit tests linking the `test_fixture` library
-- **Plain CMake target names** — `test_fixture`, `signals`, `logging`, `window`
+  own `tests/` directory with unit tests linking the `testing` library
+- **Plain CMake target names** — `testing`, `signals`, `logging`, `window`
 - **Static libraries only** — linked into the final TronGrid executable
-- **Test fixture is itself a library** — `test_fixture` is the foundation brick; all other
+- **Test fixture is itself a library** — `testing` is the foundation brick; all other
   libraries' tests link against it. Macros: `TEST_CHECK`, `TEST_CHECK_EQUAL`, `TEST_CHECK_THROWS`
 
 ### Coupling Model

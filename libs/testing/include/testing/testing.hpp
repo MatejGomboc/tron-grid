@@ -22,7 +22,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace TestFixtureLib
+namespace TestingLib
 {
 
     //! A registered test case with a name and callable body.
@@ -88,7 +88,7 @@ namespace TestFixtureLib
         }
     }
 
-} // namespace TestFixtureLib
+} // namespace TestingLib
 
 // ---------------------------------------------------------------------------
 // Thin macros — only used for expression stringification (#expr)
@@ -98,16 +98,16 @@ namespace TestFixtureLib
 #define TEST_CHECK(expr)                          \
     do {                                          \
         if (!(expr)) {                            \
-            ::TestFixtureLib::checkFailed(#expr); \
+            ::TestingLib::checkFailed(#expr); \
         }                                         \
     } while (false)
 
 //! Fails showing both values if `a != b`.
-#define TEST_CHECK_EQUAL(a, b) ::TestFixtureLib::checkEqual((a), (b), #a, #b)
+#define TEST_CHECK_EQUAL(a, b) ::TestingLib::checkEqual((a), (b), #a, #b)
 
 //! Fails if `expr` does not throw.
 #define TEST_CHECK_THROWS(expr)    \
-    ::TestFixtureLib::checkThrows( \
+    ::TestingLib::checkThrows( \
         [&] {                      \
             (void)(expr);          \
         },                         \
@@ -121,7 +121,7 @@ namespace TestFixtureLib
         struct test_name##_registrar {                                 \
             test_name##_registrar()                                    \
             {                                                          \
-                ::TestFixtureLib::registerTest(#test_name, test_name); \
+                ::TestingLib::registerTest(#test_name, test_name); \
             }                                                          \
         } test_name##_instance;                                        \
     }                                                                  \

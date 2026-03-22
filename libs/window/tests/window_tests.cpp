@@ -12,7 +12,7 @@
     GNU General Public License for more details.
 */
 
-#include "test_fixture/test_fixture.hpp"
+#include "testing/testing.hpp"
 #include "window/window_event.hpp"
 
 TEST_CASE(default_event_is_none)
@@ -47,5 +47,5 @@ TEST_CASE(key_event_data)
 
 int main()
 {
-    return static_cast<int>(TestFixtureLib::runAll());
+    return static_cast<int>(TestingLib::runAll());
 }

@@ -12,7 +12,7 @@
     GNU General Public License for more details.
 */
 
-#include "test_fixture/test_fixture.hpp"
+#include "testing/testing.hpp"
 #include <stdexcept>
 
 TEST_CASE(check_true_passes)
@@ -37,5 +37,5 @@ TEST_CASE(check_throws_catches_exception)
 
 int main()
 {
-    return static_cast<int>(TestFixtureLib::runAll());
+    return static_cast<int>(TestingLib::runAll());
 }

@@ -12,7 +12,7 @@
     GNU General Public License for more details.
 */
 
-#include "test_fixture/test_fixture.hpp"
+#include "testing/testing.hpp"
 #include "log/logger.hpp"
 #include <thread>
 
@@ -57,5 +57,5 @@ TEST_CASE(logger_thread_safety)
 
 int main()
 {
-    return static_cast<int>(TestFixtureLib::runAll());
+    return static_cast<int>(TestingLib::runAll());
 }
