@@ -18,16 +18,16 @@ struct CameraData {
     float4x4 projection;
 };
 
-// Per-object model matrix via push constants.
-struct PushConstants {
+// Per-object data — matches C++ ObjectData struct.
+struct ObjectData {
     float4x4 model;
 };
 
 [[vk::binding(0, 0)]]
 ConstantBuffer<CameraData> camera;
 
-[[vk::push_constant]]
-PushConstants push;
+[[vk::binding(1, 0)]]
+StructuredBuffer<ObjectData> objects;
 
 // Vertex input — matches C++ Vertex struct (position + normal + UV).
 struct VSInput {
@@ -44,13 +44,15 @@ struct VSOutput {
 };
 
 [shader("vertex")]
-VSOutput vertMain(VSInput input)
+VSOutput vertMain(VSInput input, uint instance_id : SV_InstanceID)
 {
+    ObjectData obj = objects[instance_id];
+
     VSOutput output;
-    float4 world_pos = mul(push.model, float4(input.position, 1.0));
+    float4 world_pos = mul(obj.model, float4(input.position, 1.0));
     output.position = mul(camera.projection, mul(camera.view, world_pos));
     // Transform normal by model matrix (sufficient for uniform scale — no inverse transpose needed yet).
-    output.normal = mul((float3x3)push.model, input.normal);
+    output.normal = mul((float3x3)obj.model, input.normal);
     output.uv = input.uv;
     return output;
 }
