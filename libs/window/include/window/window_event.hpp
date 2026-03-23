@@ -38,29 +38,38 @@ namespace WindowLib
 
         Type type{Type::None}; //!< Event type discriminator.
 
+        //! Resize event data.
+        struct ResizeData {
+            uint32_t width; //!< New width in pixels.
+            uint32_t height; //!< New height in pixels.
+        };
+
+        //! Keyboard event data.
+        struct KeyData {
+            uint32_t keycode; //!< Platform-specific key code.
+            bool repeat; //!< True if this is a key-repeat event.
+        };
+
+        //! Mouse movement event data.
+        struct MouseMoveData {
+            int32_t x; //!< Cursor x position.
+            int32_t y; //!< Cursor y position.
+            int32_t dx; //!< Horizontal delta since last event.
+            int32_t dy; //!< Vertical delta since last event.
+        };
+
+        //! Mouse button event data.
+        struct MouseButtonData {
+            uint8_t button; //!< Button index (0=left, 1=right, 2=middle).
+            int32_t x; //!< Cursor x position.
+            int32_t y; //!< Cursor y position.
+        };
+
         union {
-            struct {
-                uint32_t width; //!< New width in pixels.
-                uint32_t height; //!< New height in pixels.
-            } resize; //!< New dimensions after resize.
-
-            struct {
-                uint32_t keycode; //!< Platform-specific key code.
-                bool repeat; //!< True if this is a key-repeat event.
-            } key; //!< Keyboard event data.
-
-            struct {
-                int32_t x; //!< Cursor x position.
-                int32_t y; //!< Cursor y position.
-                int32_t dx; //!< Horizontal delta since last event.
-                int32_t dy; //!< Vertical delta since last event.
-            } mouse_move; //!< Mouse movement event data.
-
-            struct {
-                uint8_t button; //!< Button index (0=left, 1=right, 2=middle).
-                int32_t x; //!< Cursor x position.
-                int32_t y; //!< Cursor y position.
-            } mouse_button; //!< Mouse button event data.
+            ResizeData resize; //!< New dimensions after resize.
+            KeyData key; //!< Keyboard event data.
+            MouseMoveData mouse_move; //!< Mouse movement event data.
+            MouseButtonData mouse_button; //!< Mouse button event data.
         };
 
         //! Default constructor; initialises to Type::None with zeroed union.

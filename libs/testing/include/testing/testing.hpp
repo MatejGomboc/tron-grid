@@ -94,13 +94,24 @@ namespace TestingLib
 // Thin macros — only used for expression stringification (#expr)
 // ---------------------------------------------------------------------------
 
+// MSVC C4127: "conditional expression is constant" on do { } while(false) — standard macro pattern.
+#ifdef _MSC_VER
+#define TEST_CHECK_SUPPRESS_BEGIN __pragma(warning(push)) __pragma(warning(disable : 4127))
+#define TEST_CHECK_SUPPRESS_END __pragma(warning(pop))
+#else
+#define TEST_CHECK_SUPPRESS_BEGIN
+#define TEST_CHECK_SUPPRESS_END
+#endif
+
 //! Fails with file, line, and stringified expression if `expr` is false.
-#define TEST_CHECK(expr)                          \
-    do {                                          \
-        if (!(expr)) {                            \
-            ::TestingLib::checkFailed(#expr); \
-        }                                         \
-    } while (false)
+#define TEST_CHECK(expr)                              \
+    TEST_CHECK_SUPPRESS_BEGIN                          \
+    do {                                              \
+        if (!(expr)) {                                \
+            ::TestingLib::checkFailed(#expr);     \
+        }                                             \
+    } while (false)                                   \
+    TEST_CHECK_SUPPRESS_END
 
 //! Fails showing both values if `a != b`.
 #define TEST_CHECK_EQUAL(a, b) ::TestingLib::checkEqual((a), (b), #a, #b)

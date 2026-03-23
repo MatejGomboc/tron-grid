@@ -15,6 +15,10 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 - **Etape 7** — Camera, Input, Cube Scene (Phase 1 Finale). Completed 2026-03-22. PR #39.
 - **Etape 8** — Object SSBO and Indirect Draw. Completed 2026-03-22. PR #43.
 - **Etape 9** — Compute Frustum Culling. Completed 2026-03-22. PR #46.
+- **Etape 10** — IndirectCount, GPU Timestamps. Completed 2026-03-22. PR #48.
+- **Etape 11** — Clang-Tidy, spirv-val, /W4. Completed 2026-03-22. PR #50.
+- **Etape 12** — Runtime Sanitisers, GPU Validation, Sync Fixes. Completed 2026-03-22. PR #51.
+- **Etape 13** — CI Quality Gate, -Werror, Sanitiser Jobs. Completed 2026-03-22. PR #53.
 
 ---
 
@@ -449,6 +453,14 @@ bugprone errors, data races, or memory corruption.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-03-22 — Phase 2.1 complete: code quality infrastructure
+
+Clang-Tidy (.clang-tidy), spirv-val, slangc warnings-as-errors, /W4 + -Wall -Wextra
+-Wpedantic + -Werror/WX (zero-warning policy). ASan+UBSan and TSan CMake presets + CI
+jobs. GPU-Assisted, Synchronisation, and Best Practices Vulkan validation. Fixed 4
+cross-frame sync bugs found by sync validation. MSVC debug leak detection. clangd VS
+Code extension. STYLE.md quality tooling section. 14 tools across 4 layers.
 
 ### 2026-03-22 — Etape 9: Compute frustum culling
 

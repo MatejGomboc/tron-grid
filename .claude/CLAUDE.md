@@ -115,12 +115,13 @@ tron_grid/
 ├── .markdownlint.json    # Markdown linting rules
 ├── .markdownlint-cli2.jsonc  # Markdownlint ignore config
 ├── CMakeLists.txt        # Root build configuration (delegates to src/)
-├── CMakePresets.json     # 5 presets (MSVC, Clang-CL, MinGW, GCC, Clang)
+├── CMakePresets.json     # 5 presets (MSVC, Clang-CL, MinGW, GCC, Clang) + 2 sanitiser presets
 ├── CHANGELOG.md          # Version history
 ├── CODE_OF_CONDUCT.md    # Contributor Covenant 3.0
 ├── CONTRIBUTING.md       # Contributor guidelines
 ├── LICENCE               # GPL v3
 ├── README.md             # Public-facing project overview
+├── tsan_suppressions.txt # ThreadSanitizer suppression (glibc false positive)
 ├── SECURITY.md           # Vulnerability reporting
 ├── STYLE.md              # Code style conventions
 └── TODO.md               # Task list and development journal
@@ -164,7 +165,8 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-**Phase 2 — GPU-Driven Resources** is in progress (1000 cubes via SSBO + indirect draw + compute frustum culling, merged buffers + bindless next).
+**Phase 2 + 2.1 complete** — GPU-driven rendering (1000 cubes, SSBO, compute culling,
+IndirectCount) + code quality infrastructure (Clang-Tidy, sanitisers, GPU validation, -Werror).
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 See `TODO.md` for the development journal.
 

@@ -14,10 +14,10 @@ sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-**Phase 2 in progress** — GPU-driven rendering with 1000 cubes, compute frustum culling,
-single indirect draw call. SSBO for per-object transforms, compute shader culls invisible
-objects before draw, free-flight camera (quaternion, WASD + mouse look), MathLib (63 unit
-tests), event-driven multi-threaded renderer. All 5 CI presets pass.
+**Phase 2 + 2.1 complete** — GPU-driven rendering with 1000 cubes via
+`vkCmdDrawIndexedIndirectCount`, compute frustum culling (0.005 ms on RTX 4090), GPU timestamp
+queries. Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX` zero-warning policy, ASan/UBSan/TSan
+CI jobs, GPU-Assisted + Synchronisation + Best Practices Vulkan validation. All 7+ CI jobs pass.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 

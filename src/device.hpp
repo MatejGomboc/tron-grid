@@ -14,7 +14,11 @@
 
 #pragma once
 
+#ifdef _WIN32
+#include <Volk/volk.h>
+#else
 #include <volk/volk.h>
+#endif
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
 #include <vulkan/vulkan_raii.hpp>
 #include <log/logger.hpp>
@@ -31,8 +35,8 @@ public:
     // Non-copyable, movable
     Device(const Device&) = delete;
     Device& operator=(const Device&) = delete;
-    Device(Device&&) = default;
-    Device& operator=(Device&&) = default;
+    Device(Device&&) = delete;
+    Device& operator=(Device&&) = delete;
 
     //! RAII physical device reference.
     [[nodiscard]] const vk::raii::PhysicalDevice& physicalDevice() const
