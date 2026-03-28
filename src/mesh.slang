@@ -21,8 +21,13 @@ struct CameraData {
     float4x4 projection;
 };
 
+// Must match C++ ObjectData struct layout (including padding).
 struct ObjectData {
     float4x4 model;
+    uint meshlet_offset;
+    uint meshlet_count;
+    uint pad0;
+    uint pad1;
 };
 
 struct MeshletDesc {

@@ -47,6 +47,10 @@ struct Vertex {
 //! Per-object data stored in the SSBO — matches the Slang ObjectData struct.
 struct ObjectData {
     MathLib::Mat4 model; //!< Model-to-world transform.
+    uint32_t meshlet_offset{0}; //!< First meshlet index for this object's mesh.
+    uint32_t meshlet_count{0}; //!< Number of meshlets for this object's mesh.
+    uint32_t pad0{0}; //!< Padding to 16-byte alignment.
+    uint32_t pad1{0}; //!< Padding to 16-byte alignment.
 };
 
 //! Per-object bounding sphere — matches the Slang ObjectBounds struct.
@@ -61,12 +65,10 @@ struct CameraUBO {
     MathLib::Mat4 projection; //!< Projection matrix.
 };
 
-//! Push constants for the task shader — frustum planes + object/meshlet counts.
+//! Push constants for the task shader — frustum planes + object count.
 struct TaskPushConstants {
     std::array<MathLib::Vec4, 6> planes{}; //!< Frustum planes (normals point inward).
     uint32_t object_count{0}; //!< Total number of objects.
-    uint32_t meshlets_per_object{0}; //!< Number of meshlets per mesh (uniform for now).
-    uint32_t meshlet_offset{0}; //!< Global meshlet offset for this mesh type.
 };
 
 /*!

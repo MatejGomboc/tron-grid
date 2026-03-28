@@ -129,3 +129,66 @@ MeshData buildMeshlets(std::span<const MathLib::Vec3> positions, std::span<const
 
     return result;
 }
+
+void generateUVSphere(uint32_t stacks, uint32_t slices, float radius, std::vector<MathLib::Vec3>& out_positions, std::vector<uint32_t>& out_indices)
+{
+    out_positions.clear();
+    out_indices.clear();
+
+    // Top pole.
+    out_positions.push_back({0.0f, radius, 0.0f});
+
+    // Middle rings.
+    for (uint32_t i{1}; i < stacks; ++i) {
+        float phi{MathLib::PI * static_cast<float>(i) / static_cast<float>(stacks)};
+        float sin_phi{std::sin(phi)};
+        float cos_phi{std::cos(phi)};
+
+        for (uint32_t j{0}; j < slices; ++j) {
+            float theta{2.0f * MathLib::PI * static_cast<float>(j) / static_cast<float>(slices)};
+            float x{radius * sin_phi * std::cos(theta)};
+            float y{radius * cos_phi};
+            float z{radius * sin_phi * std::sin(theta)};
+            out_positions.push_back({x, y, z});
+        }
+    }
+
+    // Bottom pole.
+    out_positions.push_back({0.0f, -radius, 0.0f});
+
+    uint32_t top_index{0};
+    uint32_t bottom_index{static_cast<uint32_t>(out_positions.size()) - 1};
+
+    // Top cap triangles.
+    for (uint32_t j{0}; j < slices; ++j) {
+        uint32_t next{(j + 1) % slices};
+        out_indices.push_back(top_index);
+        out_indices.push_back(1 + j);
+        out_indices.push_back(1 + next);
+    }
+
+    // Middle quads (two triangles each).
+    for (uint32_t i{0}; i < stacks - 2; ++i) {
+        uint32_t ring_start{1 + i * slices};
+        uint32_t next_ring{1 + (i + 1) * slices};
+        for (uint32_t j{0}; j < slices; ++j) {
+            uint32_t next{(j + 1) % slices};
+            out_indices.push_back(ring_start + j);
+            out_indices.push_back(next_ring + j);
+            out_indices.push_back(next_ring + next);
+
+            out_indices.push_back(ring_start + j);
+            out_indices.push_back(next_ring + next);
+            out_indices.push_back(ring_start + next);
+        }
+    }
+
+    // Bottom cap triangles.
+    uint32_t last_ring{1 + (stacks - 2) * slices};
+    for (uint32_t j{0}; j < slices; ++j) {
+        uint32_t next{(j + 1) % slices};
+        out_indices.push_back(bottom_index);
+        out_indices.push_back(last_ring + next);
+        out_indices.push_back(last_ring + j);
+    }
+}
