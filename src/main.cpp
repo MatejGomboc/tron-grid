@@ -263,7 +263,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     vk::FenceCreateInfo fence_info{};
     fence_info.flags = vk::FenceCreateFlagBits::eSignaled;
 
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
     }
@@ -273,15 +273,15 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     auto rebuildPresentSemaphores = [&]() {
         render_finished_semaphores.clear();
-        for (uint32_t i = 0; i < swapchain.imageCount(); ++i) {
+        for (uint32_t i{0}; i < swapchain.imageCount(); ++i) {
             render_finished_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         }
     };
     rebuildPresentSemaphores();
 
     // Depth buffer — same dimensions as swapchain, recreated on resize
-    AllocatedImage depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    AllocatedImage depth_image{
+        allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)};
 
     vk::ImageViewCreateInfo depth_view_info{};
     depth_view_info.image = depth_image.image();
@@ -304,11 +304,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     // Per-frame camera UBOs (persistently mapped)
     std::vector<AllocatedBuffer> ubo_buffers;
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-        AllocatedBuffer ubo = allocator.createBuffer(sizeof(CameraUBO), static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eUniformBuffer),
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+    for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        AllocatedBuffer ubo{allocator.createBuffer(sizeof(CameraUBO), static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eUniformBuffer),
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
         pipeline.bindUBO(i, ubo.buffer());
-        VmaAllocationInfo ubo_info = ubo.allocationInfo();
+        VmaAllocationInfo ubo_info{ubo.allocationInfo()};
         pipeline.setUBOMappedPtr(i, ubo_info.pMappedData);
         ubo_buffers.push_back(std::move(ubo));
     }
@@ -321,7 +321,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     bool mouse_captured{false};
 
     // Delta time
-    std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point last_time{std::chrono::steady_clock::now()};
 
     uint32_t current_frame{0};
 
@@ -386,8 +386,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         // Delta time
-        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-        float delta_time = std::chrono::duration<float>(now - last_time).count();
+        std::chrono::steady_clock::time_point now{std::chrono::steady_clock::now()};
+        float delta_time{std::chrono::duration<float>(now - last_time).count()};
         last_time = now;
 
         // Clamp delta time to avoid huge jumps (e.g., after breakpoint or resize stall)
@@ -397,7 +397,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         // Process held keys — camera movement
         if (!keys_held.empty()) {
-            float move_delta = CAMERA_SPEED * delta_time;
+            float move_delta{CAMERA_SPEED * delta_time};
             if (keys_held.contains(KEY_W)) {
                 camera.moveForward(move_delta);
             }
@@ -440,7 +440,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         // Wait for this frame's fence
-        vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, std::numeric_limits<uint64_t>::max());
+        vk::Result wait_result{device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, std::numeric_limits<uint64_t>::max())};
         if (wait_result != vk::Result::eSuccess) {
             logger.logFatal("Failed to wait for fence.");
             std::abort();
@@ -449,9 +449,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         // Acquire next swapchain image
         uint32_t image_index{0};
-        vk::Result acquire_result = vk::Result::eSuccess;
+        vk::Result acquire_result{vk::Result::eSuccess};
         try {
-            vk::ResultValue<uint32_t> acquire = swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(), *image_available_semaphores[current_frame]);
+            vk::ResultValue<uint32_t> acquire{swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(), *image_available_semaphores[current_frame])};
             acquire_result = acquire.result;
             image_index = acquire.value;
         } catch (const vk::OutOfDateKHRError&) {
@@ -463,7 +463,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             continue;
         }
 
-        bool swapchain_suboptimal = (acquire_result == vk::Result::eSuboptimalKHR);
+        bool swapchain_suboptimal{acquire_result == vk::Result::eSuboptimalKHR};
 
         // Only reset fence after we know we will submit work
         device.get().resetFences({*in_flight_fences[current_frame]});
@@ -520,7 +520,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         present_info.pSwapchains = swapchains;
         present_info.pImageIndices = &image_index;
 
-        vk::Result present_result = vk::Result::eSuccess;
+        vk::Result present_result{vk::Result::eSuccess};
         try {
             present_result = device.presentQueue().presentKHR(present_info);
         } catch (const vk::OutOfDateKHRError&) {
@@ -566,7 +566,7 @@ int main()
             .height = 720,
         };
 
-        std::unique_ptr<WindowLib::Window> window = WindowLib::create(config, logger);
+        std::unique_ptr<WindowLib::Window> window{WindowLib::create(config, logger)};
         logger.logInfo("Window created: " + std::to_string(config.width) + "x" + std::to_string(config.height) + ".");
 
         // Vulkan initialisation
@@ -578,7 +578,7 @@ int main()
 #endif
 
         Instance instance(ENABLE_VALIDATION, requiredSurfaceExtensions(), logger);
-        vk::raii::SurfaceKHR surface = createSurface(instance.get(), *window);
+        vk::raii::SurfaceKHR surface{createSurface(instance.get(), *window)};
         Device device(instance, *surface, logger);
 
         logger.logInfo("Vulkan ready - GPU: " + device.name() + ".");
@@ -587,7 +587,7 @@ int main()
         Allocator allocator(instance, device, logger);
 
         // Load shaders and create pipelines
-        std::string exe_dir = executableDirectory();
+        std::string exe_dir{executableDirectory()};
         std::vector<uint32_t> task_spirv{loadSpirv(exe_dir + "task.spv", logger)};
         std::vector<uint32_t> mesh_spirv{loadSpirv(exe_dir + "mesh.spv", logger)};
 
@@ -658,7 +658,7 @@ int main()
 
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
-            vk::CommandBuffer raw_cmd = *copy_cmd;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
             copy_submit.pCommandBuffers = &raw_cmd;
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
@@ -684,14 +684,14 @@ int main()
         }
 
         VkDeviceSize ssbo_size{static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData))};
-        AllocatedBuffer object_ssbo = allocator.createBuffer(ssbo_size,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+        AllocatedBuffer object_ssbo{allocator.createBuffer(ssbo_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         // Staging upload for SSBO
         {
-            AllocatedBuffer ssbo_staging = allocator.createBuffer(ssbo_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
-                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
-            VmaAllocationInfo ssbo_staging_info = ssbo_staging.allocationInfo();
+            AllocatedBuffer ssbo_staging{allocator.createBuffer(ssbo_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            VmaAllocationInfo ssbo_staging_info{ssbo_staging.allocationInfo()};
             std::memcpy(ssbo_staging_info.pMappedData, object_data.data(), ssbo_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
@@ -713,7 +713,7 @@ int main()
 
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
-            vk::CommandBuffer raw_cmd = *copy_cmd;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
             copy_submit.pCommandBuffers = &raw_cmd;
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
@@ -792,7 +792,7 @@ int main()
 
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
-            vk::CommandBuffer raw_cmd = *copy_cmd;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
             copy_submit.pCommandBuffers = &raw_cmd;
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
