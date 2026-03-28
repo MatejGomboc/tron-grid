@@ -101,8 +101,11 @@ tron_grid/
 │   ├── device.hpp/cpp    # GPU selection + logical device
 │   ├── surface.hpp/cpp   # Platform Vulkan surface
 │   ├── swapchain.hpp/cpp # Swapchain with MAILBOX + old-swapchain reuse
-│   ├── pipeline.hpp/cpp  # Graphics pipeline (dynamic rendering, depth, descriptors, push constants)
+│   ├── pipeline.hpp/cpp  # Graphics + compute pipelines, descriptors
 │   ├── allocator.hpp/cpp # VMA RAII wrapper (Allocator + AllocatedBuffer + AllocatedImage)
+│   ├── meshlet.hpp/cpp   # Meshlet data structure + generation (64v/124t)
+│   ├── components.hpp    # Entity components (Transform, MeshID, Bounds)
+│   ├── scene.hpp         # Scene — flat SoA entity/component arrays
 │   ├── camera.hpp        # Free-flight camera (quaternion, WASD + mouse look)
 │   ├── triangle.slang    # Slang vertex + fragment shader (MVP transform, normal visualisation)
 │   ├── cull.slang        # Slang compute shader (frustum culling, compacted indices)
