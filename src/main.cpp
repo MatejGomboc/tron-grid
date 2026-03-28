@@ -814,6 +814,157 @@ int main()
 
         uint32_t total_objects{scene.entityCount()};
 
+        // ── TLAS build ──
+
+        // Get BLAS device address.
+        vk::AccelerationStructureDeviceAddressInfoKHR blas_addr_info{};
+        blas_addr_info.accelerationStructure = *blas;
+        vk::DeviceAddress blas_device_address{device.get().getAccelerationStructureAddressKHR(blas_addr_info)};
+
+        // Build instance data — one per scene entity.
+        std::vector<VkAccelerationStructureInstanceKHR> as_instances;
+        as_instances.reserve(total_objects);
+        for (uint32_t i{0}; i < total_objects; ++i) {
+            MathLib::Mat4 model{scene.transforms()[i].modelMatrix()};
+
+            // VkTransformMatrixKHR is 3×4 row-major (transposed from our column-major Mat4).
+            VkTransformMatrixKHR transform{};
+            for (int row{0}; row < 3; ++row) {
+                for (int col{0}; col < 4; ++col) {
+                    transform.matrix[row][col] = model.m[col][row];
+                }
+            }
+
+            VkAccelerationStructureInstanceKHR as_inst{};
+            as_inst.transform = transform;
+            as_inst.instanceCustomIndex = i;
+            as_inst.mask = 0xFF;
+            as_inst.instanceShaderBindingTableRecordOffset = 0;
+            as_inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            as_inst.accelerationStructureReference = blas_device_address;
+            as_instances.push_back(as_inst);
+        }
+
+        // Upload instance data to GPU.
+        VkDeviceSize instance_buffer_size{static_cast<VkDeviceSize>(as_instances.size() * sizeof(VkAccelerationStructureInstanceKHR))};
+        AllocatedBuffer instance_buffer{allocator.createBuffer(instance_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR
+                | vk::BufferUsageFlagBits::eTransferDst),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer instance_staging{allocator.createBuffer(instance_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(instance_staging.allocationInfo().pMappedData, as_instances.data(), instance_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = instance_buffer_size;
+            copy_cmd.copyBuffer(instance_staging.buffer(), instance_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        // Build TLAS.
+        vk::BufferDeviceAddressInfo instance_addr_info{};
+        instance_addr_info.buffer = instance_buffer.buffer();
+
+        vk::AccelerationStructureGeometryInstancesDataKHR instances_data{};
+        instances_data.arrayOfPointers = vk::False;
+        instances_data.data.deviceAddress = device.get().getBufferAddress(instance_addr_info);
+
+        vk::AccelerationStructureGeometryKHR tlas_geometry{};
+        tlas_geometry.geometryType = vk::GeometryTypeKHR::eInstances;
+        tlas_geometry.geometry.instances = instances_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR tlas_build_info{};
+        tlas_build_info.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+        tlas_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        tlas_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        tlas_build_info.geometryCount = 1;
+        tlas_build_info.pGeometries = &tlas_geometry;
+
+        vk::AccelerationStructureBuildSizesInfoKHR tlas_build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, tlas_build_info, {total_objects})};
+
+        AllocatedBuffer tlas_buffer{allocator.createBuffer(tlas_build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR tlas_create_info{};
+        tlas_create_info.buffer = tlas_buffer.buffer();
+        tlas_create_info.size = tlas_build_sizes.accelerationStructureSize;
+        tlas_create_info.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+        vk::raii::AccelerationStructureKHR tlas{device.get(), tlas_create_info};
+
+        AllocatedBuffer tlas_scratch{allocator.createBuffer(tlas_build_sizes.buildScratchSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        tlas_build_info.dstAccelerationStructure = *tlas;
+        vk::BufferDeviceAddressInfo tlas_scratch_addr_info{};
+        tlas_scratch_addr_info.buffer = tlas_scratch.buffer();
+        tlas_build_info.scratchData.deviceAddress = device.get().getBufferAddress(tlas_scratch_addr_info);
+
+        vk::AccelerationStructureBuildRangeInfoKHR tlas_range_info{};
+        tlas_range_info.primitiveCount = total_objects;
+
+        {
+            vk::CommandBufferAllocateInfo build_alloc{};
+            build_alloc.commandPool = *command_pool;
+            build_alloc.level = vk::CommandBufferLevel::ePrimary;
+            build_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers build_cmds(device.get(), build_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = build_cmds[0];
+            vk::CommandBufferBeginInfo build_begin{};
+            build_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(build_begin);
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* tlas_range_ptr{&tlas_range_info};
+            build_cmd.buildAccelerationStructuresKHR({tlas_build_info}, {tlas_range_ptr});
+
+            // Barrier: TLAS build write → fragment shader read.
+            vk::MemoryBarrier2 tlas_barrier{};
+            tlas_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            tlas_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            tlas_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            tlas_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo tlas_dep_info{};
+            tlas_dep_info.memoryBarrierCount = 1;
+            tlas_dep_info.pMemoryBarriers = &tlas_barrier;
+            build_cmd.pipelineBarrier2(tlas_dep_info);
+
+            build_cmd.end();
+
+            vk::SubmitInfo build_submit{};
+            build_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            build_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("TLAS built: " + std::to_string(total_objects) + " instances, " + std::to_string(tlas_build_sizes.accelerationStructureSize) + " bytes.");
+
         std::vector<ObjectData> object_data;
         object_data.reserve(total_objects);
         for (uint32_t i{0}; i < total_objects; ++i) {
