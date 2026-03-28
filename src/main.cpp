@@ -14,9 +14,11 @@
 
 #include "allocator.hpp"
 #include "camera.hpp"
+#include "components.hpp"
 #include "device.hpp"
 #include "instance.hpp"
 #include "pipeline.hpp"
+#include "scene.hpp"
 #include "surface.hpp"
 #include "swapchain.hpp"
 #include <log/logger.hpp>
@@ -830,10 +832,9 @@ int main()
 
         logger.logInfo("Cube mesh uploaded to GPU (" + std::to_string(CUBE_VERTICES.size()) + " vertices, " + std::to_string(CUBE_INDICES.size()) + " indices).");
 
-        // Object SSBO — all cube transforms in a single GPU buffer
-        constexpr int32_t TOTAL_CUBES = CUBE_GRID_SIZE * CUBE_GRID_SIZE * CUBE_GRID_SIZE;
-        std::vector<ObjectData> object_data;
-        object_data.reserve(TOTAL_CUBES);
+        // Build scene — 10x10x10 grid of cubes via entity/component system
+        constexpr float CUBE_BOUNDING_RADIUS = 0.866025f; // sqrt(3) * 0.5 — half-diagonal of unit cube
+        Scene scene;
         for (int32_t x = 0; x < CUBE_GRID_SIZE; ++x) {
             for (int32_t y = 0; y < CUBE_GRID_SIZE; ++y) {
                 for (int32_t z = 0; z < CUBE_GRID_SIZE; ++z) {
@@ -842,9 +843,20 @@ int main()
                         static_cast<float>(y) * CUBE_SPACING,
                         static_cast<float>(z) * CUBE_SPACING,
                     };
-                    object_data.push_back({MathLib::Mat4::translate(pos)});
+                    Transform transform{};
+                    transform.position = pos;
+                    (void)scene.addEntity(transform, {0}, {pos, CUBE_BOUNDING_RADIUS});
                 }
             }
+        }
+
+        uint32_t total_objects{scene.entityCount()};
+
+        // Object SSBO — build from scene transforms
+        std::vector<ObjectData> object_data;
+        object_data.reserve(total_objects);
+        for (const Transform& t : scene.transforms()) {
+            object_data.push_back({t.modelMatrix()});
         }
 
         VkDeviceSize ssbo_size = static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData));
@@ -883,12 +895,12 @@ int main()
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Object SSBO uploaded (" + std::to_string(TOTAL_CUBES) + " objects, " + std::to_string(ssbo_size) + " bytes).");
+        logger.logInfo("Object SSBO uploaded (" + std::to_string(total_objects) + " objects, " + std::to_string(ssbo_size) + " bytes).");
 
         // Indirect draw buffer — one command for the entire cube batch
         VkDrawIndexedIndirectCommand draw_cmd{};
         draw_cmd.indexCount = CUBE_INDEX_COUNT;
-        draw_cmd.instanceCount = static_cast<uint32_t>(TOTAL_CUBES);
+        draw_cmd.instanceCount = static_cast<uint32_t>(total_objects);
         draw_cmd.firstIndex = 0;
         draw_cmd.vertexOffset = 0;
         draw_cmd.firstInstance = 0;
@@ -930,23 +942,13 @@ int main()
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Indirect draw buffer created (1 batch, " + std::to_string(TOTAL_CUBES) + " instances).");
+        logger.logInfo("Indirect draw buffer created (1 batch, " + std::to_string(total_objects) + " instances).");
 
-        // Object bounds SSBO — bounding spheres for frustum culling
-        constexpr float CUBE_BOUNDING_RADIUS = 0.866025f; // sqrt(3) * 0.5 — half-diagonal of unit cube
+        // Object bounds SSBO — build from scene bounds
         std::vector<ObjectBounds> object_bounds;
-        object_bounds.reserve(TOTAL_CUBES);
-        for (int32_t x = 0; x < CUBE_GRID_SIZE; ++x) {
-            for (int32_t y = 0; y < CUBE_GRID_SIZE; ++y) {
-                for (int32_t z = 0; z < CUBE_GRID_SIZE; ++z) {
-                    MathLib::Vec3 pos{
-                        static_cast<float>(x) * CUBE_SPACING,
-                        static_cast<float>(y) * CUBE_SPACING,
-                        static_cast<float>(z) * CUBE_SPACING,
-                    };
-                    object_bounds.push_back({pos, CUBE_BOUNDING_RADIUS});
-                }
-            }
+        object_bounds.reserve(total_objects);
+        for (const Bounds& b : scene.bounds()) {
+            object_bounds.push_back({b.centre, b.radius});
         }
 
         VkDeviceSize bounds_size = static_cast<VkDeviceSize>(object_bounds.size() * sizeof(ObjectBounds));
@@ -983,10 +985,10 @@ int main()
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Bounds SSBO uploaded (" + std::to_string(TOTAL_CUBES) + " bounding spheres).");
+        logger.logInfo("Bounds SSBO uploaded (" + std::to_string(total_objects) + " bounding spheres).");
 
         // Visible indices buffer — compute shader writes visible object indices here
-        VkDeviceSize visible_indices_size = static_cast<VkDeviceSize>(TOTAL_CUBES * sizeof(uint32_t));
+        VkDeviceSize visible_indices_size = static_cast<VkDeviceSize>(total_objects * sizeof(uint32_t));
         AllocatedBuffer visible_indices_buffer = allocator.createBuffer(visible_indices_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer), 0,
             VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
@@ -1012,7 +1014,7 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), vertex_buffer.buffer(),
-            index_buffer.buffer(), indirect_draw_buffer.buffer(), draw_count_buffer.buffer(), static_cast<uint32_t>(TOTAL_CUBES), std::ref(command_buffers),
+            index_buffer.buffer(), indirect_draw_buffer.buffer(), draw_count_buffer.buffer(), static_cast<uint32_t>(total_objects), std::ref(command_buffers),
             std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
@@ -1083,7 +1085,7 @@ int main()
         // Request initial frame render
         emitRenderEvent({RenderEvent::Type::Render, 0, 0, 0, 0, false});
 
-        logger.logInfo("Scene: " + std::to_string(TOTAL_CUBES) + " objects, " + std::to_string(CUBE_GRID_SIZE) + "x" + std::to_string(CUBE_GRID_SIZE) + "x"
+        logger.logInfo("Scene: " + std::to_string(total_objects) + " objects, " + std::to_string(CUBE_GRID_SIZE) + "x" + std::to_string(CUBE_GRID_SIZE) + "x"
             + std::to_string(CUBE_GRID_SIZE) + " grid, GPU-driven indirect draw + compute culling.");
         logger.logInfo("Press ESC to close. Right-click to toggle mouse look. WASD + Space/Shift to fly.");
 
