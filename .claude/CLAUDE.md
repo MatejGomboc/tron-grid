@@ -103,12 +103,13 @@ tron_grid/
 │   ├── swapchain.hpp/cpp # Swapchain with MAILBOX + old-swapchain reuse
 │   ├── pipeline.hpp/cpp  # Mesh shader pipeline, descriptors, push constants
 │   ├── allocator.hpp/cpp # VMA RAII wrapper (Allocator + AllocatedBuffer + AllocatedImage)
-│   ├── meshlet.hpp/cpp   # Meshlet data structure + generation (64v/124t)
+│   ├── meshlet.hpp/cpp   # Meshlet data structure + generation (64v/84t)
 │   ├── components.hpp    # Entity components (Transform, MeshID, Bounds)
 │   ├── scene.hpp         # Scene — flat SoA entity/component arrays
 │   ├── camera.hpp        # Free-flight camera (quaternion, WASD + mouse look)
 │   ├── task.slang        # Slang task shader (per-object frustum culling)
 │   ├── mesh.slang        # Slang mesh + fragment shader (meshlet rendering)
+│   ├── terrain.hpp/cpp   # Procedural terrain generator (value noise, flat shading)
 │   ├── triangle.slang    # Legacy vertex + fragment shader (kept for reference)
 │   ├── cull.slang        # Legacy compute cull shader (kept for reference)
 │   ├── volk.cpp          # Volk dynamic loader translation unit
@@ -159,7 +160,7 @@ cmake --build build/linux-x11-gcc --config Debug
 | Units | Metres | Physically-based lighting |
 | Colour space | Linear internal, sRGB output | Correct blending |
 | HDR range | 16-bit float | Emissive glow needs headroom |
-| Meshlet size | 64 verts, 124 triangles | NVIDIA optimal |
+| Meshlet size | 64 verts, 84 triangles | Reduced from 124 for barycentric vertex duplication |
 | Descriptor model | Fully bindless | No rebinding, GPU-driven |
 | Present mode | MAILBOX | Low latency, no tearing |
 | Core subsystems | All in-house | 3D rendering, physics, audio, sensory — no third-party libs |
@@ -171,8 +172,9 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-Mesh shader rendering (1000 objects via task + mesh shaders, per-object frustum culling,
-meshlet pipeline, mixed cube/sphere scene). Entity/component scene with SoA arrays.
+Procedural Tron terrain with barycentric wireframe rendering via mesh shaders
+(task + mesh + fragment), per-object frustum culling, meshlet pipeline.
+Entity/component scene with SoA arrays.
 Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 
