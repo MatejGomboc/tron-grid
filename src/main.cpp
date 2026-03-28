@@ -479,6 +479,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
+            ubo.light_pos = MathLib::Vec3{10.0f, 30.0f, 10.0f};
+            ubo.light_intensity = 300.0f;
             pipeline.updateCameraUBO(current_frame, ubo);
             frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
         }
@@ -1092,10 +1094,11 @@ int main()
 
         logger.logInfo("Bounds + meshlet SSBOs uploaded.");
 
-        // Bind all descriptor sets — SSBOs are static, UBOs are per-frame
+        // Bind all descriptor sets — SSBOs + TLAS are static, UBOs are per-frame
         for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             pipeline.bindSSBOs(i, object_ssbo.buffer(), ssbo_size, bounds_ssbo.buffer(), bounds_size, meshlet_desc_ssbo.buffer(), meshlet_desc_size,
                 vertex_buffer.buffer(), vertex_buffer_size, meshlet_vert_idx_ssbo.buffer(), meshlet_vert_idx_size, meshlet_tri_idx_ssbo.buffer(), meshlet_tri_idx_size);
+            pipeline.bindTLAS(i, *tlas);
         }
 
         // Render event signal — main thread emits, render thread consumes
