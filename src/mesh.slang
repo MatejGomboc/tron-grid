@@ -224,14 +224,9 @@ float4 fragMain(MeshOutput input) : SV_Target
 
         if (reflect_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
         {
-            // Fetch the hit triangle's vertices to evaluate wireframe at the hit point.
-            uint hit_primitive = reflect_query.CommittedPrimitiveIndex();
-            float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
-
-            // The BLAS was built from terrain.indices — 3 consecutive indices per triangle.
-            // hit_primitive is the triangle index within the BLAS geometry.
-            // We can reconstruct the barycentric edge detection at the hit point.
+            // Evaluate wireframe edge detection at the reflected hit point.
             // hit_bary = (u, v), with w = 1 - u - v.
+            float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
             float bary_w = 1.0 - hit_bary.x - hit_bary.y;
             float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
             float hit_wire = smoothstep(0.0, WIRE_WIDTH, hit_edge);
