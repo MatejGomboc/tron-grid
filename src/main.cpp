@@ -668,6 +668,145 @@ int main()
 
         logger.logInfo("Vertex buffer uploaded (" + std::to_string(terrain.vertices.size()) + " vertices).");
 
+        // ── Index buffer for BLAS (raw triangle indices, not meshlet indices) ──
+
+        VkDeviceSize index_buffer_size{static_cast<VkDeviceSize>(terrain.indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer index_buffer{allocator.createBuffer(index_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress
+                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer index_staging{allocator.createBuffer(index_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(index_staging.allocationInfo().pMappedData, terrain.indices.data(), index_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = index_buffer_size;
+            copy_cmd.copyBuffer(index_staging.buffer(), index_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Index buffer uploaded (" + std::to_string(terrain.indices.size()) + " indices).");
+
+        // ── BLAS build for terrain ──
+
+        vk::BufferDeviceAddressInfo vertex_addr_info{};
+        vertex_addr_info.buffer = vertex_buffer.buffer();
+        vk::DeviceAddress vertex_device_address{device.get().getBufferAddress(vertex_addr_info)};
+
+        vk::BufferDeviceAddressInfo index_addr_info{};
+        index_addr_info.buffer = index_buffer.buffer();
+        vk::DeviceAddress index_device_address{device.get().getBufferAddress(index_addr_info)};
+
+        vk::AccelerationStructureGeometryTrianglesDataKHR triangles_data{};
+        triangles_data.vertexFormat = vk::Format::eR32G32B32Sfloat;
+        triangles_data.vertexData.deviceAddress = vertex_device_address;
+        triangles_data.vertexStride = sizeof(Vertex);
+        triangles_data.maxVertex = static_cast<uint32_t>(terrain.vertices.size() - 1);
+        triangles_data.indexType = vk::IndexType::eUint32;
+        triangles_data.indexData.deviceAddress = index_device_address;
+
+        vk::AccelerationStructureGeometryKHR geometry{};
+        geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+        geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+        geometry.geometry.triangles = triangles_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR build_info{};
+        build_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace | vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
+        build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        build_info.geometryCount = 1;
+        build_info.pGeometries = &geometry;
+
+        uint32_t triangle_count{static_cast<uint32_t>(terrain.indices.size() / 3)};
+        vk::AccelerationStructureBuildSizesInfoKHR build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, {triangle_count})};
+
+        // Allocate AS storage buffer.
+        AllocatedBuffer blas_buffer{allocator.createBuffer(build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR as_create_info{};
+        as_create_info.buffer = blas_buffer.buffer();
+        as_create_info.size = build_sizes.accelerationStructureSize;
+        as_create_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        vk::raii::AccelerationStructureKHR blas{device.get(), as_create_info};
+
+        // Allocate scratch buffer (aligned to minAccelerationStructureScratchOffsetAlignment).
+        AllocatedBuffer scratch_buffer{allocator.createBuffer(build_sizes.buildScratchSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        build_info.dstAccelerationStructure = *blas;
+        vk::BufferDeviceAddressInfo scratch_addr_info{};
+        scratch_addr_info.buffer = scratch_buffer.buffer();
+        build_info.scratchData.deviceAddress = device.get().getBufferAddress(scratch_addr_info);
+
+        vk::AccelerationStructureBuildRangeInfoKHR range_info{};
+        range_info.primitiveCount = triangle_count;
+
+        // Build BLAS.
+        {
+            vk::CommandBufferAllocateInfo build_alloc{};
+            build_alloc.commandPool = *command_pool;
+            build_alloc.level = vk::CommandBufferLevel::ePrimary;
+            build_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers build_cmds(device.get(), build_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = build_cmds[0];
+            vk::CommandBufferBeginInfo build_begin{};
+            build_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(build_begin);
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* range_ptr{&range_info};
+            build_cmd.buildAccelerationStructuresKHR({build_info}, {range_ptr});
+
+            // Barrier: AS build write → fragment shader read.
+            vk::MemoryBarrier2 as_barrier{};
+            as_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            as_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            as_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo dep_info{};
+            dep_info.memoryBarrierCount = 1;
+            dep_info.pMemoryBarriers = &as_barrier;
+            build_cmd.pipelineBarrier2(dep_info);
+
+            build_cmd.end();
+
+            vk::SubmitInfo build_submit{};
+            build_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            build_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+        // Scratch buffer no longer needed after build completes.
+
+        logger.logInfo("BLAS built: " + std::to_string(triangle_count) + " triangles, " + std::to_string(build_sizes.accelerationStructureSize) + " bytes.");
+
         // Scene — single terrain entity at origin.
         Scene scene;
         Transform terrain_transform{};
