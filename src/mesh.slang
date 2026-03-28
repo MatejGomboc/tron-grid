@@ -21,6 +21,8 @@ struct CameraData {
     float4x4 projection;
     float3 light_pos; // Point light world-space position.
     float light_intensity; // Point light intensity (pre-multiplier before inverse square falloff).
+    float3 camera_pos; // Camera world-space position (for view vector in PBR).
+    float camera_pad;
 };
 
 // Must match C++ ObjectData struct layout (including padding).
@@ -95,13 +97,44 @@ static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
 // Edge detection.
 static const float WIRE_WIDTH = 0.03; // Edge thickness in barycentric space.
 
-// Lighting.
+// PBR constants.
+static const float PI = 3.14159265359;
+static const float MIN_ROUGHNESS = 0.089; // Prevents NDF singularity and float16 denormals.
+static const float3 F0_DIELECTRIC = float3(0.04, 0.04, 0.04); // Obsidian F0 (IOR ~1.5).
 static const float AMBIENT = 0.03; // Faint ambient — obsidian is nearly invisible without direct light.
+
+// Ray tracing constants.
 static const float SELF_INTERSECTION_OFFSET = 0.002; // Normal offset to prevent self-intersection.
 static const float RAY_T_MIN = 0.001; // Minimum ray distance.
 
-// Fragment shader — obsidian floor with neon tube edges and RT hard shadows.
-// Emissive tubes output HDR values; obsidian surface gets Lambertian + shadows.
+// ── PBR functions (Cook-Torrance BRDF) ──
+
+// GGX / Trowbridge-Reitz normal distribution function.
+// Filament's numerically stable form — avoids float16 catastrophic cancellation.
+float D_GGX(float NdotH, float roughness)
+{
+    float a = NdotH * roughness;
+    float k = roughness / (1.0 - NdotH * NdotH + a * a);
+    return k * k * (1.0 / PI);
+}
+
+// Height-correlated Smith-GGX visibility function.
+// Folds the 1/(4*NdotV*NdotL) denominator into the geometry term.
+float V_SmithGGXCorrelated(float NdotV, float NdotL, float roughness)
+{
+    float a2 = roughness * roughness;
+    float GGXV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
+    float GGXL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
+    return 0.5 / (GGXV + GGXL);
+}
+
+// Schlick Fresnel approximation.
+float3 F_Schlick(float cosTheta, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Fragment shader — obsidian floor with neon tube edges, Cook-Torrance PBR, RT shadows.
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
 {
@@ -111,30 +144,45 @@ float4 fragMain(MeshOutput input) : SV_Target
 
     // Blend material properties between neon tube and obsidian.
     float3 base_colour = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, wire);
-    float roughness = lerp(TUBE_ROUGHNESS, OBSIDIAN_ROUGHNESS, wire);
+    float perceptual_roughness = lerp(TUBE_ROUGHNESS, OBSIDIAN_ROUGHNESS, wire);
+    float roughness = max(perceptual_roughness * perceptual_roughness, MIN_ROUGHNESS);
     float3 emissive = lerp(TUBE_EMISSIVE_COLOUR * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
 
-    // Point light — direction and distance from surface to light.
+    // Vectors.
+    float3 N = normalize(input.world_normal);
+    float3 V = normalize(camera.camera_pos - input.world_position);
     float3 to_light = camera.light_pos - input.world_position;
     float dist_to_light = length(to_light);
-    float3 light_dir = to_light / dist_to_light;
+    float3 L = to_light / dist_to_light;
+    float3 H = normalize(V + L);
 
-    // Lambertian diffuse — clamp to zero for back-facing surfaces.
-    float n_dot_l = max(dot(input.world_normal, light_dir), 0.0);
+    // Dot products with safety guards.
+    float NdotV = abs(dot(N, V)) + 1e-5;
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotH = clamp(dot(N, H), 0.0, 1.0);
+    float VdotH = clamp(dot(V, H), 0.0, 1.0);
 
     // Inverse square falloff.
     float attenuation = camera.light_intensity / max(dist_to_light * dist_to_light, 0.0001);
 
-    float lighting = AMBIENT;
+    // Cook-Torrance BRDF.
+    float  D = D_GGX(NdotH, roughness);
+    float  Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
+    float3 F = F_Schlick(VdotH, F0_DIELECTRIC);
 
-    if (n_dot_l > 0.0)
+    float3 specular = D * Vis * F;
+    float3 diffuse = (1.0 - F) * base_colour / PI;
+
+    float3 direct_lighting = float3(0.0, 0.0, 0.0);
+
+    if (NdotL > 0.0)
     {
         // Shadow ray — cast from surface toward the point light.
-        float3 origin = input.world_position + input.world_normal * SELF_INTERSECTION_OFFSET;
+        float3 origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
 
         RayDesc ray;
         ray.Origin = origin;
-        ray.Direction = light_dir;
+        ray.Direction = L;
         ray.TMin = RAY_T_MIN;
         ray.TMax = dist_to_light;
 
@@ -145,12 +193,13 @@ float4 fragMain(MeshOutput input) : SV_Target
         bool in_shadow = (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
         if (!in_shadow)
         {
-            lighting += n_dot_l * attenuation;
+            float3 radiance = float3(1.0, 1.0, 1.0) * attenuation;
+            direct_lighting = (diffuse + specular) * radiance * NdotL;
         }
     }
 
-    // Direct lighting on the surface + emissive contribution.
-    float3 colour = base_colour * lighting + emissive;
+    // Ambient + direct lighting + emissive.
+    float3 colour = base_colour * AMBIENT + direct_lighting + emissive;
     return float4(colour, 1.0);
 }
 

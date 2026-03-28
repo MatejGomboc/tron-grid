@@ -558,6 +558,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             ubo.projection = camera.projectionMatrix(aspect);
             ubo.light_pos = MathLib::Vec3{0.0f, 50.0f, 0.0f};
             ubo.light_intensity = 150.0f;
+            ubo.camera_pos = camera.position();
             pipeline.updateCameraUBO(current_frame, ubo);
             frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
         }
