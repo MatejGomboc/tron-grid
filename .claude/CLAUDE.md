@@ -19,6 +19,7 @@ A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tra
 | Dev environment setup | `docs/DEV_ENV_SETUP.md` |
 | Vision | `docs/VISION.md` |
 | Architecture | `docs/ARCHITECTURE.md` |
+| PBR reference | `docs/PBR.md` |
 | AI interface spec | `docs/AI_INTERFACE.md` (future) |
 | Style guide | `STYLE.md` |
 | Contributing | `CONTRIBUTING.md` |
@@ -87,6 +88,7 @@ tron_grid/
 ├── .vscode/              # Editor settings, extensions, debug configs
 ├── docs/                 # Extended documentation
 │   ├── ARCHITECTURE.md   # Technical architecture
+│   ├── PBR.md            # PBR reference (microfacets, Cook-Torrance, obsidian, HDR)
 │   └── VISION.md         # Project vision and roadmap
 ├── libs/                 # Internal static libraries (LEGO bricks)
 │   ├── testing/          # Testing library (TEST_CHECK, TEST_CHECK_EQUAL, TEST_CHECK_THROWS)
