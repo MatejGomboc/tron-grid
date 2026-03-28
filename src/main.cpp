@@ -683,7 +683,7 @@ int main()
             object_data.push_back(obj);
         }
 
-        VkDeviceSize ssbo_size = static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData));
+        VkDeviceSize ssbo_size{static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData))};
         AllocatedBuffer object_ssbo = allocator.createBuffer(ssbo_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
