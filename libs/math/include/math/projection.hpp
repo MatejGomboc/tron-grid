@@ -26,8 +26,8 @@ namespace MathLib
     /*!
         Returns a Vulkan-compatible perspective projection matrix.
 
-        Vulkan clip space: X right, Y down, Z into screen, depth [0, 1].
-        Right-handed with Y-up world coordinates — the matrix flips Y.
+        Vulkan clip space: X right, Z into screen, depth [0, 1].
+        Y-flip is handled by slangc `-fvk-invert-y`, not this matrix.
 
         \param fov_y Vertical field of view in radians.
         \param aspect Width / height aspect ratio.
@@ -41,7 +41,7 @@ namespace MathLib
 
         Mat4 result{};
         result.m[0][0] = 1.0f / (aspect * tan_half_fov);
-        result.m[1][1] = -1.0f / tan_half_fov; // Vulkan Y-down: negate Y
+        result.m[1][1] = 1.0f / tan_half_fov; // Y-flip handled by slangc -fvk-invert-y
         result.m[2][2] = far_plane / (near_plane - far_plane);
         result.m[2][3] = -1.0f;
         result.m[3][2] = (near_plane * far_plane) / (near_plane - far_plane);

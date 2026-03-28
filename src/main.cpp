@@ -20,6 +20,7 @@
 #include "meshlet.hpp"
 #include "pipeline.hpp"
 #include "scene.hpp"
+#include "terrain.hpp"
 #include "surface.hpp"
 #include "swapchain.hpp"
 #include <log/logger.hpp>
@@ -73,10 +74,8 @@ constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 constexpr vk::Format DEPTH_FORMAT = vk::Format::eD32Sfloat;
 
 //! Cube grid dimensions.
-constexpr int32_t CUBE_GRID_SIZE = 10;
 
 //! Spacing between cubes in the grid.
-constexpr float CUBE_SPACING = 3.0f;
 
 //! Camera movement speed (metres per second).
 constexpr float CAMERA_SPEED = 5.0f;
@@ -393,8 +392,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     }
 
     // Camera — start behind the cube grid, looking toward origin
-    float grid_centre = (CUBE_GRID_SIZE - 1) * CUBE_SPACING * 0.5f;
-    Camera camera({grid_centre, grid_centre + 2.0f, grid_centre + 15.0f});
+    // Camera starts above the terrain centre, looking along it.
+    Camera camera({0.0f, 8.0f, 35.0f}, MathLib::PI / 4.0f, 0.1f, 200.0f);
 
     // Input state
     std::unordered_set<uint32_t> keys_held;
@@ -690,110 +689,47 @@ int main()
         alloc_info.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
         vk::raii::CommandBuffers command_buffers(device.get(), alloc_info);
 
-        // ── Meshlet generation for both cube and sphere ──
+        // ── Terrain generation ──
 
-        // Cube meshlets.
-        std::vector<MathLib::Vec3> cube_positions;
-        cube_positions.reserve(CUBE_VERTICES.size());
-        for (const Vertex& v : CUBE_VERTICES) {
-            cube_positions.push_back({v.position[0], v.position[1], v.position[2]});
-        }
-        MeshData cube_meshlets{buildMeshlets(cube_positions, CUBE_INDICES)};
+        TerrainConfig terrain_config{};
+        terrain_config.grid_size = 64;
+        terrain_config.tile_spacing = 1.0f;
+        terrain_config.height_scale = 5.0f;
+        terrain_config.noise_frequency = 0.08f;
+        terrain_config.noise_octaves = 4;
+        terrain_config.quantise_levels = 8;
 
-        // Sphere mesh + meshlets.
-        constexpr uint32_t SPHERE_STACKS{8};
-        constexpr uint32_t SPHERE_SLICES{16};
-        constexpr float SPHERE_RADIUS{0.5f};
-        std::vector<MathLib::Vec3> sphere_positions;
-        std::vector<uint32_t> sphere_indices;
-        generateUVSphere(SPHERE_STACKS, SPHERE_SLICES, SPHERE_RADIUS, sphere_positions, sphere_indices);
+        TerrainMesh terrain{generateTerrain(terrain_config)};
+        MeshData terrain_meshlets{buildMeshlets(terrain.positions, terrain.indices)};
 
-        // Sphere vertices for GPU upload (position + normal + UV — normal = normalised position for a sphere).
-        std::vector<Vertex> sphere_vertices;
-        sphere_vertices.reserve(sphere_positions.size());
-        for (const MathLib::Vec3& p : sphere_positions) {
-            MathLib::Vec3 n{p.normalised()};
-            sphere_vertices.push_back({{p.x, p.y, p.z}, {n.x, n.y, n.z}, {0.0f, 0.0f}});
-        }
+        uint32_t terrain_meshlet_offset{0};
+        uint32_t terrain_meshlet_count{static_cast<uint32_t>(terrain_meshlets.meshlets.size())};
 
-        MeshData sphere_meshlets{buildMeshlets(sphere_positions, sphere_indices)};
+        logger.logInfo("Terrain: " + std::to_string(terrain.vertices.size()) + " vertices, " + std::to_string(terrain.indices.size() / 3) + " triangles, "
+            + std::to_string(terrain_meshlet_count) + " meshlets.");
 
-        // Mesh descriptors — cube is mesh 0, sphere is mesh 1.
-        // Cube meshlets start at offset 0, sphere meshlets start after cube.
-        uint32_t cube_meshlet_offset{0};
-        uint32_t cube_meshlet_count{static_cast<uint32_t>(cube_meshlets.meshlets.size())};
-        uint32_t sphere_meshlet_offset{cube_meshlet_count};
-        uint32_t sphere_meshlet_count{static_cast<uint32_t>(sphere_meshlets.meshlets.size())};
-
-        // Combine all vertices into a single buffer (cube first, then sphere).
-        // Sphere vertex indices need to be offset by the cube vertex count.
-        uint32_t cube_vertex_count{static_cast<uint32_t>(CUBE_VERTICES.size())};
-        std::vector<Vertex> all_vertices;
-        all_vertices.insert(all_vertices.end(), CUBE_VERTICES.begin(), CUBE_VERTICES.end());
-        all_vertices.insert(all_vertices.end(), sphere_vertices.begin(), sphere_vertices.end());
-
-        // Combine meshlet data — offset sphere's vertex indices by cube vertex count.
-        std::vector<Meshlet> all_meshlets;
-        std::vector<MeshletBounds> all_meshlet_bounds;
-        std::vector<uint32_t> all_vertex_indices;
-        std::vector<uint8_t> all_triangle_indices;
-
-        // Cube meshlets (offsets are already correct — they reference into the start of the vertex buffer).
-        uint32_t vert_idx_base{0};
-        uint32_t tri_idx_base{0};
-        for (const Meshlet& m : cube_meshlets.meshlets) {
-            Meshlet combined{m};
-            combined.vertex_offset = vert_idx_base + m.vertex_offset;
-            combined.triangle_offset = tri_idx_base + m.triangle_offset;
-            all_meshlets.push_back(combined);
-        }
-        all_meshlet_bounds.insert(all_meshlet_bounds.end(), cube_meshlets.bounds.begin(), cube_meshlets.bounds.end());
-        all_vertex_indices.insert(all_vertex_indices.end(), cube_meshlets.vertex_indices.begin(), cube_meshlets.vertex_indices.end());
-        all_triangle_indices.insert(all_triangle_indices.end(), cube_meshlets.triangle_indices.begin(), cube_meshlets.triangle_indices.end());
-
-        // Sphere meshlets — offset vertex indices by cube vertex count.
-        vert_idx_base = static_cast<uint32_t>(all_vertex_indices.size());
-        tri_idx_base = static_cast<uint32_t>(all_triangle_indices.size());
-        for (const Meshlet& m : sphere_meshlets.meshlets) {
-            Meshlet combined{m};
-            combined.vertex_offset = vert_idx_base + m.vertex_offset;
-            combined.triangle_offset = tri_idx_base + m.triangle_offset;
-            all_meshlets.push_back(combined);
-        }
-        all_meshlet_bounds.insert(all_meshlet_bounds.end(), sphere_meshlets.bounds.begin(), sphere_meshlets.bounds.end());
-        // Sphere vertex indices reference into sphere_positions (0-based) — add cube_vertex_count offset.
-        for (uint32_t idx : sphere_meshlets.vertex_indices) {
-            all_vertex_indices.push_back(idx + cube_vertex_count);
-        }
-        all_triangle_indices.insert(all_triangle_indices.end(), sphere_meshlets.triangle_indices.begin(), sphere_meshlets.triangle_indices.end());
-
-        // Combined vertex buffer — cube + sphere vertices, uploaded as SSBO for mesh shader.
-        VkDeviceSize vertex_buffer_size{static_cast<VkDeviceSize>(all_vertices.size() * sizeof(Vertex))};
+        // Vertex buffer.
+        VkDeviceSize vertex_buffer_size{static_cast<VkDeviceSize>(terrain.vertices.size() * sizeof(Vertex))};
         AllocatedBuffer vertex_buffer{allocator.createBuffer(vertex_buffer_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         {
             AllocatedBuffer vertex_staging{allocator.createBuffer(vertex_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
-            std::memcpy(vertex_staging.allocationInfo().pMappedData, all_vertices.data(), vertex_buffer_size);
-
+            std::memcpy(vertex_staging.allocationInfo().pMappedData, terrain.vertices.data(), vertex_buffer_size);
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
             copy_alloc.level = vk::CommandBufferLevel::ePrimary;
             copy_alloc.commandBufferCount = 1;
             vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
-
             const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
             vk::CommandBufferBeginInfo copy_begin{};
             copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
             copy_cmd.begin(copy_begin);
-
             vk::BufferCopy region{};
             region.size = vertex_buffer_size;
             copy_cmd.copyBuffer(vertex_staging.buffer(), vertex_buffer.buffer(), {region});
-
             copy_cmd.end();
-
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd = *copy_cmd;
@@ -802,51 +738,22 @@ int main()
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Vertex buffer uploaded (" + std::to_string(all_vertices.size()) + " vertices, " + std::to_string(vertex_buffer_size) + " bytes).");
+        logger.logInfo("Vertex buffer uploaded (" + std::to_string(terrain.vertices.size()) + " vertices).");
 
-        logger.logInfo("Meshlets: " + std::to_string(cube_meshlet_count) + " cube + " + std::to_string(sphere_meshlet_count)
-            + " sphere = " + std::to_string(all_meshlets.size()) + " total.");
-
-        // ── Build mixed scene — cubes and spheres alternating ──
-
-        constexpr float CUBE_BOUNDING_RADIUS{0.866025f}; // sqrt(3) * 0.5 — half-diagonal of unit cube.
+        // Scene — single terrain entity at origin.
         Scene scene;
-        for (int32_t x{0}; x < CUBE_GRID_SIZE; ++x) {
-            for (int32_t y{0}; y < CUBE_GRID_SIZE; ++y) {
-                for (int32_t z{0}; z < CUBE_GRID_SIZE; ++z) {
-                    MathLib::Vec3 pos{
-                        static_cast<float>(x) * CUBE_SPACING,
-                        static_cast<float>(y) * CUBE_SPACING,
-                        static_cast<float>(z) * CUBE_SPACING,
-                    };
-                    Transform transform{};
-                    transform.position = pos;
-
-                    // Alternate: even positions are cubes (mesh 0), odd are spheres (mesh 1).
-                    bool is_sphere{((x + y + z) % 2) != 0};
-                    uint32_t mesh_id{is_sphere ? 1u : 0u};
-                    float bound_radius{is_sphere ? SPHERE_RADIUS : CUBE_BOUNDING_RADIUS};
-
-                    (void)scene.addEntity(transform, {mesh_id}, {pos, bound_radius});
-                }
-            }
-        }
+        Transform terrain_transform{};
+        (void)scene.addEntity(terrain_transform, {0}, {{0.0f, 0.0f, 0.0f}, terrain.bounding_radius});
 
         uint32_t total_objects{scene.entityCount()};
 
-        // Object SSBO — build from scene with per-object meshlet offset/count.
         std::vector<ObjectData> object_data;
         object_data.reserve(total_objects);
         for (uint32_t i{0}; i < total_objects; ++i) {
             ObjectData obj{};
             obj.model = scene.transforms()[i].modelMatrix();
-            if (scene.meshIDs()[i].id == 0) {
-                obj.meshlet_offset = cube_meshlet_offset;
-                obj.meshlet_count = cube_meshlet_count;
-            } else {
-                obj.meshlet_offset = sphere_meshlet_offset;
-                obj.meshlet_count = sphere_meshlet_count;
-            }
+            obj.meshlet_offset = terrain_meshlet_offset;
+            obj.meshlet_count = terrain_meshlet_count;
             object_data.push_back(obj);
         }
 
@@ -900,15 +807,15 @@ int main()
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         // Meshlet SSBOs — descriptors, vertex indices, triangle indices
-        VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(all_meshlets.size() * sizeof(Meshlet))};
+        VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(terrain_meshlets.meshlets.size() * sizeof(Meshlet))};
         AllocatedBuffer meshlet_desc_ssbo{allocator.createBuffer(meshlet_desc_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        VkDeviceSize meshlet_vert_idx_size{static_cast<VkDeviceSize>(all_vertex_indices.size() * sizeof(uint32_t))};
+        VkDeviceSize meshlet_vert_idx_size{static_cast<VkDeviceSize>(terrain_meshlets.vertex_indices.size() * sizeof(uint32_t))};
         AllocatedBuffer meshlet_vert_idx_ssbo{allocator.createBuffer(meshlet_vert_idx_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        VkDeviceSize meshlet_tri_idx_size{static_cast<VkDeviceSize>(all_triangle_indices.size() * sizeof(uint8_t))};
+        VkDeviceSize meshlet_tri_idx_size{static_cast<VkDeviceSize>(terrain_meshlets.triangle_indices.size() * sizeof(uint8_t))};
         AllocatedBuffer meshlet_tri_idx_ssbo{allocator.createBuffer(meshlet_tri_idx_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
@@ -924,9 +831,9 @@ int main()
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
 
             std::memcpy(bounds_staging.allocationInfo().pMappedData, object_bounds.data(), bounds_size);
-            std::memcpy(desc_staging.allocationInfo().pMappedData, all_meshlets.data(), meshlet_desc_size);
-            std::memcpy(vert_idx_staging.allocationInfo().pMappedData, all_vertex_indices.data(), meshlet_vert_idx_size);
-            std::memcpy(tri_idx_staging.allocationInfo().pMappedData, all_triangle_indices.data(), meshlet_tri_idx_size);
+            std::memcpy(desc_staging.allocationInfo().pMappedData, terrain_meshlets.meshlets.data(), meshlet_desc_size);
+            std::memcpy(vert_idx_staging.allocationInfo().pMappedData, terrain_meshlets.vertex_indices.data(), meshlet_vert_idx_size);
+            std::memcpy(tri_idx_staging.allocationInfo().pMappedData, terrain_meshlets.triangle_indices.data(), meshlet_tri_idx_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
@@ -1050,8 +957,6 @@ int main()
         // Request initial frame render
         emitRenderEvent({RenderEvent::Type::Render, 0, 0, 0, 0, false});
 
-        logger.logInfo("Scene: " + std::to_string(total_objects) + " objects, " + std::to_string(CUBE_GRID_SIZE) + "x" + std::to_string(CUBE_GRID_SIZE) + "x"
-            + std::to_string(CUBE_GRID_SIZE) + " grid, GPU-driven indirect draw + compute culling.");
         logger.logInfo("Press ESC to close. Right-click to toggle mouse look. WASD + Space/Shift to fly.");
 
         // Main loop — handles Close and ESC. All other events are forwarded

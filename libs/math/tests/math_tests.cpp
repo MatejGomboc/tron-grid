@@ -374,13 +374,14 @@ TEST_CASE(perspective_far_plane_maps_to_one)
     TEST_CHECK(approx(ndc_z, 1.0f, 1e-4f));
 }
 
-TEST_CASE(perspective_flips_y)
+TEST_CASE(perspective_preserves_y)
 {
     MathLib::Mat4 proj = MathLib::perspective(MathLib::PI / 2.0f, 1.0f, 0.1f, 100.0f);
-    // A point above centre in view space should have negative Y in clip space (Vulkan Y-down)
+    // Y-flip is handled by slangc -fvk-invert-y, not the projection matrix.
+    // A point above centre in view space should have positive Y in clip space.
     MathLib::Vec4 above{0.0f, 1.0f, -1.0f, 1.0f};
     MathLib::Vec4 clip = proj * above;
-    TEST_CHECK(clip.y < 0.0f);
+    TEST_CHECK(clip.y > 0.0f);
 }
 
 // ── View matrices ──
