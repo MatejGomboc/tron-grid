@@ -198,8 +198,56 @@ float4 fragMain(MeshOutput input) : SV_Target
         }
     }
 
-    // Ambient + direct lighting + emissive.
-    float3 colour = base_colour * AMBIENT + direct_lighting + emissive;
+    // ── RT reflection for obsidian surface ──
+
+    float3 reflected_colour = float3(0.0, 0.0, 0.0);
+
+    // Fresnel at the primary surface — controls reflection strength.
+    float3 F_view = F_Schlick(max(dot(N, V), 0.0), F0_DIELECTRIC);
+
+    // Only trace reflections for obsidian-dominant fragments (wire > 0.5).
+    // Neon tube edges are emissive light sources — they glow, they do not reflect.
+    if (wire > 0.5 && F_view.x > 0.01)
+    {
+        float3 reflect_dir = reflect(-V, N);
+        float3 reflect_origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
+
+        RayDesc reflect_ray;
+        reflect_ray.Origin = reflect_origin;
+        reflect_ray.Direction = reflect_dir;
+        reflect_ray.TMin = RAY_T_MIN;
+        reflect_ray.TMax = 200.0;
+
+        RayQuery<RAY_FLAG_NONE> reflect_query;
+        reflect_query.TraceRayInline(scene_tlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, reflect_ray);
+        reflect_query.Proceed();
+
+        if (reflect_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+        {
+            // Fetch the hit triangle's vertices to evaluate wireframe at the hit point.
+            uint hit_primitive = reflect_query.CommittedPrimitiveIndex();
+            float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
+
+            // The BLAS was built from terrain.indices — 3 consecutive indices per triangle.
+            // hit_primitive is the triangle index within the BLAS geometry.
+            // We can reconstruct the barycentric edge detection at the hit point.
+            // hit_bary = (u, v), with w = 1 - u - v.
+            float bary_w = 1.0 - hit_bary.x - hit_bary.y;
+            float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
+            float hit_wire = smoothstep(0.0, WIRE_WIDTH, hit_edge);
+
+            // Evaluate material at the reflected hit point.
+            float3 hit_emissive = lerp(TUBE_EMISSIVE_COLOUR * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
+            float3 hit_base = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, hit_wire);
+
+            // The reflected colour is primarily the emissive neon tubes.
+            // Obsidian faces reflect as near-black (which is correct — dark stone).
+            reflected_colour = hit_emissive + hit_base * AMBIENT;
+        }
+    }
+
+    // Ambient + direct lighting + emissive + reflection.
+    float3 colour = base_colour * AMBIENT + direct_lighting + emissive + reflected_colour * F_view;
     return float4(colour, 1.0);
 }
 
