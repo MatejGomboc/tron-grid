@@ -81,23 +81,38 @@ StructuredBuffer<uint8_t> meshlet_triangle_indices;
 [[vk::binding(7, 0)]]
 RaytracingAccelerationStructure scene_tlas;
 
-// Wireframe edge colour constants.
-static const float3 EDGE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon.
-static const float3 FACE_COLOUR = float3(0.02, 0.02, 0.04); // Near-black void.
+// ── Material constants ──
+
+// Obsidian floor — polished volcanic glass, deep black, glossy sheen.
+static const float3 OBSIDIAN_COLOUR = float3(0.005, 0.005, 0.01); // Deep black with subtle cool tint.
+static const float OBSIDIAN_ROUGHNESS = 0.06; // Polished obsidian — sharp but slightly softened reflections.
+
+// Neon tube edges — bright emissive light strips embedded in the floor.
+static const float3 TUBE_EMISSIVE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon.
+static const float TUBE_EMISSIVE_STRENGTH = 15.0; // HDR intensity — well above 1.0.
+static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
+
+// Edge detection.
 static const float WIRE_WIDTH = 0.03; // Edge thickness in barycentric space.
-static const float AMBIENT = 0.05; // Minimum light level (Tron glow persists even in full shadow).
+
+// Lighting.
+static const float AMBIENT = 0.03; // Faint ambient — obsidian is nearly invisible without direct light.
 static const float SELF_INTERSECTION_OFFSET = 0.002; // Normal offset to prevent self-intersection.
 static const float RAY_T_MIN = 0.001; // Minimum ray distance.
 
-// Fragment shader — Tron wireframe aesthetic with RT hard shadows.
-// Point light with inverse square falloff and inline ray query shadows.
+// Fragment shader — obsidian floor with neon tube edges and RT hard shadows.
+// Emissive tubes output HDR values; obsidian surface gets Lambertian + shadows.
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
 {
-    // Wireframe colour.
+    // Edge detection — wire=0 at edges (neon tube), wire=1 on faces (obsidian).
     float edge = min(input.barycentric.x, min(input.barycentric.y, input.barycentric.z));
     float wire = smoothstep(0.0, WIRE_WIDTH, edge);
-    float3 base_colour = lerp(EDGE_COLOUR, FACE_COLOUR, wire);
+
+    // Blend material properties between neon tube and obsidian.
+    float3 base_colour = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, wire);
+    float roughness = lerp(TUBE_ROUGHNESS, OBSIDIAN_ROUGHNESS, wire);
+    float3 emissive = lerp(TUBE_EMISSIVE_COLOUR * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
 
     // Point light — direction and distance from surface to light.
     float3 to_light = camera.light_pos - input.world_position;
@@ -108,7 +123,7 @@ float4 fragMain(MeshOutput input) : SV_Target
     float n_dot_l = max(dot(input.world_normal, light_dir), 0.0);
 
     // Inverse square falloff.
-    float attenuation = camera.light_intensity / (dist_to_light * dist_to_light);
+    float attenuation = camera.light_intensity / max(dist_to_light * dist_to_light, 0.0001);
 
     float lighting = AMBIENT;
 
@@ -134,7 +149,8 @@ float4 fragMain(MeshOutput input) : SV_Target
         }
     }
 
-    float3 colour = base_colour * lighting;
+    // Direct lighting on the surface + emissive contribution.
+    float3 colour = base_colour * lighting + emissive;
     return float4(colour, 1.0);
 }
 

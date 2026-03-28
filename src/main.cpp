@@ -73,6 +73,9 @@ constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 //! Depth buffer format used throughout.
 constexpr vk::Format DEPTH_FORMAT = vk::Format::eD32Sfloat;
 
+//! HDR colour buffer format — float16 for emissive values above 1.0.
+constexpr vk::Format HDR_FORMAT = vk::Format::eR16G16B16A16Sfloat;
+
 //! Camera movement speed (metres per second).
 constexpr float CAMERA_SPEED = 5.0f;
 
@@ -553,8 +556,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
-            ubo.light_pos = MathLib::Vec3{10.0f, 30.0f, 10.0f};
-            ubo.light_intensity = 300.0f;
+            ubo.light_pos = MathLib::Vec3{0.0f, 50.0f, 0.0f};
+            ubo.light_intensity = 150.0f;
             pipeline.updateCameraUBO(current_frame, ubo);
             frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
         }
@@ -672,7 +675,6 @@ int main()
 
         // Mesh shader pipeline (task + mesh + fragment). mesh.spv is a combined Slang
         // module containing both meshMain and fragMain entry points.
-        constexpr vk::Format HDR_FORMAT{vk::Format::eR16G16B16A16Sfloat};
         Pipeline pipeline(device, HDR_FORMAT, DEPTH_FORMAT, task_spirv, mesh_spirv, MAX_FRAMES_IN_FLIGHT, logger);
 
         // Command pool + per-frame command buffers
