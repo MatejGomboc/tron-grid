@@ -13,8 +13,8 @@
 */
 
 // Mesh shader — outputs one meshlet per workgroup.
-// Reads vertex positions and indices from SSBOs, transforms vertices
-// by the per-object model matrix, and outputs triangles.
+// Vertices are duplicated per triangle so each gets unique barycentric
+// coordinates for wireframe edge detection in the fragment shader.
 
 struct CameraData {
     float4x4 view;
@@ -38,7 +38,6 @@ struct MeshletDesc {
 };
 
 // Layout must match C++ Vertex struct (tightly packed, no float3 padding).
-// float3 in std430 would be padded to 16 bytes; using explicit fields avoids this.
 struct Vertex {
     float pos_x, pos_y, pos_z;
     float norm_x, norm_y, norm_z;
@@ -54,7 +53,7 @@ struct TaskPayload {
 
 struct MeshOutput {
     float4 position : SV_Position;
-    float3 colour;
+    float3 barycentric; // Barycentric coordinates for wireframe edge detection.
 };
 
 [[vk::binding(0, 0)]]
@@ -75,12 +74,27 @@ StructuredBuffer<uint> meshlet_vertex_indices;
 [[vk::binding(6, 0)]]
 StructuredBuffer<uint8_t> meshlet_triangle_indices;
 
-// Fragment shader — outputs normal as colour (same as before).
+// Wireframe edge colour constants.
+static const float3 EDGE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon.
+static const float3 FACE_COLOUR = float3(0.02, 0.02, 0.04); // Near-black void.
+static const float WIRE_WIDTH = 0.03; // Edge thickness in barycentric space.
+
+// Fragment shader — Tron wireframe aesthetic.
+// Dark faces with bright neon edges detected via barycentric coordinates.
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
 {
-    return float4(input.colour * 0.5 + 0.5, 1.0);
+    float edge = min(input.barycentric.x, min(input.barycentric.y, input.barycentric.z));
+    float wire = smoothstep(0.0, WIRE_WIDTH, edge);
+    float3 colour = lerp(EDGE_COLOUR, FACE_COLOUR, wire);
+    return float4(colour, 1.0);
 }
+
+// With vertex duplication for barycentrics, each triangle outputs 3 unique vertices.
+// Max: 84 triangles × 3 = 252 vertices (within the 256 vertex output limit).
+// Must match MAX_MESHLET_TRIANGLES in meshlet.hpp.
+static const uint MAX_OUT_TRIANGLES = 84;
+static const uint MAX_OUT_VERTICES = 252; // 84 × 3
 
 [shader("mesh")]
 [outputtopology("triangle")]
@@ -89,45 +103,56 @@ void meshMain(
     uint group_id : SV_GroupID,
     uint thread_id : SV_GroupThreadID,
     in payload TaskPayload task_payload,
-    OutputVertices<MeshOutput, 64> out_vertices,
-    OutputIndices<uint3, 124> out_triangles)
+    OutputVertices<MeshOutput, 252> out_vertices,
+    OutputIndices<uint3, 84> out_triangles)
 {
     uint meshlet_index = task_payload.meshlet_offset + group_id;
     MeshletDesc meshlet = meshlet_descs[meshlet_index];
 
-    SetMeshOutputCounts(meshlet.vertex_count, meshlet.triangle_count);
+    // Each triangle outputs 3 unique vertices (for barycentric coordinates).
+    uint out_tri_count = min(meshlet.triangle_count, MAX_OUT_TRIANGLES);
+    uint out_vert_count = out_tri_count * 3;
+    SetMeshOutputCounts(out_vert_count, out_tri_count);
 
     // Load the object transform.
     float4x4 model = objects[task_payload.object_index].model;
     float4x4 mvp = mul(camera.projection, mul(camera.view, model));
 
-    // Output vertices — one thread per vertex (up to 64).
-    if (thread_id < meshlet.vertex_count) {
-        uint global_vertex_index = meshlet_vertex_indices[meshlet.vertex_offset + thread_id];
-        Vertex v = vertices[global_vertex_index];
+    // Barycentric coordinate lookup — vertex 0, 1, 2 of each triangle.
+    static const float3 BARY[3] = {
+        float3(1.0, 0.0, 0.0),
+        float3(0.0, 1.0, 0.0),
+        float3(0.0, 0.0, 1.0)
+    };
 
-        float3 pos = float3(v.pos_x, v.pos_y, v.pos_z);
-        float3 normal = float3(v.norm_x, v.norm_y, v.norm_z);
-
-        MeshOutput output;
-        output.position = mul(mvp, float4(pos, 1.0));
-        // Normal visualisation — transform by model matrix (uniform scale only).
-        float3 world_normal = mul((float3x3)model, normal);
-        output.colour = normalize(world_normal);
-        out_vertices[thread_id] = output;
-    }
-
-    // Output triangles — one thread per triangle (up to 124, but we have 64 threads).
-    // Each thread may output multiple triangles.
-    uint triangles_per_thread = (meshlet.triangle_count + 63) / 64;
-    for (uint t = 0; t < triangles_per_thread; ++t) {
-        uint tri_index = thread_id * triangles_per_thread + t;
-        if (tri_index < meshlet.triangle_count) {
+    // Each thread processes one or more triangles.
+    // For each triangle, output 3 vertices with unique barycentrics.
+    uint tris_per_thread = (out_tri_count + 63) / 64;
+    for (uint t = 0; t < tris_per_thread; ++t) {
+        uint tri_index = thread_id * tris_per_thread + t;
+        if (tri_index < out_tri_count) {
             uint base = meshlet.triangle_offset + tri_index * 3;
-            uint i0 = uint(meshlet_triangle_indices[base + 0]);
-            uint i1 = uint(meshlet_triangle_indices[base + 1]);
-            uint i2 = uint(meshlet_triangle_indices[base + 2]);
-            out_triangles[tri_index] = uint3(i0, i1, i2);
+            uint local_indices[3] = {
+                uint(meshlet_triangle_indices[base + 0]),
+                uint(meshlet_triangle_indices[base + 1]),
+                uint(meshlet_triangle_indices[base + 2])
+            };
+
+            uint vert_base = tri_index * 3;
+
+            for (uint v = 0; v < 3; ++v) {
+                uint global_idx = meshlet_vertex_indices[meshlet.vertex_offset + local_indices[v]];
+                Vertex vtx = vertices[global_idx];
+                float3 pos = float3(vtx.pos_x, vtx.pos_y, vtx.pos_z);
+
+                MeshOutput output;
+                output.position = mul(mvp, float4(pos, 1.0));
+                output.barycentric = BARY[v];
+                out_vertices[vert_base + v] = output;
+            }
+
+            // Triangle indices reference the duplicated vertices.
+            out_triangles[tri_index] = uint3(vert_base, vert_base + 1, vert_base + 2);
         }
     }
 }

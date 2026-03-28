@@ -23,8 +23,9 @@
 //! Maximum vertices per meshlet (NVIDIA optimal).
 constexpr uint32_t MAX_MESHLET_VERTICES{64};
 
-//! Maximum triangles per meshlet (NVIDIA optimal).
-constexpr uint32_t MAX_MESHLET_TRIANGLES{124};
+//! Maximum triangles per meshlet. Limited to 84 to support barycentric vertex
+//! duplication in the mesh shader (84 × 3 = 252 vertices ≤ 255 output limit).
+constexpr uint32_t MAX_MESHLET_TRIANGLES{84};
 
 //! Describes one meshlet — a small fixed-size chunk of mesh geometry.
 struct Meshlet {
