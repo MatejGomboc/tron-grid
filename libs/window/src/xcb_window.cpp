@@ -21,12 +21,12 @@
 //! Looks up or creates an X11 atom by name.
 static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
 {
-    xcb_intern_atom_cookie_t cookie = xcb_intern_atom(conn, 0, strlen(name), name);
-    xcb_intern_atom_reply_t* reply = xcb_intern_atom_reply(conn, cookie, nullptr);
+    xcb_intern_atom_cookie_t cookie{xcb_intern_atom(conn, 0, strlen(name), name)};
+    xcb_intern_atom_reply_t* reply{xcb_intern_atom_reply(conn, cookie, nullptr)};
     if (!reply) {
         return XCB_ATOM_NONE;
     }
-    xcb_atom_t atom = reply->atom;
+    xcb_atom_t atom{reply->atom};
     free(reply);
     return atom;
 }
@@ -48,9 +48,9 @@ namespace WindowLib
         }
 
         // Get the screen
-        const xcb_setup_t* setup = xcb_get_setup(m_connection);
-        xcb_screen_iterator_t iter = xcb_setup_roots_iterator(setup);
-        for (int i = 0; i < screen_num; ++i) {
+        const xcb_setup_t* setup{xcb_get_setup(m_connection)};
+        xcb_screen_iterator_t iter{xcb_setup_roots_iterator(setup)};
+        for (int i{0}; i < screen_num; ++i) {
             xcb_screen_next(&iter);
         }
         m_screen = iter.data;
@@ -58,18 +58,18 @@ namespace WindowLib
         // Create window
         m_window = xcb_generate_id(m_connection);
 
-        uint32_t event_mask = XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
-            | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_FOCUS_CHANGE;
+        uint32_t event_mask{XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE
+            | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_FOCUS_CHANGE};
 
         // Do not set XCB_CW_BACK_PIXEL — omitting the background pixel prevents the
         // X server from painting a background colour during resize, so the old Vulkan
         // frame stays visible until the render thread presents the new one.
-        uint32_t value_mask = XCB_CW_EVENT_MASK;
+        uint32_t value_mask{XCB_CW_EVENT_MASK};
         uint32_t value_list[] = {event_mask};
 
         // Centre on screen
-        int16_t x = static_cast<int16_t>((static_cast<int32_t>(m_screen->width_in_pixels) - static_cast<int32_t>(config.width)) / 2);
-        int16_t y = static_cast<int16_t>((static_cast<int32_t>(m_screen->height_in_pixels) - static_cast<int32_t>(config.height)) / 2);
+        int16_t x{static_cast<int16_t>((static_cast<int32_t>(m_screen->width_in_pixels) - static_cast<int32_t>(config.width)) / 2)};
+        int16_t y{static_cast<int16_t>((static_cast<int32_t>(m_screen->height_in_pixels) - static_cast<int32_t>(config.height)) / 2)};
 
         xcb_create_window(m_connection, XCB_COPY_FROM_PARENT, m_window, m_screen->root, x, y, config.width, config.height,
             0, // border width
@@ -107,8 +107,8 @@ namespace WindowLib
             hints.min_width = hints.max_width = config.width;
             hints.min_height = hints.max_height = config.height;
 
-            xcb_atom_t wm_normal_hints = internAtom(m_connection, "WM_NORMAL_HINTS");
-            xcb_atom_t wm_size_hints = internAtom(m_connection, "WM_SIZE_HINTS");
+            xcb_atom_t wm_normal_hints{internAtom(m_connection, "WM_NORMAL_HINTS")};
+            xcb_atom_t wm_size_hints{internAtom(m_connection, "WM_SIZE_HINTS")};
             xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, m_window, wm_normal_hints, wm_size_hints, 32, sizeof(hints) / 4, &hints);
         }
 
@@ -144,7 +144,7 @@ namespace WindowLib
     void XcbWindow::waitEvents()
     {
         // Block until at least one event arrives
-        xcb_generic_event_t* event = xcb_wait_for_event(m_connection);
+        xcb_generic_event_t* event{xcb_wait_for_event(m_connection)};
         if (event) {
             handleEvent(event);
             free(event);
@@ -159,8 +159,8 @@ namespace WindowLib
         m_cursor_captured = captured;
         if (captured) {
             // Create invisible cursor
-            xcb_pixmap_t pixmap = xcb_generate_id(m_connection);
-            xcb_cursor_t cursor = xcb_generate_id(m_connection);
+            xcb_pixmap_t pixmap{xcb_generate_id(m_connection)};
+            xcb_cursor_t cursor{xcb_generate_id(m_connection)};
             xcb_create_pixmap(m_connection, 1, pixmap, m_window, 1, 1);
             xcb_create_cursor(m_connection, cursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 0, 0);
             xcb_free_pixmap(m_connection, pixmap);
@@ -184,13 +184,13 @@ namespace WindowLib
 
     void XcbWindow::handleEvent(xcb_generic_event_t* event)
     {
-        uint8_t event_type = event->response_type & 0x7F;
+        uint8_t event_type{static_cast<uint8_t>(event->response_type & 0x7F)};
 
         switch (event_type) {
         case XCB_CLIENT_MESSAGE: {
-            auto* cm = reinterpret_cast<xcb_client_message_event_t*>(event);
+            auto* cm{reinterpret_cast<xcb_client_message_event_t*>(event)};
             if (cm->data.data32[0] == m_wm_delete_window) {
-                WindowEvent ev(WindowEvent::Type::Close);
+                WindowEvent ev{WindowEvent::Type::Close};
                 pushEvent(ev);
                 m_should_close = true;
             }
@@ -198,17 +198,17 @@ namespace WindowLib
         }
 
         case XCB_EXPOSE: {
-            WindowEvent ev(WindowEvent::Type::Expose);
+            WindowEvent ev{WindowEvent::Type::Expose};
             pushEvent(ev);
             break;
         }
 
         case XCB_CONFIGURE_NOTIFY: {
-            auto* cfg = reinterpret_cast<xcb_configure_notify_event_t*>(event);
+            auto* cfg{reinterpret_cast<xcb_configure_notify_event_t*>(event)};
             if (cfg->width != m_width || cfg->height != m_height) {
                 m_width = cfg->width;
                 m_height = cfg->height;
-                WindowEvent ev(WindowEvent::Type::Resize);
+                WindowEvent ev{WindowEvent::Type::Resize};
                 ev.resize.width = cfg->width;
                 ev.resize.height = cfg->height;
                 pushEvent(ev);
@@ -217,8 +217,8 @@ namespace WindowLib
         }
 
         case XCB_KEY_PRESS: {
-            auto* kp = reinterpret_cast<xcb_key_press_event_t*>(event);
-            WindowEvent ev(WindowEvent::Type::KeyDown);
+            auto* kp{reinterpret_cast<xcb_key_press_event_t*>(event)};
+            WindowEvent ev{WindowEvent::Type::KeyDown};
             ev.key.keycode = kp->detail; // X11 keycode (not keysym)
             ev.key.repeat = false; // X11 doesn't distinguish easily
             pushEvent(ev);
@@ -226,8 +226,8 @@ namespace WindowLib
         }
 
         case XCB_KEY_RELEASE: {
-            auto* kr = reinterpret_cast<xcb_key_release_event_t*>(event);
-            WindowEvent ev(WindowEvent::Type::KeyUp);
+            auto* kr{reinterpret_cast<xcb_key_release_event_t*>(event)};
+            WindowEvent ev{WindowEvent::Type::KeyUp};
             ev.key.keycode = kr->detail;
             ev.key.repeat = false;
             pushEvent(ev);
@@ -235,16 +235,16 @@ namespace WindowLib
         }
 
         case XCB_MOTION_NOTIFY: {
-            xcb_motion_notify_event_t* mn = reinterpret_cast<xcb_motion_notify_event_t*>(event);
-            int32_t x = static_cast<int32_t>(mn->event_x);
-            int32_t y = static_cast<int32_t>(mn->event_y);
-            int32_t dx = m_mouse_tracked ? (x - m_last_mouse_x) : 0;
-            int32_t dy = m_mouse_tracked ? (y - m_last_mouse_y) : 0;
+            xcb_motion_notify_event_t* mn{reinterpret_cast<xcb_motion_notify_event_t*>(event)};
+            int32_t x{static_cast<int32_t>(mn->event_x)};
+            int32_t y{static_cast<int32_t>(mn->event_y)};
+            int32_t dx{m_mouse_tracked ? (x - m_last_mouse_x) : 0};
+            int32_t dy{m_mouse_tracked ? (y - m_last_mouse_y) : 0};
 
             if (m_cursor_captured && (dx != 0 || dy != 0)) {
                 // Recentre cursor to prevent hitting screen edges
-                int16_t cx = static_cast<int16_t>(m_width / 2);
-                int16_t cy = static_cast<int16_t>(m_height / 2);
+                int16_t cx{static_cast<int16_t>(m_width / 2)};
+                int16_t cy{static_cast<int16_t>(m_height / 2)};
                 m_last_mouse_x = static_cast<int32_t>(cx);
                 m_last_mouse_y = static_cast<int32_t>(cy);
                 xcb_warp_pointer(m_connection, XCB_NONE, m_window, 0, 0, 0, 0, cx, cy);
@@ -254,7 +254,7 @@ namespace WindowLib
                 m_last_mouse_y = y;
             }
 
-            WindowEvent ev(WindowEvent::Type::MouseMove);
+            WindowEvent ev{WindowEvent::Type::MouseMove};
             ev.mouse_move.x = x;
             ev.mouse_move.y = y;
             ev.mouse_move.dx = dx;
@@ -266,10 +266,10 @@ namespace WindowLib
         }
 
         case XCB_BUTTON_PRESS: {
-            auto* bp = reinterpret_cast<xcb_button_press_event_t*>(event);
+            auto* bp{reinterpret_cast<xcb_button_press_event_t*>(event)};
             // X11: 1=left, 2=middle, 3=right, 4/5=scroll
             if (bp->detail >= 1 && bp->detail <= 3) {
-                WindowEvent ev(WindowEvent::Type::MouseButtonDown);
+                WindowEvent ev{WindowEvent::Type::MouseButtonDown};
                 ev.mouse_button.button = (bp->detail == 1) ? 0 : (bp->detail == 3) ? 1 : 2;
                 ev.mouse_button.x = bp->event_x;
                 ev.mouse_button.y = bp->event_y;
@@ -279,9 +279,9 @@ namespace WindowLib
         }
 
         case XCB_BUTTON_RELEASE: {
-            auto* br = reinterpret_cast<xcb_button_release_event_t*>(event);
+            auto* br{reinterpret_cast<xcb_button_release_event_t*>(event)};
             if (br->detail >= 1 && br->detail <= 3) {
-                WindowEvent ev(WindowEvent::Type::MouseButtonUp);
+                WindowEvent ev{WindowEvent::Type::MouseButtonUp};
                 ev.mouse_button.button = (br->detail == 1) ? 0 : (br->detail == 3) ? 1 : 2;
                 ev.mouse_button.x = br->event_x;
                 ev.mouse_button.y = br->event_y;
@@ -291,13 +291,13 @@ namespace WindowLib
         }
 
         case XCB_FOCUS_IN: {
-            WindowEvent ev(WindowEvent::Type::Focus);
+            WindowEvent ev{WindowEvent::Type::Focus};
             pushEvent(ev);
             break;
         }
 
         case XCB_FOCUS_OUT: {
-            WindowEvent ev(WindowEvent::Type::Blur);
+            WindowEvent ev{WindowEvent::Type::Blur};
             pushEvent(ev);
             break;
         }

@@ -90,7 +90,7 @@ namespace LoggingLib
         while (!stop_token.stop_requested()) {
             // Wait for messages or stop — the CV checks stop_token automatically
             {
-                std::unique_lock<std::mutex> lock(m_mutex);
+                std::unique_lock<std::mutex> lock{m_mutex};
                 m_cv.wait(lock, stop_token, [this]() {
                     return !m_queue.empty();
                 });

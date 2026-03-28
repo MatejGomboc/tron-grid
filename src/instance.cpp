@@ -27,12 +27,12 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, vk::DebugUtilsMessageTypeFlagsEXT /*type*/,
     const vk::DebugUtilsMessengerCallbackDataEXT* callback_data, void* user_data)
 {
-    LoggingLib::Logger* logger = static_cast<LoggingLib::Logger*>(user_data);
+    LoggingLib::Logger* logger{static_cast<LoggingLib::Logger*>(user_data)};
     if (!logger) {
         return vk::False;
     }
 
-    std::string message = std::string("[Vulkan] ") + callback_data->pMessage;
+    std::string message{std::string("[Vulkan] ") + callback_data->pMessage};
     if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
         logger->logError(message);
     } else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
@@ -73,7 +73,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
     // Step 2: Check Vulkan version >= 1.3
-    uint32_t api_version = vk::enumerateInstanceVersion();
+    uint32_t api_version{vk::enumerateInstanceVersion()};
     if (VK_API_VERSION_MAJOR(api_version) < 1 || (VK_API_VERSION_MAJOR(api_version) == 1 && VK_API_VERSION_MINOR(api_version) < 3)) {
         m_logger.logFatal("Vulkan 1.3 or later required (found " + std::to_string(VK_API_VERSION_MAJOR(api_version)) + "."
             + std::to_string(VK_API_VERSION_MINOR(api_version)) + ").");
@@ -89,7 +89,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     }
 
     // Verify all extensions are available
-    std::vector<vk::ExtensionProperties> available_extensions = vk::enumerateInstanceExtensionProperties();
+    std::vector<vk::ExtensionProperties> available_extensions{vk::enumerateInstanceExtensionProperties()};
     for (const char* ext : extensions) {
         if (!isExtensionAvailable(available_extensions, ext)) {
             m_logger.logFatal(std::string("Required Vulkan instance extension not available: ") + ext + ".");
@@ -101,7 +101,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     // Step 4: Validation layers (debug only)
     std::vector<const char*> layers;
     if (enable_validation) {
-        std::vector<vk::LayerProperties> available_layers = vk::enumerateInstanceLayerProperties();
+        std::vector<vk::LayerProperties> available_layers{vk::enumerateInstanceLayerProperties()};
         if (isLayerAvailable(available_layers, "VK_LAYER_KHRONOS_validation")) {
             layers.push_back("VK_LAYER_KHRONOS_validation");
         } else {

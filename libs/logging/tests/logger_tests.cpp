@@ -36,16 +36,16 @@ TEST_CASE(logger_all_severities)
 TEST_CASE(logger_thread_safety)
 {
     LoggingLib::Logger logger;
-    constexpr int count = 100;
+    constexpr int count{100};
 
     std::thread t1([&] {
-        for (int i = 0; i < count; ++i) {
+        for (int i{0}; i < count; ++i) {
             logger.logInfo("Thread 1 message.");
         }
     });
 
     std::thread t2([&] {
-        for (int i = 0; i < count; ++i) {
+        for (int i{0}; i < count; ++i) {
             logger.logWarning("Thread 2 message.");
         }
     });
