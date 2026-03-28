@@ -20,8 +20,8 @@
 #include "meshlet.hpp"
 #include "pipeline.hpp"
 #include "scene.hpp"
-#include "terrain.hpp"
 #include "surface.hpp"
+#include "terrain.hpp"
 #include "swapchain.hpp"
 #include <log/logger.hpp>
 #include <math/matrix.hpp>
@@ -72,10 +72,6 @@ constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
 //! Depth buffer format used throughout.
 constexpr vk::Format DEPTH_FORMAT = vk::Format::eD32Sfloat;
-
-//! Cube grid dimensions.
-
-//! Spacing between cubes in the grid.
 
 //! Camera movement speed (metres per second).
 constexpr float CAMERA_SPEED = 5.0f;
@@ -391,7 +387,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         ubo_buffers.push_back(std::move(ubo));
     }
 
-    // Camera — start behind the cube grid, looking toward origin
     // Camera starts above the terrain centre, looking along it.
     Camera camera({0.0f, 8.0f, 35.0f}, MathLib::PI / 4.0f, 0.1f, 200.0f);
 
@@ -717,19 +712,24 @@ int main()
             AllocatedBuffer vertex_staging{allocator.createBuffer(vertex_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
             std::memcpy(vertex_staging.allocationInfo().pMappedData, terrain.vertices.data(), vertex_buffer_size);
+
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
             copy_alloc.level = vk::CommandBufferLevel::ePrimary;
             copy_alloc.commandBufferCount = 1;
             vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
             const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
             vk::CommandBufferBeginInfo copy_begin{};
             copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
             copy_cmd.begin(copy_begin);
+
             vk::BufferCopy region{};
             region.size = vertex_buffer_size;
             copy_cmd.copyBuffer(vertex_staging.buffer(), vertex_buffer.buffer(), {region});
+
             copy_cmd.end();
+
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd = *copy_cmd;
