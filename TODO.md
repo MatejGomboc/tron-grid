@@ -207,6 +207,57 @@ use as ray origin and normal offset.
 
 **After this step:** hard shadows visible on the terrain. Phase 5 complete.
 
+### Implementation Notes
+
+**MeshOutput must grow.** The fragment shader needs `world_position` and
+`world_normal` for ray origin and offset. Two options:
+
+1. **Output from mesh shader** — add `float3 world_position` and
+   `float3 world_normal` to `MeshOutput`. This adds 24 bytes per vertex.
+   With 252 max output vertices, total per-vertex output grows from 28 bytes
+   (position + bary) to 52 bytes. Check against
+   `maxMeshOutputMemorySize` (typically 32 KB on NVIDIA → 32768 / 52 ≈ 630
+   vertices — well within the 252 limit).
+2. **Reconstruct from depth** — use inverse VP matrix + screen-space depth
+   to reconstruct world position in the fragment shader. Avoids extra mesh
+   outputs but requires the inverse VP in the UBO and is less precise at
+   distance. The normal would still need to be output.
+
+Option 1 is simpler and more robust. Recommended.
+
+**Descriptor set layout changes.** The current layout has 7 bindings
+(UBO + 6 SSBOs). Adding the TLAS makes it 8. Binding numbers:
+
+- Binding 0: Camera UBO (existing)
+- Bindings 1-6: SSBOs (existing)
+- **Binding 7: TLAS** (`VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR`)
+
+Update `pipeline.cpp` descriptor set layout, pool sizes, and add a
+`bindTLAS()` method.
+
+**CameraUBO changes.** Add `float3 light_dir` (normalised, pointing toward
+the light source) and `float3 pad` for 16-byte alignment. The fragment
+shader reads this to determine the shadow ray direction.
+
+**Slang compilation flags.** The mesh.slang module already compiles to
+SPIR-V 1.4. Ray query requires the `SPV_KHR_ray_query` extension. Add
+`-capability spirv_1_4+GL_EXT_ray_query` or equivalent Slang flag to
+`slangc` invocation in `CMakeLists.txt`. Verify `spirv-val` accepts
+the output.
+
+**Descriptor pool.** Currently allocates `frames_in_flight` UBOs and
+`frames_in_flight * 6` storage buffers. Add
+`frames_in_flight` acceleration structure descriptors to the pool.
+
+**AllocatedAccelerationStructure struct.** Bundles:
+
+- `AllocatedBuffer` — the AS storage buffer (VMA-owned).
+- `vk::raii::AccelerationStructureKHR` — the AS handle (RAII-owned).
+
+Destruction order: AS handle first, then buffer. The RAII wrappers handle
+this automatically if the AS is destroyed before the buffer goes out of
+scope.
+
 ### Acceptance Criteria
 
 - [ ] `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` enabled
