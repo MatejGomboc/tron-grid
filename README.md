@@ -124,7 +124,7 @@ cmake --build build/linux-x11-gcc --config Debug
 
 | Document | Purpose |
 |----------|---------|
-| [docs/DEV_ENV_SETUP.md](docs/DEV_ENV_SETUP.md) | Development environment setup (single source of truth) |
+| [docs/DEV_ENV_SETUP.md](docs/DEV_ENV_SETUP.md) | Development environment setup |
 | [docs/VISION.md](docs/VISION.md) | Project vision, phased roadmap |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture and engine design |
 | docs/AI_INTERFACE.md | AI brain plugin interface specification (future) |
