@@ -148,7 +148,7 @@ private:
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
     vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.
-    std::vector<vk::raii::DescriptorSet> m_descriptor_sets; //!< Per-frame descriptor sets.
+    std::vector<vk::raii::DescriptorSet> m_descriptor_sets{}; //!< Per-frame descriptor sets.
 
-    std::vector<void*> m_ubo_mapped_ptrs; //!< Persistently mapped UBO pointers (per frame).
+    std::vector<void*> m_ubo_mapped_ptrs{}; //!< Persistently mapped UBO pointers (per frame).
 };
