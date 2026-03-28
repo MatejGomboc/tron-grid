@@ -143,9 +143,10 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     depth_range.layerCount = 1;
 
     // Transition HDR image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL.
+    // srcStage = eBlit to wait for the previous frame's blit read to complete.
     vk::ImageMemoryBarrier2 hdr_to_render{};
-    hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eNone;
+    hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eBlit;
+    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eTransferRead;
     hdr_to_render.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     hdr_to_render.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_render.oldLayout = vk::ImageLayout::eUndefined;
@@ -243,8 +244,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     hdr_to_src.image = hdr_image;
     hdr_to_src.subresourceRange = colour_range;
 
+    // srcStage = eColorAttachmentOutput to sync with the acquire semaphore wait.
     vk::ImageMemoryBarrier2 swap_to_dst{};
-    swap_to_dst.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+    swap_to_dst.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     swap_to_dst.srcAccessMask = vk::AccessFlagBits2::eNone;
     swap_to_dst.dstStageMask = vk::PipelineStageFlagBits2::eBlit;
     swap_to_dst.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
