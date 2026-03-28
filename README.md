@@ -14,10 +14,10 @@ sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-**Phase 2 + 2.1 complete** — GPU-driven rendering with 1000 cubes via
-`vkCmdDrawIndexedIndirectCount`, compute frustum culling (0.005 ms on RTX 4090), GPU timestamp
-queries. Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX` zero-warning policy, ASan/UBSan/TSan
-CI jobs, GPU-Assisted + Synchronisation + Best Practices Vulkan validation. All 7+ CI jobs pass.
+GPU-driven rendering with 1000 cubes via `vkCmdDrawIndexedIndirectCount`, compute frustum
+culling (0.005 ms on RTX 4090), GPU timestamp queries. Code quality: Clang-Tidy, spirv-val,
+`-Werror`/`/WX` zero-warning policy, ASan/UBSan/TSan CI jobs, GPU-Assisted, Synchronisation,
+and Best Practices Vulkan validation. Currently working on mesh shaders and scene architecture.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 

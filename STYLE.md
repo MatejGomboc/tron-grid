@@ -188,13 +188,13 @@ Do not column-align trailing comments. Use a single space before `//` or `//!<`:
 ```cpp
 // Correct
 SignalsLib::Signal<LogMessage> m_queue; //!< Thread-safe message queue.
-std::thread m_worker; //!< Background writer thread.
-bool m_stop{false}; //!< Set to true when the logger is shutting down.
+std::mutex m_mutex; //!< Protects the wake-up condition.
+std::condition_variable_any m_cv; //!< Wakes the worker when messages arrive.
 
 // Wrong — padded to align
 SignalsLib::Signal<LogMessage> m_queue;  //!< Thread-safe message queue.
-std::thread m_worker;                   //!< Background writer thread.
-bool m_stop{false};                     //!< Set to true when the logger is shutting down.
+std::mutex m_mutex;                     //!< Protects the wake-up condition.
+std::condition_variable_any m_cv;       //!< Wakes the worker when messages arrive.
 ```
 
 The same applies to enum values — no extra spaces between the value and its comment.

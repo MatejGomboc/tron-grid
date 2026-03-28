@@ -4,42 +4,6 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 
 ---
 
-## Completed Etapes
-
-- **Etape 1** — Internal Library Scaffolding. Completed 2026-03-13. PR #18.
-- **Etape 2** — Vulkan Instance, Validation, and Device. Completed 2026-03-13. PR #20.
-- **Etape 3** — Swapchain, Command Buffers, and Clear Screen. Completed 2026-03-15. PRs #22, #23, #24.
-- **Etape 4** — Triangle on Screen (Phase 0 Finale). Completed 2026-03-19. PR #26.
-- **Etape 5** — Math Library. Completed 2026-03-22. PR #34.
-- **Etape 6** — Depth Buffer, 3D Vertex Format, Descriptors. Completed 2026-03-22. PR #37.
-- **Etape 7** — Camera, Input, Cube Scene (Phase 1 Finale). Completed 2026-03-22. PR #39.
-- **Etape 8** — Object SSBO and Indirect Draw. Completed 2026-03-22. PR #43.
-- **Etape 9** — Compute Frustum Culling. Completed 2026-03-22. PR #46.
-- **Etape 10** — IndirectCount, GPU Timestamps. Completed 2026-03-22. PR #48.
-- **Etape 11** — Clang-Tidy, spirv-val, /W4. Completed 2026-03-22. PR #50.
-- **Etape 12** — Runtime Sanitisers, GPU Validation, Sync Fixes. Completed 2026-03-22. PR #51.
-- **Etape 13** — CI Quality Gate, -Werror, Sanitiser Jobs. Completed 2026-03-22. PR #53.
-
----
-
-## Phase 1 — Solid Foundation (Fly Through Cubes) ✅
-
-Completed 2026-03-22. Etapes 5 (PR #34), 6 (PR #37), 7 (PR #39).
-
----
-
-## Phase 2 — GPU-Driven Resources ✅
-
-Completed 2026-03-22. Etapes 8 (PR #43), 9 (PR #46), 10 (PR #48).
-
----
-
-## Phase 2.1 — Code Quality Infrastructure ✅
-
-Completed 2026-03-22. Etapes 11 (PR #50), 12 (PR #51), 13 (PR #53).
-
----
-
 ## Phase 3 — Mesh Shaders + Scene Architecture
 
 **Goal:** Replace the traditional vertex pipeline with mesh shaders (`VK_EXT_mesh_shader`),

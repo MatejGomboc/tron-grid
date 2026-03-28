@@ -2,9 +2,8 @@
 
 Technical architecture of TronGrid.
 
-> **Note:** This document describes the **target architecture** — the design all implementation
-> work converges towards. Sections marked *(implemented)* exist in the codebase today; everything
-> else is the blueprint for upcoming phases. See `TODO.md` for current progress.
+> This document describes the engine architecture. Sections covering future phases
+> are marked accordingly. See `TODO.md` for the development journal.
 
 ---
 
@@ -60,22 +59,22 @@ CMake `target_link_libraries`. Each library has its own include directory, sourc
 
 ```text
 libs/
-├── testing/                   # testing library (foundation brick) *(implemented)*
+├── testing/                   # testing library (foundation brick)
 │   ├── CMakeLists.txt         # add_library(testing STATIC ...)
 │   ├── include/testing/testing.hpp
 │   ├── src/testing.cpp
 │   └── tests/
-├── signals/                   # thread-safe SignalsLib::Signal<T> queues *(implemented)*
+├── signals/                   # thread-safe SignalsLib::Signal<T> queues
 │   ├── include/signal/signal.hpp
 │   └── tests/
-├── logging/                   # background LoggingLib::Logger *(implemented)*
+├── logging/                   # background LoggingLib::Logger
 │   ├── include/log/logger.hpp
 │   ├── src/logger.cpp
 │   └── tests/
-├── math/                      # header-only MathLib (Vec, Mat4, Quat, projection) *(implemented)*
+├── math/                      # header-only MathLib (Vec, Mat4, Quat, projection)
 │   ├── include/math/vector.hpp, matrix.hpp, quaternion.hpp, projection.hpp
 │   └── tests/
-├── window/                    # platform windowing — WindowLib (Win32 / XCB) *(implemented)*
+├── window/                    # platform windowing — WindowLib (Win32 / XCB)
 │   ├── include/window/window.hpp
 │   ├── src/win32_window.cpp, xcb_window.cpp
 │   └── tests/
@@ -214,13 +213,13 @@ auto* transform = entity.get_component<TransformComponent>(); // O(1) hash looku
 
 ---
 
-## Signal-Based Communication *(implemented — `libs/signals/include/signal/signal.hpp`)*
+## Signal-Based Communication
 
 Systems communicate through `Signal<T>` — a thread-safe, typed message queue. This avoids tight
 coupling between systems that don't need to know about each other.
 
 ```cpp
-// signal.hpp — already in the codebase
+// libs/signals/include/signal/signal.hpp
 template <typename T> struct Signal {
     std::queue<T> pending;
     mutable std::mutex mutex;
