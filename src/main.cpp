@@ -755,21 +755,21 @@ int main()
         as_create_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
         vk::raii::AccelerationStructureKHR blas{device.get(), as_create_info};
 
-        // Allocate scratch buffer (aligned to minAccelerationStructureScratchOffsetAlignment).
-        AllocatedBuffer scratch_buffer{allocator.createBuffer(build_sizes.buildScratchSize,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
-            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
-
         build_info.dstAccelerationStructure = *blas;
-        vk::BufferDeviceAddressInfo scratch_addr_info{};
-        scratch_addr_info.buffer = scratch_buffer.buffer();
-        build_info.scratchData.deviceAddress = device.get().getBufferAddress(scratch_addr_info);
 
         vk::AccelerationStructureBuildRangeInfoKHR range_info{};
         range_info.primitiveCount = triangle_count;
 
-        // Build BLAS.
+        // Build BLAS — scratch buffer scoped so it's freed after build completes.
         {
+            AllocatedBuffer scratch_buffer{allocator.createBuffer(build_sizes.buildScratchSize,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo scratch_addr_info{};
+            scratch_addr_info.buffer = scratch_buffer.buffer();
+            build_info.scratchData.deviceAddress = device.get().getBufferAddress(scratch_addr_info);
+
             vk::CommandBufferAllocateInfo build_alloc{};
             build_alloc.commandPool = *command_pool;
             build_alloc.level = vk::CommandBufferLevel::ePrimary;
@@ -805,7 +805,6 @@ int main()
             device.graphicsQueue().submit({build_submit});
             device.graphicsQueue().waitIdle();
         }
-        // Scratch buffer no longer needed after build completes.
 
         logger.logInfo("BLAS built: " + std::to_string(triangle_count) + " triangles, " + std::to_string(build_sizes.accelerationStructureSize) + " bytes.");
 
@@ -916,19 +915,21 @@ int main()
         tlas_create_info.type = vk::AccelerationStructureTypeKHR::eTopLevel;
         vk::raii::AccelerationStructureKHR tlas{device.get(), tlas_create_info};
 
-        AllocatedBuffer tlas_scratch{allocator.createBuffer(tlas_build_sizes.buildScratchSize,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
-            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
-
         tlas_build_info.dstAccelerationStructure = *tlas;
-        vk::BufferDeviceAddressInfo tlas_scratch_addr_info{};
-        tlas_scratch_addr_info.buffer = tlas_scratch.buffer();
-        tlas_build_info.scratchData.deviceAddress = device.get().getBufferAddress(tlas_scratch_addr_info);
 
         vk::AccelerationStructureBuildRangeInfoKHR tlas_range_info{};
         tlas_range_info.primitiveCount = total_objects;
 
+        // Build TLAS — scratch buffer scoped so it's freed after build completes.
         {
+            AllocatedBuffer tlas_scratch{allocator.createBuffer(tlas_build_sizes.buildScratchSize,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo tlas_scratch_addr_info{};
+            tlas_scratch_addr_info.buffer = tlas_scratch.buffer();
+            tlas_build_info.scratchData.deviceAddress = device.get().getBufferAddress(tlas_scratch_addr_info);
+
             vk::CommandBufferAllocateInfo build_alloc{};
             build_alloc.commandPool = *command_pool;
             build_alloc.level = vk::CommandBufferLevel::ePrimary;
