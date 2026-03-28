@@ -153,7 +153,7 @@ namespace WindowLib
 
     LRESULT CALLBACK Win32Window::wndProcStatic(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     {
-        Win32Window* self = nullptr;
+        Win32Window* self{nullptr};
 
         if (msg == WM_NCCREATE) {
             // Extract and store the this pointer

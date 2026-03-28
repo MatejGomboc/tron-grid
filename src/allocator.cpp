@@ -13,8 +13,8 @@
 */
 
 #include "allocator.hpp"
-#include "instance.hpp"
 #include "device.hpp"
+#include "instance.hpp"
 #include <cstdlib>
 
 Allocator::Allocator(const Instance& instance, const Device& device, LoggingLib::Logger& logger) :

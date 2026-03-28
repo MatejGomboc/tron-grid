@@ -38,8 +38,8 @@ namespace TestingLib
     bool runAll()
     {
         const std::vector<TestCase>& cases = registry();
-        std::size_t passed = 0;
-        std::size_t failed = 0;
+        std::size_t passed{0};
+        std::size_t failed{0};
 
         for (const TestCase& tc : cases) {
             try {

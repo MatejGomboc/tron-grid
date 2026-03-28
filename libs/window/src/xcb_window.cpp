@@ -38,7 +38,7 @@ namespace WindowLib
         Window(logger)
     {
         // Connect to X server
-        int screen_num;
+        int screen_num{0};
         m_connection = xcb_connect(nullptr, &screen_num);
 
         if (xcb_connection_has_error(m_connection)) {

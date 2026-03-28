@@ -12,10 +12,10 @@
     GNU General Public License for more details.
 */
 
+#include "surface.hpp"
 #ifdef _WIN32
 #include <Windows.h>
 #endif
-#include "surface.hpp"
 
 vk::raii::SurfaceKHR createSurface(const vk::raii::Instance& instance, const WindowLib::Window& window)
 {

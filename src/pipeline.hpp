@@ -39,14 +39,14 @@ class Device; // forward declaration
 
 //! Vertex layout — position (float3) + normal (float3) + UV (float2). Meshlet/RT-ready.
 struct Vertex {
-    std::array<float, 3> position; //!< World-space position.
-    std::array<float, 3> normal; //!< Surface normal.
-    std::array<float, 2> uv; //!< Texture coordinates.
+    std::array<float, 3> position{}; //!< World-space position.
+    std::array<float, 3> normal{}; //!< Surface normal.
+    std::array<float, 2> uv{}; //!< Texture coordinates.
 };
 
 //! Per-object data stored in the SSBO — matches the Slang ObjectData struct.
 struct ObjectData {
-    MathLib::Mat4 model; //!< Model-to-world transform.
+    MathLib::Mat4 model{}; //!< Model-to-world transform.
     uint32_t meshlet_offset{0}; //!< First meshlet index for this object's mesh.
     uint32_t meshlet_count{0}; //!< Number of meshlets for this object's mesh.
     uint32_t pad0{0}; //!< Padding to 16-byte alignment.
@@ -55,14 +55,14 @@ struct ObjectData {
 
 //! Per-object bounding sphere — matches the Slang ObjectBounds struct.
 struct ObjectBounds {
-    MathLib::Vec3 centre; //!< World-space bounding sphere centre.
+    MathLib::Vec3 centre{}; //!< World-space bounding sphere centre.
     float radius{0.0f}; //!< Bounding sphere radius.
 };
 
 //! Camera uniform buffer — view and projection matrices, uploaded once per frame.
 struct CameraUBO {
-    MathLib::Mat4 view; //!< View matrix.
-    MathLib::Mat4 projection; //!< Projection matrix.
+    MathLib::Mat4 view{}; //!< View matrix.
+    MathLib::Mat4 projection{}; //!< Projection matrix.
 };
 
 //! Push constants for the task shader — frustum planes + object count.

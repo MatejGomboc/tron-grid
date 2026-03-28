@@ -98,7 +98,7 @@ namespace LoggingLib
             // Lock released before draining — no lock ordering issue with Signal's mutex
 
             // Drain all pending messages.
-            LogMessage msg;
+            LogMessage msg{};
             while (m_queue.consume(msg)) {
                 std::string_view prefix{severityPrefix(msg.severity)};
                 if (msg.severity >= Severity::Warning) {
