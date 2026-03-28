@@ -60,6 +60,12 @@ in `rateDevice`).
 - `VkPhysicalDeviceAccelerationStructurePropertiesKHR`:
   `minAccelerationStructureScratchOffsetAlignment`, `maxInstanceCount`.
 
+**VMA change:** Add `VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT` to
+`VmaAllocatorCreateInfo::flags` in `allocator.cpp`. This causes VMA to
+automatically add `VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT` to all memory
+blocks, so any buffer created with `VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT`
+will work correctly.
+
 **Buffer usage changes:** Vertex and index buffers need
 `VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT` and
 `VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR`
@@ -90,8 +96,15 @@ Build a Bottom-Level Acceleration Structure (BLAS) from the terrain mesh.
   `minAccelerationStructureScratchOffsetAlignment`).
 - Create AS handle via `vkCreateAccelerationStructureKHR`.
 - Record `vkCmdBuildAccelerationStructuresKHR`, barrier, destroy scratch.
-- Store in RAII wrapper (extend `Allocator` or new
-  `AllocatedAccelerationStructure`).
+- `vk::raii::AccelerationStructureKHR` exists natively in vulkan-hpp — no
+  custom RAII wrapper needed. Bundle it with an `AllocatedBuffer` (for the
+  AS storage buffer) in an `AllocatedAccelerationStructure` struct, similar
+  to how `AllocatedImage` bundles an image with its VMA allocation.
+- **Synchronisation2 barrier after build:**
+  `srcStage = eAccelerationStructureBuildKHR`,
+  `srcAccess = eAccelerationStructureWriteKHR` →
+  `dstStage = eFragmentShader`,
+  `dstAccess = eAccelerationStructureReadKHR`.
 
 **BLAS compaction (saves 20-50% memory):**
 
@@ -183,6 +196,10 @@ float4 fragMain(MeshOutput input) : SV_Target
   (`dot(N, L) <= 0`).
 - `tMax` can be reduced for localised lights (not needed for directional).
 - Self-intersection offset: `0.002` along normal + `tMin = 0.001`.
+- **Cliff-edge gotcha:** Quantised terrain heights create vertical cliff
+  faces. Use the flat face normal (already computed per-triangle) for the
+  offset, not interpolated vertex normals — interpolated normals at cliff
+  edges can point sideways into the cliff wall.
 
 **MeshOutput changes:** The mesh shader must output `world_position` and
 `world_normal` as additional interpolated fields for the fragment shader to
@@ -204,6 +221,8 @@ use as ray origin and normal offset.
 - [ ] Per-object frustum culling still works
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
+- [ ] Slang RT shaders compile to SPIR-V offline; `spirv-val` validates them
+- [ ] CI passes (no GPU needed — shader compilation + validation only)
 - [ ] **Phase 5 complete — hard shadows via inline ray query**
 
 ---
