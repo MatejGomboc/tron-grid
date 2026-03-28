@@ -248,7 +248,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     colour_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     colour_attachment.loadOp = vk::AttachmentLoadOp::eClear;
     colour_attachment.storeOp = vk::AttachmentStoreOp::eStore;
-    colour_attachment.clearValue.color = vk::ClearColorValue{std::array{0.0f, 0.1f, 0.15f, 1.0f}};
+    colour_attachment.clearValue.color = vk::ClearColorValue{std::array{0.01f, 0.01f, 0.02f, 1.0f}};
 
     // Clear depth to 1.0 (far plane).
     vk::RenderingAttachmentInfo depth_attachment{};
