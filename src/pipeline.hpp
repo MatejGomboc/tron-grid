@@ -59,12 +59,14 @@ struct ObjectBounds {
     float radius{0.0f}; //!< Bounding sphere radius.
 };
 
-//! Camera uniform buffer — view and projection matrices + point light, uploaded once per frame.
+//! Camera uniform buffer — view and projection matrices + camera + light, uploaded once per frame.
 struct CameraUBO {
     MathLib::Mat4 view{}; //!< View matrix.
     MathLib::Mat4 projection{}; //!< Projection matrix.
     MathLib::Vec3 light_pos{}; //!< Point light world-space position.
     float light_intensity{1.0f}; //!< Point light intensity (pre-multiplier before inverse square falloff).
+    MathLib::Vec3 camera_pos{}; //!< Camera world-space position (for view vector in PBR).
+    float camera_pad{0.0f}; //!< Padding to 16-byte alignment.
 };
 
 //! Push constants for the task shader — frustum planes + object count.
@@ -146,7 +148,7 @@ private:
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
     vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.
-    std::vector<vk::raii::DescriptorSet> m_descriptor_sets; //!< Per-frame descriptor sets.
+    std::vector<vk::raii::DescriptorSet> m_descriptor_sets{}; //!< Per-frame descriptor sets.
 
-    std::vector<void*> m_ubo_mapped_ptrs; //!< Persistently mapped UBO pointers (per frame).
+    std::vector<void*> m_ubo_mapped_ptrs{}; //!< Persistently mapped UBO pointers (per frame).
 };
