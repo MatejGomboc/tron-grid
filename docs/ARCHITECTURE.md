@@ -122,7 +122,7 @@ data from a buffer and writes actions to another. This boundary is strict and in
 | Units | Metres | Physically-based lighting needs real-world scale |
 | Colour space | Linear internal, sRGB output | Correct blending and light accumulation |
 | HDR range | 16-bit float | Emissive glow needs headroom beyond [0, 1] |
-| Meshlet size | 64 vertices, 124 triangles | NVIDIA optimal for mesh shaders |
+| Meshlet size | 64 vertices, 84 triangles | Reduced from 124 for barycentric vertex duplication |
 | Descriptor model | Fully bindless | No rebinding between draws; GPU-driven compatible |
 | Present mode | MAILBOX | Low latency, no tearing |
 | Engine subsystems | Tightly coupled (render, physics, audio) | Share Vulkan device, buffers, compute queues for efficiency |
