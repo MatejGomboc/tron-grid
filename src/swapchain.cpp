@@ -15,6 +15,7 @@
 #include "swapchain.hpp"
 #include "device.hpp"
 #include <algorithm>
+#include <cassert>
 #include <cstdlib>
 #include <limits>
 #include <ranges>
@@ -23,6 +24,7 @@
 //! Selects the best surface format, preferring B8G8R8A8 sRGB.
 static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& available)
 {
+    assert(!available.empty());
     // Prefer sRGB with B8G8R8A8 layout
     std::vector<vk::SurfaceFormatKHR>::const_iterator it = std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
         return fmt.format == vk::Format::eB8G8R8A8Srgb && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;

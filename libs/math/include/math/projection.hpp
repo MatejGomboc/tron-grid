@@ -17,6 +17,7 @@
 #include "math/matrix.hpp"
 #include "math/quaternion.hpp"
 #include "math/vector.hpp"
+#include <array>
 #include <cmath>
 
 namespace MathLib
@@ -133,7 +134,7 @@ namespace MathLib
 
     //! Six frustum planes: left, right, bottom, top, near_plane, far_plane.
     struct Frustum {
-        Plane planes[6]; //!< Frustum planes (normals point inward).
+        std::array<Plane, 6> planes{}; //!< Frustum planes (normals point inward).
     };
 
     /*!

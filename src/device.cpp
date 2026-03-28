@@ -90,7 +90,7 @@ static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surfa
     QueueFamilyIndices indices = findQueueFamilies(device, surface);
 
     // Must support Vulkan 1.3 (for synchronization2, dynamic rendering)
-    if (VK_API_VERSION_MINOR(properties.apiVersion) < 3) {
+    if (properties.apiVersion < VK_API_VERSION_1_3) {
         return -1;
     }
 

@@ -63,7 +63,7 @@ struct CameraUBO {
 
 //! Push constants for the compute culling shader.
 struct CullPushConstants {
-    MathLib::Vec4 planes[6]; //!< Frustum planes (normals point inward).
+    std::array<MathLib::Vec4, 6> planes{}; //!< Frustum planes (normals point inward).
     uint32_t object_count{0}; //!< Total number of objects to cull.
 };
 

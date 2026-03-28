@@ -17,6 +17,7 @@
 #include "components.hpp"
 #include "device.hpp"
 #include "instance.hpp"
+#include "meshlet.hpp"
 #include "pipeline.hpp"
 #include "scene.hpp"
 #include "surface.hpp"
@@ -232,9 +233,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
 
     // Dispatch compute culling
     CullPushConstants cull_push{};
-    for (int i = 0; i < 6; ++i) {
-        cull_push.planes[i] = frustum.planes[i];
-    }
+    cull_push.planes = frustum.planes;
     cull_push.object_count = total_objects;
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline.cullPipeline());
@@ -549,22 +548,22 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Process held keys — camera movement
         if (!keys_held.empty()) {
             float move_delta = CAMERA_SPEED * delta_time;
-            if (keys_held.count(KEY_W)) {
+            if (keys_held.contains(KEY_W)) {
                 camera.moveForward(move_delta);
             }
-            if (keys_held.count(KEY_S)) {
+            if (keys_held.contains(KEY_S)) {
                 camera.moveForward(-move_delta);
             }
-            if (keys_held.count(KEY_A)) {
+            if (keys_held.contains(KEY_A)) {
                 camera.moveRight(-move_delta);
             }
-            if (keys_held.count(KEY_D)) {
+            if (keys_held.contains(KEY_D)) {
                 camera.moveRight(move_delta);
             }
-            if (keys_held.count(KEY_SPACE)) {
+            if (keys_held.contains(KEY_SPACE)) {
                 camera.moveUp(move_delta);
             }
-            if (keys_held.count(KEY_SHIFT)) {
+            if (keys_held.contains(KEY_SHIFT)) {
                 camera.moveUp(-move_delta);
             }
             should_render = true;
@@ -576,6 +575,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(resize_width, resize_height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
+                queries_submitted.fill(false);
             } else {
                 should_render = false;
             }
@@ -626,6 +626,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
+                queries_submitted.fill(false);
             }
             continue;
         }
@@ -638,7 +639,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Update camera UBO and extract frustum planes
         MathLib::Frustum frustum{};
         {
-            float aspect = static_cast<float>(swapchain.extent().width) / static_cast<float>(swapchain.extent().height);
+            uint32_t extent_height{swapchain.extent().height};
+            if (extent_height == 0) {
+                continue;
+            }
+            float aspect{static_cast<float>(swapchain.extent().width) / static_cast<float>(extent_height)};
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
@@ -692,6 +697,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
+                queries_submitted.fill(false);
             }
             continue;
         }
@@ -701,6 +707,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
+                queries_submitted.fill(false);
             }
         }
 
@@ -759,7 +766,8 @@ int main()
         // Create swapchain
         Swapchain swapchain(device, *surface, config.width, config.height, logger);
 
-        // Graphics + compute pipelines
+        // Graphics + compute pipelines. triangle.spv is a combined Slang module
+        // containing both vertMain and fragMain entry points — same blob for both stages.
         Pipeline pipeline(device, swapchain.format().format, DEPTH_FORMAT, triangle_spirv, triangle_spirv, cull_spirv, MAX_FRAMES_IN_FLIGHT, logger);
 
         // Command pool + per-frame command buffers
@@ -831,6 +839,19 @@ int main()
         }
 
         logger.logInfo("Cube mesh uploaded to GPU (" + std::to_string(CUBE_VERTICES.size()) + " vertices, " + std::to_string(CUBE_INDICES.size()) + " indices).");
+
+        // Extract positions from interleaved vertex data for meshlet generation.
+        std::vector<MathLib::Vec3> cube_positions;
+        cube_positions.reserve(CUBE_VERTICES.size());
+        for (const Vertex& v : CUBE_VERTICES) {
+            cube_positions.push_back({v.position[0], v.position[1], v.position[2]});
+        }
+
+        // Generate meshlets from cube geometry (data preparation for mesh shader pipeline).
+        MeshData cube_meshlets{buildMeshlets(cube_positions, CUBE_INDICES)};
+
+        logger.logInfo("Meshlets generated: " + std::to_string(cube_meshlets.meshlets.size()) + " meshlets, " + std::to_string(cube_meshlets.vertex_indices.size())
+            + " vertex indices, " + std::to_string(cube_meshlets.triangle_indices.size()) + " triangle indices.");
 
         // Build scene — 10x10x10 grid of cubes via entity/component system
         constexpr float CUBE_BOUNDING_RADIUS = 0.866025f; // sqrt(3) * 0.5 — half-diagonal of unit cube

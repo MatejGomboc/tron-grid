@@ -86,7 +86,7 @@ private:
     vk::raii::Device m_device{nullptr}; //!< Logical device handle.
     vk::raii::Queue m_graphics_queue{nullptr}; //!< Graphics queue.
     vk::raii::Queue m_present_queue{nullptr}; //!< Present queue.
-    uint32_t m_graphics_family_index{0}; //!< Graphics queue family index.
-    uint32_t m_present_family_index{0}; //!< Present queue family index.
+    uint32_t m_graphics_family_index{UINT32_MAX}; //!< Graphics queue family index (sentinel until assigned).
+    uint32_t m_present_family_index{UINT32_MAX}; //!< Present queue family index (sentinel until assigned).
     std::string m_device_name; //!< Human-readable GPU name.
 };
