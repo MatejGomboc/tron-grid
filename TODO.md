@@ -6,11 +6,9 @@ A shared task list and journal for humans and AI assistants working on TronGrid.
 
 ## Phase 3 — Mesh Shaders + Scene Architecture
 
-**Goal:** Replace the traditional vertex pipeline with mesh shaders (`VK_EXT_mesh_shader`),
-introduce a minimal entity/component scene structure, and implement meshlet-based rendering
-with per-meshlet frustum culling in the task shader. After this phase, the renderer uses
-the modern mesh shader pipeline with proper scene management — the foundation for adaptive
-LOD (Nanite-style) and procedural geometry (Phase 4).
+**Goal:** Mesh shader rendering with scene architecture. The vertex pipeline has been
+replaced with task + mesh shaders (`VK_EXT_mesh_shader`), entity/component scene structure
+is in place, and meshlet generation works. Remaining: multiple mesh types + LOD foundation.
 
 **Architectural shift:** The GPU decides both *what* to render (frustum culling) and *at what
 detail level* (LOD selection). The CPU just uploads scene data and says "go."
@@ -191,18 +189,17 @@ rendering with scene architecture.**
 
 ### Acceptance Criteria
 
-- [ ] Entity/component scene structure (flat arrays, no inheritance)
-- [ ] Scene class manages entities with Transform, MeshID, Bounds components
-- [ ] Meshlet data structure (64 verts, 124 triangles max per meshlet)
-- [ ] Meshlet generation from mesh geometry
-- [ ] Per-meshlet bounding spheres
-- [ ] `VK_EXT_mesh_shader` enabled (task + mesh shader features)
-- [ ] Mesh shader renders meshlets from SSBO data
-- [ ] Task shader performs per-meshlet frustum culling
-- [ ] Compute cull pipeline removed (task shader replaces it)
+- [x] Entity/component scene structure (flat arrays, no inheritance) — PR #56
+- [x] Scene class manages entities with Transform, MeshID, Bounds components — PR #56
+- [x] Meshlet data structure (64 verts, 124 triangles max per meshlet) — PR #59
+- [x] Meshlet generation from mesh geometry — PR #59
+- [x] Per-meshlet bounding spheres — PR #59
+- [x] `VK_EXT_mesh_shader` enabled (task + mesh shader features) — PR #61
+- [x] Mesh shader renders meshlets from SSBO data — PR #61
+- [x] Task shader performs per-object frustum culling — PR #61
+- [x] Compute cull pipeline removed (task shader replaces it) — PR #61
 - [ ] Multiple mesh types (cube + sphere) in the same scene
 - [ ] MeshLOD data structure prepared (LOD 0 always selected for now)
-- [ ] `vk::raii` for all new Vulkan objects
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
 - [ ] **Phase 3 complete — meshlet rendering with scene architecture**
@@ -220,12 +217,13 @@ rendering with scene architecture.**
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
 
-### 2026-03-28 — Phase 3 in progress: scene + meshlets
+### 2026-03-28 — Phase 3 Etapes 14-16: scene + meshlets + mesh shaders
 
-Entity/component scene structure (SoA flat arrays), meshlet data structure and
-generation (greedy builder, std::span API). Full code audit: 13 fixes across
-memory safety, Vulkan correctness, and C++20 best practices. Logger deadlock
-fixed with std::jthread + std::stop_token.
+Entity/component scene (SoA flat arrays), meshlet generation (greedy builder,
+std::span API), mesh shader pipeline (VK_EXT_mesh_shader: task + mesh + fragment).
+Task shader culls per-object, mesh shader outputs meshlets from SSBOs. Removed
+vertex pipeline, compute cull pass, indirect draw. 13 code audit fixes. Logger
+deadlock fixed with std::jthread + std::stop_token. 61 PRs merged.
 
 ### 2026-03-22 — Phases 0-2.1 complete
 
