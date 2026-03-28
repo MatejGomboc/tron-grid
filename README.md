@@ -14,9 +14,9 @@ sensory) are written in-house with no third-party libraries.
 
 ## Status
 
-Mesh shader rendering (task + mesh + fragment) with 1000 cubes, per-object frustum culling
-in the task shader, meshlet-based geometry, entity/component scene structure. Code quality:
-Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan CI jobs, GPU validation.
+Mesh shader rendering (task + mesh + fragment) with 1000 objects (mixed cubes + spheres),
+per-object frustum culling, meshlet-based geometry, entity/component scene, LOD data
+structures. Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU validation.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 

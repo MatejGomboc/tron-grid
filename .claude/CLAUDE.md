@@ -171,9 +171,9 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-Mesh shader rendering (1000 cubes via task + mesh shaders, per-object frustum culling,
-meshlet pipeline). Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
-Currently working on Phase 3 (scene architecture + multiple mesh types).
+Mesh shader rendering (1000 objects via task + mesh shaders, per-object frustum culling,
+meshlet pipeline, mixed cube/sphere scene). Entity/component scene with SoA arrays.
+Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 
 ## Off Limits
