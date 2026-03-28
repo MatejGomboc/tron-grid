@@ -123,6 +123,7 @@ data from a buffer and writes actions to another. This boundary is strict and in
 | Colour space | Linear internal, sRGB output | Correct blending and light accumulation |
 | HDR range | 16-bit float | Emissive glow needs headroom beyond [0, 1] |
 | Meshlet size | 64 vertices, 84 triangles | Reduced from 124 for barycentric vertex duplication |
+| Shadow technique | Inline ray query (`VK_KHR_ray_query`) | Simple, no SBT; full RT pipeline reserved for Phase 6 reflections/GI |
 | Descriptor model | Fully bindless | No rebinding between draws; GPU-driven compatible |
 | Present mode | MAILBOX | Low latency, no tearing |
 | Engine subsystems | Tightly coupled (render, physics, audio) | Share Vulkan device, buffers, compute queues for efficiency |

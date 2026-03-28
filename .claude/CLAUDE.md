@@ -173,9 +173,10 @@ cmake --build build/linux-x11-gcc --config Debug
 ## Current Status
 
 Procedural Tron terrain with barycentric wireframe rendering via mesh shaders
-(task + mesh + fragment), per-object frustum culling, meshlet pipeline.
-Entity/component scene with SoA arrays.
-Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
+(task + mesh + fragment), RT hard shadows via inline ray query
+(`VK_KHR_ray_query`, BLAS/TLAS, point light with inverse square falloff),
+per-object frustum culling, meshlet pipeline. Entity/component scene with
+SoA arrays. Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 
 ## Off Limits

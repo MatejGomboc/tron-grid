@@ -15,7 +15,8 @@ sensory) are written in-house with no third-party libraries.
 ## Status
 
 Mesh shader rendering (task + mesh + fragment) with procedural Tron terrain,
-barycentric wireframe edges, per-object frustum culling, meshlet-based geometry,
+barycentric wireframe edges, RT hard shadows via inline ray query
+(`VK_KHR_ray_query`), per-object frustum culling, meshlet-based geometry,
 entity/component scene. Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`,
 ASan/UBSan/TSan, GPU validation.
 
