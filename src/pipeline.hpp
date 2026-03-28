@@ -59,10 +59,12 @@ struct ObjectBounds {
     float radius{0.0f}; //!< Bounding sphere radius.
 };
 
-//! Camera uniform buffer — view and projection matrices, uploaded once per frame.
+//! Camera uniform buffer — view and projection matrices + point light, uploaded once per frame.
 struct CameraUBO {
     MathLib::Mat4 view{}; //!< View matrix.
     MathLib::Mat4 projection{}; //!< Projection matrix.
+    MathLib::Vec3 light_pos{}; //!< Point light world-space position.
+    float light_intensity{1.0f}; //!< Point light intensity (pre-multiplier before inverse square falloff).
 };
 
 //! Push constants for the task shader — frustum planes + object count.
@@ -124,6 +126,9 @@ public:
         VkDeviceSize meshlet_desc_size, VkBuffer vertex_ssbo, VkDeviceSize vertex_size, VkBuffer meshlet_vertex_indices_ssbo, VkDeviceSize meshlet_vertex_indices_size,
         VkBuffer meshlet_triangle_indices_ssbo, VkDeviceSize meshlet_triangle_indices_size) const;
 
+    //! Binds the TLAS to descriptor binding 7 for the given frame index.
+    void bindTLAS(uint32_t frame_index, vk::AccelerationStructureKHR tlas) const;
+
     //! Updates the camera UBO for the given frame index via its mapped pointer.
     void updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const;
 
@@ -137,7 +142,7 @@ private:
     const Device* m_device{nullptr}; //!< Non-owning device reference.
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
 
-    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 7 bindings: UBO + 6 SSBOs.
+    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 8 bindings: UBO + 6 SSBOs + TLAS.
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
     vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.

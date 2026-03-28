@@ -479,6 +479,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
+            ubo.light_pos = MathLib::Vec3{10.0f, 30.0f, 10.0f};
+            ubo.light_intensity = 300.0f;
             pipeline.updateCameraUBO(current_frame, ubo);
             frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
         }
@@ -632,7 +634,9 @@ int main()
         // Vertex buffer.
         VkDeviceSize vertex_buffer_size{static_cast<VkDeviceSize>(terrain.vertices.size() * sizeof(Vertex))};
         AllocatedBuffer vertex_buffer{allocator.createBuffer(vertex_buffer_size,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst
+                | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         {
             AllocatedBuffer vertex_staging{allocator.createBuffer(vertex_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
@@ -666,12 +670,303 @@ int main()
 
         logger.logInfo("Vertex buffer uploaded (" + std::to_string(terrain.vertices.size()) + " vertices).");
 
+        // ── Index buffer for BLAS (raw triangle indices, not meshlet indices) ──
+
+        VkDeviceSize index_buffer_size{static_cast<VkDeviceSize>(terrain.indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer index_buffer{allocator.createBuffer(index_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress
+                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer index_staging{allocator.createBuffer(index_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(index_staging.allocationInfo().pMappedData, terrain.indices.data(), index_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = index_buffer_size;
+            copy_cmd.copyBuffer(index_staging.buffer(), index_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Index buffer uploaded (" + std::to_string(terrain.indices.size()) + " indices).");
+
+        // ── BLAS build for terrain ──
+
+        vk::BufferDeviceAddressInfo vertex_addr_info{};
+        vertex_addr_info.buffer = vertex_buffer.buffer();
+        vk::DeviceAddress vertex_device_address{device.get().getBufferAddress(vertex_addr_info)};
+
+        vk::BufferDeviceAddressInfo index_addr_info{};
+        index_addr_info.buffer = index_buffer.buffer();
+        vk::DeviceAddress index_device_address{device.get().getBufferAddress(index_addr_info)};
+
+        vk::AccelerationStructureGeometryTrianglesDataKHR triangles_data{};
+        triangles_data.vertexFormat = vk::Format::eR32G32B32Sfloat;
+        triangles_data.vertexData.deviceAddress = vertex_device_address;
+        triangles_data.vertexStride = sizeof(Vertex);
+        triangles_data.maxVertex = static_cast<uint32_t>(terrain.vertices.size() - 1);
+        triangles_data.indexType = vk::IndexType::eUint32;
+        triangles_data.indexData.deviceAddress = index_device_address;
+
+        vk::AccelerationStructureGeometryKHR geometry{};
+        geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+        geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+        geometry.geometry.triangles = triangles_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR build_info{};
+        build_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace | vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
+        build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        build_info.geometryCount = 1;
+        build_info.pGeometries = &geometry;
+
+        uint32_t triangle_count{static_cast<uint32_t>(terrain.indices.size() / 3)};
+        vk::AccelerationStructureBuildSizesInfoKHR build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, build_info, {triangle_count})};
+
+        // Allocate AS storage buffer.
+        AllocatedBuffer blas_buffer{allocator.createBuffer(build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR as_create_info{};
+        as_create_info.buffer = blas_buffer.buffer();
+        as_create_info.size = build_sizes.accelerationStructureSize;
+        as_create_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        vk::raii::AccelerationStructureKHR blas{device.get(), as_create_info};
+
+        build_info.dstAccelerationStructure = *blas;
+
+        vk::AccelerationStructureBuildRangeInfoKHR range_info{};
+        range_info.primitiveCount = triangle_count;
+
+        // Build BLAS — scratch buffer scoped so it's freed after build completes.
+        {
+            AllocatedBuffer scratch_buffer{allocator.createBuffer(build_sizes.buildScratchSize,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo scratch_addr_info{};
+            scratch_addr_info.buffer = scratch_buffer.buffer();
+            build_info.scratchData.deviceAddress = device.get().getBufferAddress(scratch_addr_info);
+
+            vk::CommandBufferAllocateInfo build_alloc{};
+            build_alloc.commandPool = *command_pool;
+            build_alloc.level = vk::CommandBufferLevel::ePrimary;
+            build_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers build_cmds(device.get(), build_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = build_cmds[0];
+            vk::CommandBufferBeginInfo build_begin{};
+            build_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(build_begin);
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* range_ptr{&range_info};
+            build_cmd.buildAccelerationStructuresKHR({build_info}, {range_ptr});
+
+            // Barrier: AS build write → fragment shader read.
+            vk::MemoryBarrier2 as_barrier{};
+            as_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            as_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            as_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo dep_info{};
+            dep_info.memoryBarrierCount = 1;
+            dep_info.pMemoryBarriers = &as_barrier;
+            build_cmd.pipelineBarrier2(dep_info);
+
+            build_cmd.end();
+
+            vk::SubmitInfo build_submit{};
+            build_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            build_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("BLAS built: " + std::to_string(triangle_count) + " triangles, " + std::to_string(build_sizes.accelerationStructureSize) + " bytes.");
+
         // Scene — single terrain entity at origin.
         Scene scene;
         Transform terrain_transform{};
         (void)scene.addEntity(terrain_transform, {0}, {{0.0f, 0.0f, 0.0f}, terrain.bounding_radius});
 
         uint32_t total_objects{scene.entityCount()};
+
+        // ── TLAS build ──
+
+        // Get BLAS device address.
+        vk::AccelerationStructureDeviceAddressInfoKHR blas_addr_info{};
+        blas_addr_info.accelerationStructure = *blas;
+        vk::DeviceAddress blas_device_address{device.get().getAccelerationStructureAddressKHR(blas_addr_info)};
+
+        // Build instance data — one per scene entity.
+        std::vector<VkAccelerationStructureInstanceKHR> as_instances;
+        as_instances.reserve(total_objects);
+        for (uint32_t i{0}; i < total_objects; ++i) {
+            MathLib::Mat4 model{scene.transforms()[i].modelMatrix()};
+
+            // VkTransformMatrixKHR is 3×4 row-major (transposed from our column-major Mat4).
+            VkTransformMatrixKHR transform{};
+            for (int row{0}; row < 3; ++row) {
+                for (int col{0}; col < 4; ++col) {
+                    transform.matrix[row][col] = model.m[col][row];
+                }
+            }
+
+            VkAccelerationStructureInstanceKHR as_inst{};
+            as_inst.transform = transform;
+            as_inst.instanceCustomIndex = i;
+            as_inst.mask = 0xFF;
+            as_inst.instanceShaderBindingTableRecordOffset = 0;
+            as_inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+            as_inst.accelerationStructureReference = blas_device_address;
+            as_instances.push_back(as_inst);
+        }
+
+        // Upload instance data to GPU.
+        VkDeviceSize instance_buffer_size{static_cast<VkDeviceSize>(as_instances.size() * sizeof(VkAccelerationStructureInstanceKHR))};
+        AllocatedBuffer instance_buffer{allocator.createBuffer(instance_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR
+                | vk::BufferUsageFlagBits::eTransferDst),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer instance_staging{allocator.createBuffer(instance_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(instance_staging.allocationInfo().pMappedData, as_instances.data(), instance_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = instance_buffer_size;
+            copy_cmd.copyBuffer(instance_staging.buffer(), instance_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        // Build TLAS.
+        vk::BufferDeviceAddressInfo instance_addr_info{};
+        instance_addr_info.buffer = instance_buffer.buffer();
+
+        vk::AccelerationStructureGeometryInstancesDataKHR instances_data{};
+        instances_data.arrayOfPointers = vk::False;
+        instances_data.data.deviceAddress = device.get().getBufferAddress(instance_addr_info);
+
+        vk::AccelerationStructureGeometryKHR tlas_geometry{};
+        tlas_geometry.geometryType = vk::GeometryTypeKHR::eInstances;
+        tlas_geometry.geometry.instances = instances_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR tlas_build_info{};
+        tlas_build_info.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+        tlas_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        tlas_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        tlas_build_info.geometryCount = 1;
+        tlas_build_info.pGeometries = &tlas_geometry;
+
+        vk::AccelerationStructureBuildSizesInfoKHR tlas_build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, tlas_build_info, {total_objects})};
+
+        AllocatedBuffer tlas_buffer{allocator.createBuffer(tlas_build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR tlas_create_info{};
+        tlas_create_info.buffer = tlas_buffer.buffer();
+        tlas_create_info.size = tlas_build_sizes.accelerationStructureSize;
+        tlas_create_info.type = vk::AccelerationStructureTypeKHR::eTopLevel;
+        vk::raii::AccelerationStructureKHR tlas{device.get(), tlas_create_info};
+
+        tlas_build_info.dstAccelerationStructure = *tlas;
+
+        vk::AccelerationStructureBuildRangeInfoKHR tlas_range_info{};
+        tlas_range_info.primitiveCount = total_objects;
+
+        // Build TLAS — scratch buffer scoped so it's freed after build completes.
+        {
+            AllocatedBuffer tlas_scratch{allocator.createBuffer(tlas_build_sizes.buildScratchSize,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo tlas_scratch_addr_info{};
+            tlas_scratch_addr_info.buffer = tlas_scratch.buffer();
+            tlas_build_info.scratchData.deviceAddress = device.get().getBufferAddress(tlas_scratch_addr_info);
+
+            vk::CommandBufferAllocateInfo build_alloc{};
+            build_alloc.commandPool = *command_pool;
+            build_alloc.level = vk::CommandBufferLevel::ePrimary;
+            build_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers build_cmds(device.get(), build_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = build_cmds[0];
+            vk::CommandBufferBeginInfo build_begin{};
+            build_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(build_begin);
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* tlas_range_ptr{&tlas_range_info};
+            build_cmd.buildAccelerationStructuresKHR({tlas_build_info}, {tlas_range_ptr});
+
+            // Barrier: TLAS build write → fragment shader read.
+            vk::MemoryBarrier2 tlas_barrier{};
+            tlas_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            tlas_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            tlas_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            tlas_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo tlas_dep_info{};
+            tlas_dep_info.memoryBarrierCount = 1;
+            tlas_dep_info.pMemoryBarriers = &tlas_barrier;
+            build_cmd.pipelineBarrier2(tlas_dep_info);
+
+            build_cmd.end();
+
+            vk::SubmitInfo build_submit{};
+            build_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            build_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("TLAS built: " + std::to_string(total_objects) + " instances, " + std::to_string(tlas_build_sizes.accelerationStructureSize) + " bytes.");
 
         std::vector<ObjectData> object_data;
         object_data.reserve(total_objects);
@@ -800,10 +1095,11 @@ int main()
 
         logger.logInfo("Bounds + meshlet SSBOs uploaded.");
 
-        // Bind all descriptor sets — SSBOs are static, UBOs are per-frame
+        // Bind all descriptor sets — SSBOs + TLAS are static, UBOs are per-frame
         for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             pipeline.bindSSBOs(i, object_ssbo.buffer(), ssbo_size, bounds_ssbo.buffer(), bounds_size, meshlet_desc_ssbo.buffer(), meshlet_desc_size,
                 vertex_buffer.buffer(), vertex_buffer_size, meshlet_vert_idx_ssbo.buffer(), meshlet_vert_idx_size, meshlet_tri_idx_ssbo.buffer(), meshlet_tri_idx_size);
+            pipeline.bindTLAS(i, *tlas);
         }
 
         // Render event signal — main thread emits, render thread consumes

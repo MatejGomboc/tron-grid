@@ -150,19 +150,20 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     colour_blend.attachmentCount = 1;
     colour_blend.pAttachments = &colour_blend_attachment;
 
-    // Descriptor set layout — 7 bindings for the mesh shader pipeline.
-    // Binding 0: camera UBO (task + mesh stages)
+    // Descriptor set layout — 8 bindings for the mesh shader pipeline.
+    // Binding 0: camera UBO (task + mesh + fragment stages)
     // Binding 1: object transforms SSBO (task + mesh stages)
     // Binding 2: object bounds SSBO (task stage only)
     // Binding 3: meshlet descriptors SSBO (mesh stage only)
     // Binding 4: vertex data SSBO (mesh stage only)
     // Binding 5: meshlet vertex indices SSBO (mesh stage only)
     // Binding 6: meshlet triangle indices SSBO (mesh stage only)
-    std::array<vk::DescriptorSetLayoutBinding, 7> bindings{};
+    // Binding 7: TLAS (fragment stage — inline ray query for shadows)
+    std::array<vk::DescriptorSetLayoutBinding, 8> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
     bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT;
+    bindings[0].stageFlags = vk::ShaderStageFlagBits::eTaskEXT | vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment;
     bindings[1].binding = 1;
     bindings[1].descriptorType = vk::DescriptorType::eStorageBuffer;
     bindings[1].descriptorCount = 1;
@@ -187,6 +188,10 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     bindings[6].descriptorType = vk::DescriptorType::eStorageBuffer;
     bindings[6].descriptorCount = 1;
     bindings[6].stageFlags = vk::ShaderStageFlagBits::eMeshEXT;
+    bindings[7].binding = 7;
+    bindings[7].descriptorType = vk::DescriptorType::eAccelerationStructureKHR;
+    bindings[7].descriptorCount = 1;
+    bindings[7].stageFlags = vk::ShaderStageFlagBits::eFragment;
 
     vk::DescriptorSetLayoutCreateInfo layout_info{};
     layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -229,12 +234,14 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     m_pipeline = vk::raii::Pipeline{device.get(), nullptr, pipeline_info};
 
-    // Descriptor pool — UBO + 6 SSBOs per frame.
-    std::array<vk::DescriptorPoolSize, 2> pool_sizes{};
+    // Descriptor pool — UBO + 6 SSBOs + 1 TLAS per frame.
+    std::array<vk::DescriptorPoolSize, 3> pool_sizes{};
     pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
     pool_sizes[0].descriptorCount = frames_in_flight;
     pool_sizes[1].type = vk::DescriptorType::eStorageBuffer;
     pool_sizes[1].descriptorCount = frames_in_flight * 6;
+    pool_sizes[2].type = vk::DescriptorType::eAccelerationStructureKHR;
+    pool_sizes[2].descriptorCount = frames_in_flight;
 
     vk::DescriptorPoolCreateInfo pool_info{};
     pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -320,4 +327,21 @@ void Pipeline::updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const
     if (m_ubo_mapped_ptrs[frame_index]) {
         std::memcpy(m_ubo_mapped_ptrs[frame_index], &ubo, sizeof(CameraUBO));
     }
+}
+
+void Pipeline::bindTLAS(uint32_t frame_index, vk::AccelerationStructureKHR tlas) const
+{
+    vk::WriteDescriptorSetAccelerationStructureKHR as_write{};
+    as_write.accelerationStructureCount = 1;
+    as_write.pAccelerationStructures = &tlas;
+
+    vk::WriteDescriptorSet write{};
+    write.pNext = &as_write;
+    write.dstSet = *m_descriptor_sets[frame_index];
+    write.dstBinding = 7;
+    write.dstArrayElement = 0;
+    write.descriptorType = vk::DescriptorType::eAccelerationStructureKHR;
+    write.descriptorCount = 1;
+
+    m_device->get().updateDescriptorSets({write}, {});
 }

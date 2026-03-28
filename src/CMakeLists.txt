@@ -102,6 +102,7 @@ add_custom_command(
         -fvk-use-entrypoint-name
         -fvk-invert-y
         -warnings-as-errors all
+        -capability GL_EXT_ray_query
         -entry meshMain
         -entry fragMain
         -o ${SHADER_OUTPUT_DIR}/mesh.spv
@@ -111,7 +112,7 @@ add_custom_command(
     VERBATIM
 )
 
-add_custom_target(shaders DEPENDS
+add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/triangle.spv
     ${SHADER_OUTPUT_DIR}/cull.spv
     ${SHADER_OUTPUT_DIR}/task.spv
