@@ -179,89 +179,31 @@ constexpr std::array<uint32_t, 36> CUBE_INDICES = {{
     20, // Left
 }};
 
-//! Number of indices per cube.
-constexpr uint32_t CUBE_INDEX_COUNT = static_cast<uint32_t>(CUBE_INDICES.size());
-
 /*!
-    Records a command buffer with compute frustum culling followed by GPU-driven
-    indirect draw with depth testing.
+    Records a command buffer with mesh shader rendering. The task shader performs
+    per-object frustum culling and dispatches mesh shader workgroups for visible objects.
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView colour_view, vk::ImageView depth_view, vk::Image depth_image,
-    vk::Extent2D extent, const Pipeline& pipeline, VkBuffer vertex_buffer, VkBuffer index_buffer, VkBuffer indirect_buffer, VkBuffer draw_count_buffer,
-    vk::DescriptorSet graphics_descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects, vk::QueryPool timestamp_pool, uint32_t query_base)
+    vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects,
+    uint32_t meshlets_per_object)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
 
-    // Cross-frame synchronisation: the fence guarantees execution completion, but the
-    // sync validator requires explicit memory barriers for cross-submit hazards.
-    // This covers: previous frame's drawIndexedIndirectCount read → this frame's fillBuffer write,
-    // and previous frame's depth write → this frame's depth layout transition.
+    // Cross-frame synchronisation for depth image.
     vk::MemoryBarrier2 cross_frame{};
-    cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eDrawIndirect | vk::PipelineStageFlagBits2::eLateFragmentTests;
-    cross_frame.srcAccessMask = vk::AccessFlagBits2::eIndirectCommandRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-    cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eTransfer | vk::PipelineStageFlagBits2::eEarlyFragmentTests;
-    cross_frame.dstAccessMask = vk::AccessFlagBits2::eTransferWrite | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+    cross_frame.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+    cross_frame.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
 
     vk::DependencyInfo cross_frame_dep{};
     cross_frame_dep.memoryBarrierCount = 1;
     cross_frame_dep.pMemoryBarriers = &cross_frame;
     cmd.pipelineBarrier2(cross_frame_dep);
 
-    // ── Compute culling pass ──
-
-    // Reset indirect buffer instance_count and draw count to 0
-    cmd.fillBuffer(indirect_buffer, offsetof(VkDrawIndexedIndirectCommand, instanceCount), sizeof(uint32_t), 0);
-    cmd.fillBuffer(draw_count_buffer, 0, sizeof(uint32_t), 0);
-
-    // Barrier: fill → compute
-    vk::MemoryBarrier2 fill_to_compute{};
-    fill_to_compute.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
-    fill_to_compute.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
-    fill_to_compute.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-    fill_to_compute.dstAccessMask = vk::AccessFlagBits2::eShaderWrite | vk::AccessFlagBits2::eShaderRead;
-
-    vk::DependencyInfo fill_dep{};
-    fill_dep.memoryBarrierCount = 1;
-    fill_dep.pMemoryBarriers = &fill_to_compute;
-    cmd.pipelineBarrier2(fill_dep);
-
-    // Reset and write timestamp before compute dispatch
-    cmd.resetQueryPool(timestamp_pool, query_base, 2);
-    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eTopOfPipe, timestamp_pool, query_base);
-
-    // Dispatch compute culling
-    CullPushConstants cull_push{};
-    cull_push.planes = frustum.planes;
-    cull_push.object_count = total_objects;
-
-    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline.cullPipeline());
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipeline.cullLayout(), 0, {pipeline.computeDescriptorSet()}, {});
-    cmd.pushConstants<CullPushConstants>(*pipeline.cullLayout(), vk::ShaderStageFlagBits::eCompute, 0, cull_push);
-
-    uint32_t workgroup_count = (total_objects + 63) / 64;
-    cmd.dispatch(workgroup_count, 1, 1);
-
-    // Write timestamp after compute dispatch
-    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eComputeShader, timestamp_pool, query_base + 1);
-
-    // Barrier: compute → indirect draw + vertex shader read
-    vk::MemoryBarrier2 compute_to_draw{};
-    compute_to_draw.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-    compute_to_draw.srcAccessMask = vk::AccessFlagBits2::eShaderWrite;
-    compute_to_draw.dstStageMask = vk::PipelineStageFlagBits2::eDrawIndirect | vk::PipelineStageFlagBits2::eVertexShader;
-    compute_to_draw.dstAccessMask = vk::AccessFlagBits2::eIndirectCommandRead | vk::AccessFlagBits2::eShaderRead;
-
-    vk::DependencyInfo compute_dep{};
-    compute_dep.memoryBarrierCount = 1;
-    compute_dep.pMemoryBarriers = &compute_to_draw;
-    cmd.pipelineBarrier2(compute_dep);
-
-    // ── Graphics pass ──
-
-    // Transition colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
-    // srcStageMask must include eColorAttachmentOutput to synchronise with the acquire semaphore.
+    // Transition colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL.
     vk::ImageMemoryBarrier2 to_colour{};
     to_colour.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     to_colour.srcAccessMask = vk::AccessFlagBits2::eNone;
@@ -278,8 +220,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     to_colour.subresourceRange.baseArrayLayer = 0;
     to_colour.subresourceRange.layerCount = 1;
 
-    // Transition depth: UNDEFINED → DEPTH_ATTACHMENT_OPTIMAL
-    // srcStageMask covers previous frame's depth writes (cross-frame sync).
+    // Transition depth: UNDEFINED → DEPTH_ATTACHMENT_OPTIMAL.
     vk::ImageMemoryBarrier2 to_depth{};
     to_depth.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
     to_depth.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
@@ -296,13 +237,13 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     to_depth.subresourceRange.baseArrayLayer = 0;
     to_depth.subresourceRange.layerCount = 1;
 
-    std::array<vk::ImageMemoryBarrier2, 2> barriers = {to_colour, to_depth};
+    std::array<vk::ImageMemoryBarrier2, 2> barriers{to_colour, to_depth};
     vk::DependencyInfo dep_to_render{};
     dep_to_render.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
     dep_to_render.pImageMemoryBarriers = barriers.data();
     cmd.pipelineBarrier2(dep_to_render);
 
-    // Clear colour — dark teal
+    // Clear colour — dark teal.
     vk::RenderingAttachmentInfo colour_attachment{};
     colour_attachment.imageView = colour_view;
     colour_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
@@ -310,7 +251,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     colour_attachment.storeOp = vk::AttachmentStoreOp::eStore;
     colour_attachment.clearValue.color = vk::ClearColorValue{std::array{0.0f, 0.1f, 0.15f, 1.0f}};
 
-    // Clear depth to 1.0 (far plane)
+    // Clear depth to 1.0 (far plane).
     vk::RenderingAttachmentInfo depth_attachment{};
     depth_attachment.imageView = depth_view;
     depth_attachment.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
@@ -328,7 +269,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
 
     cmd.beginRendering(rendering_info);
 
-    // Bind pipeline and set dynamic state
+    // Bind mesh shader pipeline and set dynamic state.
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline.get());
 
     vk::Viewport viewport{};
@@ -345,16 +286,20 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     scissor.extent = extent;
     cmd.setScissor(0, {scissor});
 
-    // Bind descriptor set (camera UBO + object SSBO + visible indices)
-    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {graphics_descriptor_set}, {});
+    // Bind descriptor set (all SSBOs + UBO).
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
 
-    // Bind vertex and index buffers
-    vk::DeviceSize offset = 0;
-    cmd.bindVertexBuffers(0, {vertex_buffer}, {offset});
-    cmd.bindIndexBuffer(index_buffer, 0, vk::IndexType::eUint32);
+    // Push frustum planes and object/meshlet counts to the task shader.
+    TaskPushConstants push{};
+    push.planes = frustum.planes;
+    push.object_count = total_objects;
+    push.meshlets_per_object = meshlets_per_object;
+    push.meshlet_offset = 0;
+    cmd.pushConstants<TaskPushConstants>(*pipeline.layout(), vk::ShaderStageFlagBits::eTaskEXT, 0, push);
 
-    // Fully GPU-driven draw — both draw parameters AND draw count come from the GPU
-    cmd.drawIndexedIndirectCount(indirect_buffer, 0, draw_count_buffer, 0, 1, sizeof(VkDrawIndexedIndirectCommand));
+    // Dispatch one task shader workgroup per object. The task shader culls
+    // and dispatches mesh shader workgroups for visible objects.
+    cmd.drawMeshTasksEXT(total_objects, 1, 1);
 
     cmd.endRendering();
 
@@ -388,9 +333,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline,
     camera state, input processing, and delta time.
 */
-static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, VkBuffer vertex_buffer, VkBuffer index_buffer,
-    VkBuffer indirect_buffer, VkBuffer draw_count_buffer, uint32_t total_objects, vk::raii::CommandBuffers& command_buffers,
-    SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv, LoggingLib::Logger& logger)
+static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t total_objects, uint32_t meshlets_per_object,
+    vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
+    LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -404,16 +349,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
     }
-
-    // GPU timestamp query pool — 2 queries per frame (before + after compute dispatch)
-    vk::QueryPoolCreateInfo query_pool_info{};
-    query_pool_info.queryType = vk::QueryType::eTimestamp;
-    query_pool_info.queryCount = MAX_FRAMES_IN_FLIGHT * 2;
-    vk::raii::QueryPool timestamp_pool(device.get(), query_pool_info);
-
-    // Get the timestamp period (nanoseconds per tick)
-    vk::PhysicalDeviceProperties gpu_props = device.physicalDevice().getProperties();
-    float timestamp_period = gpu_props.limits.timestampPeriod; // nanoseconds per tick
 
     // Per-swapchain-image semaphores for present
     std::vector<vk::raii::Semaphore> render_finished_semaphores;
@@ -472,8 +407,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 
     uint32_t current_frame{0};
-    uint32_t frame_counter{0}; //!< For periodic cull time logging.
-    std::array<bool, MAX_FRAMES_IN_FLIGHT> queries_submitted{}; //!< Per-frame: true after that frame's queries have been recorded.
 
     while (true) {
         // Block until the main thread sends an event
@@ -575,7 +508,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(resize_width, resize_height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
-                queries_submitted.fill(false);
             } else {
                 should_render = false;
             }
@@ -598,22 +530,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             return;
         }
 
-        // Read back timestamp results (only if this frame slot has been submitted before)
-        if (queries_submitted[current_frame]) {
-            uint32_t query_base = current_frame * 2;
-            std::array<uint64_t, 2> timestamps{};
-            vk::Result query_result = static_cast<vk::Device>(*device.get())
-                                          .getQueryPoolResults(*timestamp_pool, query_base, 2, sizeof(timestamps), timestamps.data(), sizeof(uint64_t),
-                                              vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
-            if (query_result == vk::Result::eSuccess && timestamps[1] > timestamps[0]) {
-                float cull_time_ms = static_cast<float>(timestamps[1] - timestamps[0]) * timestamp_period / 1'000'000.0f;
-                // Log once per ~60 frames to avoid spam
-                if ((++frame_counter) % 60 == 0) {
-                    logger.logInfo("Cull time: " + std::to_string(cull_time_ms) + " ms (" + std::to_string(total_objects) + " objects).");
-                }
-            }
-        }
-
         // Acquire next swapchain image
         uint32_t image_index{0};
         vk::Result acquire_result = vk::Result::eSuccess;
@@ -626,7 +542,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
-                queries_submitted.fill(false);
             }
             continue;
         }
@@ -654,9 +569,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Record command buffer — compute culling + graphics rendering in one submission
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
-        uint32_t query_base = current_frame * 2;
-        recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline, vertex_buffer,
-            index_buffer, indirect_buffer, draw_count_buffer, pipeline.graphicsDescriptorSet(current_frame), frustum, total_objects, *timestamp_pool, query_base);
+        recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline,
+            pipeline.descriptorSet(current_frame), frustum, total_objects, meshlets_per_object);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -697,7 +611,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
-                queries_submitted.fill(false);
             }
             continue;
         }
@@ -707,11 +620,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildDepthBuffer();
-                queries_submitted.fill(false);
             }
         }
 
-        queries_submitted[current_frame] = true;
         current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         // If keys are still held, keep rendering (continuous movement)
@@ -760,15 +671,15 @@ int main()
 
         // Load shaders and create pipelines
         std::string exe_dir = executableDirectory();
-        std::vector<uint32_t> triangle_spirv = loadSpirv(exe_dir + "triangle.spv", logger);
-        std::vector<uint32_t> cull_spirv = loadSpirv(exe_dir + "cull.spv", logger);
+        std::vector<uint32_t> task_spirv{loadSpirv(exe_dir + "task.spv", logger)};
+        std::vector<uint32_t> mesh_spirv{loadSpirv(exe_dir + "mesh.spv", logger)};
 
         // Create swapchain
         Swapchain swapchain(device, *surface, config.width, config.height, logger);
 
-        // Graphics + compute pipelines. triangle.spv is a combined Slang module
-        // containing both vertMain and fragMain entry points — same blob for both stages.
-        Pipeline pipeline(device, swapchain.format().format, DEPTH_FORMAT, triangle_spirv, triangle_spirv, cull_spirv, MAX_FRAMES_IN_FLIGHT, logger);
+        // Mesh shader pipeline (task + mesh + fragment). mesh.spv is a combined Slang
+        // module containing both meshMain and fragMain entry points.
+        Pipeline pipeline(device, swapchain.format().format, DEPTH_FORMAT, task_spirv, mesh_spirv, MAX_FRAMES_IN_FLIGHT, logger);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
@@ -786,7 +697,8 @@ int main()
         constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = sizeof(CUBE_VERTICES);
 
         AllocatedBuffer vertex_buffer = allocator.createBuffer(VERTEX_BUFFER_SIZE,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
 
         // Cube index buffer
         constexpr vk::DeviceSize INDEX_BUFFER_SIZE = sizeof(CUBE_INDICES);
@@ -918,53 +830,6 @@ int main()
 
         logger.logInfo("Object SSBO uploaded (" + std::to_string(total_objects) + " objects, " + std::to_string(ssbo_size) + " bytes).");
 
-        // Indirect draw buffer — one command for the entire cube batch
-        VkDrawIndexedIndirectCommand draw_cmd{};
-        draw_cmd.indexCount = CUBE_INDEX_COUNT;
-        draw_cmd.instanceCount = static_cast<uint32_t>(total_objects);
-        draw_cmd.firstIndex = 0;
-        draw_cmd.vertexOffset = 0;
-        draw_cmd.firstInstance = 0;
-
-        AllocatedBuffer indirect_draw_buffer = allocator.createBuffer(sizeof(VkDrawIndexedIndirectCommand),
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst),
-            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
-
-        // Upload indirect command
-        {
-            AllocatedBuffer indirect_staging = allocator.createBuffer(sizeof(VkDrawIndexedIndirectCommand),
-                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
-                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
-            VmaAllocationInfo indirect_staging_info = indirect_staging.allocationInfo();
-            std::memcpy(indirect_staging_info.pMappedData, &draw_cmd, sizeof(VkDrawIndexedIndirectCommand));
-
-            vk::CommandBufferAllocateInfo copy_alloc{};
-            copy_alloc.commandPool = *command_pool;
-            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
-            copy_alloc.commandBufferCount = 1;
-            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
-
-            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
-            vk::CommandBufferBeginInfo copy_begin{};
-            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
-            copy_cmd.begin(copy_begin);
-
-            vk::BufferCopy indirect_region{};
-            indirect_region.size = sizeof(VkDrawIndexedIndirectCommand);
-            copy_cmd.copyBuffer(indirect_staging.buffer(), indirect_draw_buffer.buffer(), {indirect_region});
-
-            copy_cmd.end();
-
-            vk::SubmitInfo copy_submit{};
-            copy_submit.commandBufferCount = 1;
-            vk::CommandBuffer raw_cmd = *copy_cmd;
-            copy_submit.pCommandBuffers = &raw_cmd;
-            device.graphicsQueue().submit({copy_submit});
-            device.graphicsQueue().waitIdle();
-        }
-
-        logger.logInfo("Indirect draw buffer created (1 batch, " + std::to_string(total_objects) + " instances).");
-
         // Object bounds SSBO — build from scene bounds
         std::vector<ObjectBounds> object_bounds;
         object_bounds.reserve(total_objects);
@@ -972,16 +837,38 @@ int main()
             object_bounds.push_back({b.centre, b.radius});
         }
 
-        VkDeviceSize bounds_size = static_cast<VkDeviceSize>(object_bounds.size() * sizeof(ObjectBounds));
-        AllocatedBuffer bounds_ssbo = allocator.createBuffer(bounds_size,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+        VkDeviceSize bounds_size{static_cast<VkDeviceSize>(object_bounds.size() * sizeof(ObjectBounds))};
+        AllocatedBuffer bounds_ssbo{allocator.createBuffer(bounds_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        // Upload bounds SSBO
+        // Meshlet SSBOs — descriptors, vertex indices, triangle indices
+        VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(cube_meshlets.meshlets.size() * sizeof(Meshlet))};
+        AllocatedBuffer meshlet_desc_ssbo{allocator.createBuffer(meshlet_desc_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        VkDeviceSize meshlet_vert_idx_size{static_cast<VkDeviceSize>(cube_meshlets.vertex_indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer meshlet_vert_idx_ssbo{allocator.createBuffer(meshlet_vert_idx_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        VkDeviceSize meshlet_tri_idx_size{static_cast<VkDeviceSize>(cube_meshlets.triangle_indices.size() * sizeof(uint8_t))};
+        AllocatedBuffer meshlet_tri_idx_ssbo{allocator.createBuffer(meshlet_tri_idx_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        // Upload bounds + meshlet data via staging
         {
-            AllocatedBuffer bounds_staging = allocator.createBuffer(bounds_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
-                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
-            VmaAllocationInfo bounds_staging_info = bounds_staging.allocationInfo();
-            std::memcpy(bounds_staging_info.pMappedData, object_bounds.data(), bounds_size);
+            AllocatedBuffer bounds_staging{allocator.createBuffer(bounds_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            AllocatedBuffer desc_staging{allocator.createBuffer(meshlet_desc_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            AllocatedBuffer vert_idx_staging{allocator.createBuffer(meshlet_vert_idx_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            AllocatedBuffer tri_idx_staging{allocator.createBuffer(meshlet_tri_idx_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+
+            std::memcpy(bounds_staging.allocationInfo().pMappedData, object_bounds.data(), bounds_size);
+            std::memcpy(desc_staging.allocationInfo().pMappedData, cube_meshlets.meshlets.data(), meshlet_desc_size);
+            std::memcpy(vert_idx_staging.allocationInfo().pMappedData, cube_meshlets.vertex_indices.data(), meshlet_vert_idx_size);
+            std::memcpy(tri_idx_staging.allocationInfo().pMappedData, cube_meshlets.triangle_indices.data(), meshlet_tri_idx_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
@@ -993,9 +880,23 @@ int main()
             vk::CommandBufferBeginInfo copy_begin{};
             copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
             copy_cmd.begin(copy_begin);
+
             vk::BufferCopy bounds_region{};
             bounds_region.size = bounds_size;
             copy_cmd.copyBuffer(bounds_staging.buffer(), bounds_ssbo.buffer(), {bounds_region});
+
+            vk::BufferCopy desc_region{};
+            desc_region.size = meshlet_desc_size;
+            copy_cmd.copyBuffer(desc_staging.buffer(), meshlet_desc_ssbo.buffer(), {desc_region});
+
+            vk::BufferCopy vert_idx_region{};
+            vert_idx_region.size = meshlet_vert_idx_size;
+            copy_cmd.copyBuffer(vert_idx_staging.buffer(), meshlet_vert_idx_ssbo.buffer(), {vert_idx_region});
+
+            vk::BufferCopy tri_idx_region{};
+            tri_idx_region.size = meshlet_tri_idx_size;
+            copy_cmd.copyBuffer(tri_idx_staging.buffer(), meshlet_tri_idx_ssbo.buffer(), {tri_idx_region});
+
             copy_cmd.end();
 
             vk::SubmitInfo copy_submit{};
@@ -1006,27 +907,16 @@ int main()
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Bounds SSBO uploaded (" + std::to_string(total_objects) + " bounding spheres).");
+        logger.logInfo("Bounds + meshlet SSBOs uploaded.");
 
-        // Visible indices buffer — compute shader writes visible object indices here
-        VkDeviceSize visible_indices_size = static_cast<VkDeviceSize>(total_objects * sizeof(uint32_t));
-        AllocatedBuffer visible_indices_buffer = allocator.createBuffer(visible_indices_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer), 0,
-            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+        uint32_t meshlets_per_object{static_cast<uint32_t>(cube_meshlets.meshlets.size())};
 
-        // Draw count buffer — compute shader writes the number of visible batches here
-        VkDeviceSize draw_count_size = sizeof(uint32_t);
-        AllocatedBuffer draw_count_buffer = allocator.createBuffer(draw_count_size,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst),
-            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
-
-        // Bind all descriptor sets
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-            pipeline.bindObjectSSBO(i, object_ssbo.buffer(), ssbo_size);
-            pipeline.bindVisibleIndices(i, visible_indices_buffer.buffer(), visible_indices_size);
+        // Bind all descriptor sets — SSBOs are static, UBOs are per-frame
+        for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            pipeline.bindSSBOs(i, object_ssbo.buffer(), ssbo_size, bounds_ssbo.buffer(), bounds_size, meshlet_desc_ssbo.buffer(), meshlet_desc_size,
+                vertex_buffer.buffer(), static_cast<VkDeviceSize>(CUBE_VERTICES.size() * sizeof(Vertex)), meshlet_vert_idx_ssbo.buffer(), meshlet_vert_idx_size,
+                meshlet_tri_idx_ssbo.buffer(), meshlet_tri_idx_size);
         }
-
-        pipeline.bindComputeResources(bounds_ssbo.buffer(), bounds_size, indirect_draw_buffer.buffer(), sizeof(VkDrawIndexedIndirectCommand), draw_count_buffer.buffer(),
-            draw_count_size, visible_indices_buffer.buffer(), visible_indices_size);
 
         // Render event signal — main thread emits, render thread consumes
         SignalsLib::Signal<RenderEvent> render_signal;
@@ -1034,9 +924,8 @@ int main()
         std::condition_variable render_cv;
 
         // Spawn the render thread
-        std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), vertex_buffer.buffer(),
-            index_buffer.buffer(), indirect_draw_buffer.buffer(), draw_count_buffer.buffer(), static_cast<uint32_t>(total_objects), std::ref(command_buffers),
-            std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+        std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), static_cast<uint32_t>(total_objects),
+            meshlets_per_object, std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {

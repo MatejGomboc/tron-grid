@@ -61,87 +61,66 @@ struct CameraUBO {
     MathLib::Mat4 projection; //!< Projection matrix.
 };
 
-//! Push constants for the compute culling shader.
-struct CullPushConstants {
+//! Push constants for the task shader — frustum planes + object/meshlet counts.
+struct TaskPushConstants {
     std::array<MathLib::Vec4, 6> planes{}; //!< Frustum planes (normals point inward).
-    uint32_t object_count{0}; //!< Total number of objects to cull.
+    uint32_t object_count{0}; //!< Total number of objects.
+    uint32_t meshlets_per_object{0}; //!< Number of meshlets per mesh (uniform for now).
+    uint32_t meshlet_offset{0}; //!< Global meshlet offset for this mesh type.
 };
 
 /*!
-    Owns the graphics pipeline, compute culling pipeline, layouts, descriptor sets,
-    and per-frame descriptor resources. Uses dynamic rendering (no VkRenderPass).
+    Owns the mesh shader pipeline, layout, descriptor sets, and per-frame resources.
+    Uses dynamic rendering (no VkRenderPass). Task shader performs per-object frustum
+    culling and dispatches mesh shader workgroups for visible objects.
 */
 class Pipeline {
 public:
     /*!
-        Creates the graphics and compute pipelines.
+        Creates the mesh shader pipeline (task + mesh + fragment).
 
         \param device The logical device.
         \param colour_format The swapchain colour attachment format.
         \param depth_format The depth attachment format.
-        \param vert_spirv Vertex shader SPIR-V binary.
-        \param frag_spirv Fragment shader SPIR-V binary.
-        \param cull_spirv Compute culling shader SPIR-V binary.
+        \param task_spirv Task shader SPIR-V binary.
+        \param mesh_frag_spirv Mesh + fragment shader SPIR-V binary (combined module).
         \param frames_in_flight Number of frames in flight (for per-frame descriptor sets).
         \param logger Logger reference.
     */
-    Pipeline(const Device& device, vk::Format colour_format, vk::Format depth_format, const std::vector<uint32_t>& vert_spirv, const std::vector<uint32_t>& frag_spirv,
-        const std::vector<uint32_t>& cull_spirv, uint32_t frames_in_flight, LoggingLib::Logger& logger);
+    Pipeline(const Device& device, vk::Format colour_format, vk::Format depth_format, const std::vector<uint32_t>& task_spirv,
+        const std::vector<uint32_t>& mesh_frag_spirv, uint32_t frames_in_flight, LoggingLib::Logger& logger);
 
-    // Non-copyable, movable
+    // Non-copyable, non-movable.
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
     Pipeline(Pipeline&&) = delete;
     Pipeline& operator=(Pipeline&&) = delete;
 
-    //! Graphics pipeline handle.
+    //! Mesh shader pipeline handle.
     [[nodiscard]] const vk::raii::Pipeline& get() const
     {
-        return m_graphics_pipeline;
+        return m_pipeline;
     }
 
-    //! Graphics pipeline layout handle.
+    //! Pipeline layout handle.
     [[nodiscard]] const vk::raii::PipelineLayout& layout() const
     {
-        return m_graphics_layout;
+        return m_layout;
     }
 
-    //! Compute culling pipeline handle.
-    [[nodiscard]] const vk::raii::Pipeline& cullPipeline() const
+    //! Descriptor set for the given frame index.
+    [[nodiscard]] vk::DescriptorSet descriptorSet(uint32_t frame_index) const
     {
-        return m_compute_pipeline;
+        return *m_descriptor_sets[frame_index];
     }
 
-    //! Compute pipeline layout handle.
-    [[nodiscard]] const vk::raii::PipelineLayout& cullLayout() const
-    {
-        return m_compute_layout;
-    }
-
-    //! Graphics descriptor set for the given frame index.
-    [[nodiscard]] vk::DescriptorSet graphicsDescriptorSet(uint32_t frame_index) const
-    {
-        return *m_graphics_descriptor_sets[frame_index];
-    }
-
-    //! Compute descriptor set (shared across frames — static data).
-    [[nodiscard]] vk::DescriptorSet computeDescriptorSet() const
-    {
-        return *m_compute_descriptor_sets[0];
-    }
-
-    //! Binds a UBO buffer to the graphics descriptor set for the given frame index.
+    //! Binds the camera UBO to the descriptor set for the given frame index.
     void bindUBO(uint32_t frame_index, VkBuffer buffer) const;
 
-    //! Binds an object SSBO to the graphics descriptor set for the given frame index.
-    void bindObjectSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const;
-
-    //! Binds the visible indices SSBO to the graphics descriptor set for the given frame index.
-    void bindVisibleIndices(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const;
-
-    //! Binds compute descriptor set resources (bounds, draw commands, draw count, visible indices).
-    void bindComputeResources(VkBuffer bounds_buffer, VkDeviceSize bounds_size, VkBuffer indirect_buffer, VkDeviceSize indirect_size, VkBuffer draw_count_buffer,
-        VkDeviceSize draw_count_size, VkBuffer visible_indices_buffer, VkDeviceSize visible_indices_size) const;
+    //! Binds all mesh shader SSBOs to the descriptor set for the given frame index.
+    void bindSSBOs(uint32_t frame_index, VkBuffer object_ssbo, VkDeviceSize object_size, VkBuffer bounds_ssbo, VkDeviceSize bounds_size, VkBuffer meshlet_desc_ssbo,
+        VkDeviceSize meshlet_desc_size, VkBuffer vertex_ssbo, VkDeviceSize vertex_size, VkBuffer meshlet_vertex_indices_ssbo, VkDeviceSize meshlet_vertex_indices_size,
+        VkBuffer meshlet_triangle_indices_ssbo, VkDeviceSize meshlet_triangle_indices_size) const;
 
     //! Updates the camera UBO for the given frame index via its mapped pointer.
     void updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const;
@@ -156,20 +135,11 @@ private:
     const Device* m_device{nullptr}; //!< Non-owning device reference.
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
 
-    // Graphics pipeline
-    vk::raii::DescriptorSetLayout m_graphics_descriptor_set_layout{nullptr}; //!< Binding 0 = UBO, 1 = SSBO, 2 = visible indices.
-    vk::raii::PipelineLayout m_graphics_layout{nullptr}; //!< Graphics pipeline layout.
-    vk::raii::Pipeline m_graphics_pipeline{nullptr}; //!< Graphics pipeline handle.
-    vk::raii::DescriptorPool m_graphics_descriptor_pool{nullptr}; //!< Graphics descriptor pool.
-    std::vector<vk::raii::DescriptorSet> m_graphics_descriptor_sets; //!< Per-frame graphics descriptor sets.
+    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 7 bindings: UBO + 6 SSBOs.
+    vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
+    vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
+    vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.
+    std::vector<vk::raii::DescriptorSet> m_descriptor_sets; //!< Per-frame descriptor sets.
 
-    // Compute pipeline
-    vk::raii::DescriptorSetLayout m_compute_descriptor_set_layout{nullptr}; //!< Binding 0 = bounds, 1 = draw cmds, 2 = draw count, 3 = visible indices.
-    vk::raii::PipelineLayout m_compute_layout{nullptr}; //!< Compute pipeline layout (push constants for frustum).
-    vk::raii::Pipeline m_compute_pipeline{nullptr}; //!< Compute culling pipeline handle.
-    vk::raii::DescriptorPool m_compute_descriptor_pool{nullptr}; //!< Compute descriptor pool.
-    std::vector<vk::raii::DescriptorSet> m_compute_descriptor_sets; //!< Compute descriptor sets.
-
-    // Per-frame UBO
     std::vector<void*> m_ubo_mapped_ptrs; //!< Persistently mapped UBO pointers (per frame).
 };
