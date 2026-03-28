@@ -124,7 +124,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
     create_info.imageColorSpace = m_format.colorSpace;
     create_info.imageExtent = m_extent;
     create_info.imageArrayLayers = 1;
-    create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+    create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
 
     uint32_t graphics_family{m_device->graphicsFamilyIndex()};
     uint32_t present_family{m_device->presentFamilyIndex()};

@@ -104,8 +104,8 @@ constexpr uint32_t MOUSE_RIGHT = 2;
     Records a command buffer with mesh shader rendering. The task shader performs
     per-object frustum culling and dispatches mesh shader workgroups for visible objects.
 */
-static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk::ImageView colour_view, vk::ImageView depth_view, vk::Image depth_image,
-    vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects)
+static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image, vk::ImageView hdr_view, vk::ImageView depth_view, vk::Image depth_image,
+    vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -123,55 +123,63 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     cross_frame_dep.pMemoryBarriers = &cross_frame;
     cmd.pipelineBarrier2(cross_frame_dep);
 
-    // Transition colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL.
-    vk::ImageMemoryBarrier2 to_colour{};
-    to_colour.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    to_colour.srcAccessMask = vk::AccessFlagBits2::eNone;
-    to_colour.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    to_colour.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-    to_colour.oldLayout = vk::ImageLayout::eUndefined;
-    to_colour.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    to_colour.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-    to_colour.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-    to_colour.image = image;
-    to_colour.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    to_colour.subresourceRange.baseMipLevel = 0;
-    to_colour.subresourceRange.levelCount = 1;
-    to_colour.subresourceRange.baseArrayLayer = 0;
-    to_colour.subresourceRange.layerCount = 1;
+    // ── Transition HDR + depth to render targets ──
+
+    vk::ImageSubresourceRange colour_range{};
+    colour_range.aspectMask = vk::ImageAspectFlagBits::eColor;
+    colour_range.baseMipLevel = 0;
+    colour_range.levelCount = 1;
+    colour_range.baseArrayLayer = 0;
+    colour_range.layerCount = 1;
+
+    vk::ImageSubresourceRange depth_range{};
+    depth_range.aspectMask = vk::ImageAspectFlagBits::eDepth;
+    depth_range.baseMipLevel = 0;
+    depth_range.levelCount = 1;
+    depth_range.baseArrayLayer = 0;
+    depth_range.layerCount = 1;
+
+    // Transition HDR image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL.
+    vk::ImageMemoryBarrier2 hdr_to_render{};
+    hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eNone;
+    hdr_to_render.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    hdr_to_render.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+    hdr_to_render.oldLayout = vk::ImageLayout::eUndefined;
+    hdr_to_render.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    hdr_to_render.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_to_render.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_to_render.image = hdr_image;
+    hdr_to_render.subresourceRange = colour_range;
 
     // Transition depth: UNDEFINED → DEPTH_ATTACHMENT_OPTIMAL.
-    vk::ImageMemoryBarrier2 to_depth{};
-    to_depth.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
-    to_depth.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-    to_depth.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
-    to_depth.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-    to_depth.oldLayout = vk::ImageLayout::eUndefined;
-    to_depth.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
-    to_depth.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-    to_depth.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-    to_depth.image = depth_image;
-    to_depth.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth;
-    to_depth.subresourceRange.baseMipLevel = 0;
-    to_depth.subresourceRange.levelCount = 1;
-    to_depth.subresourceRange.baseArrayLayer = 0;
-    to_depth.subresourceRange.layerCount = 1;
+    vk::ImageMemoryBarrier2 depth_to_render{};
+    depth_to_render.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+    depth_to_render.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    depth_to_render.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+    depth_to_render.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    depth_to_render.oldLayout = vk::ImageLayout::eUndefined;
+    depth_to_render.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
+    depth_to_render.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    depth_to_render.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    depth_to_render.image = depth_image;
+    depth_to_render.subresourceRange = depth_range;
 
-    std::array<vk::ImageMemoryBarrier2, 2> barriers{to_colour, to_depth};
+    std::array<vk::ImageMemoryBarrier2, 2> to_render_barriers{hdr_to_render, depth_to_render};
     vk::DependencyInfo dep_to_render{};
-    dep_to_render.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
-    dep_to_render.pImageMemoryBarriers = barriers.data();
+    dep_to_render.imageMemoryBarrierCount = static_cast<uint32_t>(to_render_barriers.size());
+    dep_to_render.pImageMemoryBarriers = to_render_barriers.data();
     cmd.pipelineBarrier2(dep_to_render);
 
-    // Clear colour — dark teal.
+    // ── Render scene to HDR image ──
+
     vk::RenderingAttachmentInfo colour_attachment{};
-    colour_attachment.imageView = colour_view;
+    colour_attachment.imageView = hdr_view;
     colour_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     colour_attachment.loadOp = vk::AttachmentLoadOp::eClear;
     colour_attachment.storeOp = vk::AttachmentStoreOp::eStore;
     colour_attachment.clearValue.color = vk::ClearColorValue{std::array{0.01f, 0.01f, 0.02f, 1.0f}};
 
-    // Clear depth to 1.0 (far plane).
     vk::RenderingAttachmentInfo depth_attachment{};
     depth_attachment.imageView = depth_view;
     depth_attachment.imageLayout = vk::ImageLayout::eDepthAttachmentOptimal;
@@ -189,7 +197,6 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
 
     cmd.beginRendering(rendering_info);
 
-    // Bind mesh shader pipeline and set dynamic state.
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline.get());
 
     vk::Viewport viewport{};
@@ -206,41 +213,88 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image image, vk:
     scissor.extent = extent;
     cmd.setScissor(0, {scissor});
 
-    // Bind descriptor set (all SSBOs + UBO).
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
 
-    // Push frustum planes and object/meshlet counts to the task shader.
     TaskPushConstants push{};
     push.planes = frustum.planes;
     push.object_count = total_objects;
     cmd.pushConstants<TaskPushConstants>(*pipeline.layout(), vk::ShaderStageFlagBits::eTaskEXT, 0, push);
 
-    // Dispatch one task shader workgroup per object. The task shader culls
-    // and dispatches mesh shader workgroups for visible objects.
     cmd.drawMeshTasksEXT(total_objects, 1, 1);
 
     cmd.endRendering();
 
-    // Transition: COLOR_ATTACHMENT_OPTIMAL → PRESENT_SRC
-    vk::ImageMemoryBarrier2 to_present{};
-    to_present.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    to_present.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-    to_present.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
-    to_present.dstAccessMask = vk::AccessFlagBits2::eNone;
-    to_present.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    to_present.newLayout = vk::ImageLayout::ePresentSrcKHR;
-    to_present.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-    to_present.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-    to_present.image = image;
-    to_present.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    to_present.subresourceRange.baseMipLevel = 0;
-    to_present.subresourceRange.levelCount = 1;
-    to_present.subresourceRange.baseArrayLayer = 0;
-    to_present.subresourceRange.layerCount = 1;
+    // ── Blit HDR image → swapchain image ──
+
+    // Transition HDR: COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL.
+    // Transition swapchain: UNDEFINED → TRANSFER_DST_OPTIMAL.
+    vk::ImageMemoryBarrier2 hdr_to_src{};
+    hdr_to_src.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    hdr_to_src.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+    hdr_to_src.dstStageMask = vk::PipelineStageFlagBits2::eBlit;
+    hdr_to_src.dstAccessMask = vk::AccessFlagBits2::eTransferRead;
+    hdr_to_src.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    hdr_to_src.newLayout = vk::ImageLayout::eTransferSrcOptimal;
+    hdr_to_src.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_to_src.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_to_src.image = hdr_image;
+    hdr_to_src.subresourceRange = colour_range;
+
+    vk::ImageMemoryBarrier2 swap_to_dst{};
+    swap_to_dst.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+    swap_to_dst.srcAccessMask = vk::AccessFlagBits2::eNone;
+    swap_to_dst.dstStageMask = vk::PipelineStageFlagBits2::eBlit;
+    swap_to_dst.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+    swap_to_dst.oldLayout = vk::ImageLayout::eUndefined;
+    swap_to_dst.newLayout = vk::ImageLayout::eTransferDstOptimal;
+    swap_to_dst.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    swap_to_dst.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    swap_to_dst.image = swapchain_image;
+    swap_to_dst.subresourceRange = colour_range;
+
+    std::array<vk::ImageMemoryBarrier2, 2> to_blit_barriers{hdr_to_src, swap_to_dst};
+    vk::DependencyInfo dep_to_blit{};
+    dep_to_blit.imageMemoryBarrierCount = static_cast<uint32_t>(to_blit_barriers.size());
+    dep_to_blit.pImageMemoryBarriers = to_blit_barriers.data();
+    cmd.pipelineBarrier2(dep_to_blit);
+
+    // Blit HDR (float16) → swapchain (SRGB) with format conversion and clamping.
+    vk::ImageBlit2 blit_region{};
+    blit_region.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    blit_region.srcSubresource.layerCount = 1;
+    blit_region.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+    blit_region.srcOffsets[1] = vk::Offset3D{static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
+    blit_region.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+    blit_region.dstSubresource.layerCount = 1;
+    blit_region.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+    blit_region.dstOffsets[1] = vk::Offset3D{static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
+
+    vk::BlitImageInfo2 blit_info{};
+    blit_info.srcImage = hdr_image;
+    blit_info.srcImageLayout = vk::ImageLayout::eTransferSrcOptimal;
+    blit_info.dstImage = swapchain_image;
+    blit_info.dstImageLayout = vk::ImageLayout::eTransferDstOptimal;
+    blit_info.regionCount = 1;
+    blit_info.pRegions = &blit_region;
+    blit_info.filter = vk::Filter::eNearest;
+    cmd.blitImage2(blit_info);
+
+    // Transition swapchain: TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR.
+    vk::ImageMemoryBarrier2 swap_to_present{};
+    swap_to_present.srcStageMask = vk::PipelineStageFlagBits2::eBlit;
+    swap_to_present.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+    swap_to_present.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
+    swap_to_present.dstAccessMask = vk::AccessFlagBits2::eNone;
+    swap_to_present.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+    swap_to_present.newLayout = vk::ImageLayout::ePresentSrcKHR;
+    swap_to_present.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    swap_to_present.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    swap_to_present.image = swapchain_image;
+    swap_to_present.subresourceRange = colour_range;
 
     vk::DependencyInfo dep_to_present{};
     dep_to_present.imageMemoryBarrierCount = 1;
-    dep_to_present.pImageMemoryBarriers = &to_present;
+    dep_to_present.pImageMemoryBarriers = &swap_to_present;
     cmd.pipelineBarrier2(dep_to_present);
 
     cmd.end();
@@ -294,12 +348,32 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     depth_view_info.subresourceRange.layerCount = 1;
     vk::raii::ImageView depth_view(device.get(), depth_view_info);
 
-    //! Rebuilds the depth buffer to match the current swapchain extent.
+    // HDR colour buffer — same dimensions as swapchain, recreated on resize
+    AllocatedImage hdr_image{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)};
+
+    vk::ImageViewCreateInfo hdr_view_info{};
+    hdr_view_info.image = hdr_image.image();
+    hdr_view_info.viewType = vk::ImageViewType::e2D;
+    hdr_view_info.format = HDR_FORMAT;
+    hdr_view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    hdr_view_info.subresourceRange.baseMipLevel = 0;
+    hdr_view_info.subresourceRange.levelCount = 1;
+    hdr_view_info.subresourceRange.baseArrayLayer = 0;
+    hdr_view_info.subresourceRange.layerCount = 1;
+    vk::raii::ImageView hdr_view(device.get(), hdr_view_info);
+
+    //! Rebuilds the depth buffer and HDR colour buffer to match the current swapchain extent.
     auto rebuildDepthBuffer = [&]() {
         depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
         depth_view_info.image = depth_image.image();
         depth_view = vk::raii::ImageView(device.get(), depth_view_info);
+
+        hdr_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        hdr_view_info.image = hdr_image.image();
+        hdr_view = vk::raii::ImageView(device.get(), hdr_view_info);
     };
 
     // Per-frame camera UBOs (persistently mapped)
@@ -488,7 +562,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Record command buffer — compute culling + graphics rendering in one submission
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
-        recordFrame(cmd, swapchain.images()[image_index], *swapchain.views()[image_index], *depth_view, depth_image.image(), swapchain.extent(), pipeline,
+        recordFrame(cmd, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index], swapchain.extent(), pipeline,
             pipeline.descriptorSet(current_frame), frustum, total_objects);
 
         // Submit
@@ -598,7 +672,8 @@ int main()
 
         // Mesh shader pipeline (task + mesh + fragment). mesh.spv is a combined Slang
         // module containing both meshMain and fragMain entry points.
-        Pipeline pipeline(device, swapchain.format().format, DEPTH_FORMAT, task_spirv, mesh_spirv, MAX_FRAMES_IN_FLIGHT, logger);
+        constexpr vk::Format HDR_FORMAT{vk::Format::eR16G16B16A16Sfloat};
+        Pipeline pipeline(device, HDR_FORMAT, DEPTH_FORMAT, task_spirv, mesh_spirv, MAX_FRAMES_IN_FLIGHT, logger);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
