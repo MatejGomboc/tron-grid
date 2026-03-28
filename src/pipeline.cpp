@@ -16,6 +16,7 @@
 #include "allocator.hpp"
 #include "device.hpp"
 #include <array>
+#include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -33,11 +34,17 @@ std::string executableDirectory()
 {
 #ifdef _WIN32
     wchar_t wide_path[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, wide_path, MAX_PATH);
-    int len = WideCharToMultiByte(CP_UTF8, 0, wide_path, -1, nullptr, 0, nullptr, nullptr);
+    DWORD path_len{GetModuleFileNameW(nullptr, wide_path, MAX_PATH)};
+    if (path_len == 0 || path_len >= MAX_PATH) {
+        return {};
+    }
+    int len{WideCharToMultiByte(CP_UTF8, 0, wide_path, -1, nullptr, 0, nullptr, nullptr)};
+    if (len <= 0) {
+        return {};
+    }
     std::string narrow(static_cast<std::string::size_type>(len - 1), '\0');
     WideCharToMultiByte(CP_UTF8, 0, wide_path, -1, narrow.data(), len, nullptr, nullptr);
-    std::string::size_type pos = narrow.find_last_of("\\/");
+    std::string::size_type pos{narrow.find_last_of("\\/")};
     return (pos != std::string::npos) ? narrow.substr(0, pos + 1) : narrow;
 #else
     char path[PATH_MAX]{};
@@ -406,6 +413,8 @@ void Pipeline::bindComputeResources(VkBuffer bounds_buffer, VkDeviceSize bounds_
 
 void Pipeline::updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const
 {
+    assert(frame_index < m_ubo_mapped_ptrs.size());
+    assert(m_ubo_mapped_ptrs[frame_index] != nullptr);
     if (m_ubo_mapped_ptrs[frame_index]) {
         std::memcpy(m_ubo_mapped_ptrs[frame_index], &ubo, sizeof(CameraUBO));
     }
