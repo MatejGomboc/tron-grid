@@ -15,14 +15,20 @@
 // Task shader — per-object frustum culling, dispatches mesh shader workgroups.
 // One task shader workgroup processes one object. If the object is visible,
 // it dispatches mesh shader workgroups for each of the object's meshlets.
+// Meshlet offset/count are per-object (stored in ObjectData SSBO).
 
 struct CameraData {
     float4x4 view;
     float4x4 projection;
 };
 
+// Must match C++ ObjectData struct layout (including padding).
 struct ObjectData {
     float4x4 model;
+    uint meshlet_offset;
+    uint meshlet_count;
+    uint pad0;
+    uint pad1;
 };
 
 struct ObjectBounds {
@@ -32,9 +38,9 @@ struct ObjectBounds {
 
 // Task payload — passed from task shader to mesh shader.
 struct TaskPayload {
-    uint object_index;    // Which object this batch belongs to.
-    uint meshlet_offset;  // First meshlet index for this object's mesh.
-    uint meshlet_count;   // Number of meshlets to render.
+    uint object_index;
+    uint meshlet_offset;
+    uint meshlet_count;
 };
 
 [[vk::binding(0, 0)]]
@@ -46,12 +52,10 @@ StructuredBuffer<ObjectData> objects;
 [[vk::binding(2, 0)]]
 StructuredBuffer<ObjectBounds> bounds;
 
-// Push constants — frustum planes + object/meshlet counts.
+// Push constants — frustum planes + total object count.
 struct TaskPushConstants {
     float4 planes[6];
     uint object_count;
-    uint meshlets_per_object;  // Number of meshlets per mesh (uniform for now).
-    uint meshlet_offset;       // Global meshlet offset for this mesh type.
 };
 
 [[vk::push_constant]]
@@ -81,16 +85,18 @@ void taskMain(uint3 dispatch_id : SV_DispatchThreadID)
     // Bounds are already in world space — no transform needed.
     ObjectBounds obj_bounds = bounds[object_index];
 
-    // Frustum test — use world-space bounds against world-space frustum planes.
+    // Frustum test.
     if (!isVisible(obj_bounds.centre, obj_bounds.radius)) {
         return;
     }
 
-    // Object is visible — dispatch mesh shader workgroups for its meshlets.
+    // Object is visible — read per-object meshlet info and dispatch.
+    ObjectData obj = objects[object_index];
+
     TaskPayload payload;
     payload.object_index = object_index;
-    payload.meshlet_offset = push.meshlet_offset;
-    payload.meshlet_count = push.meshlets_per_object;
+    payload.meshlet_offset = obj.meshlet_offset;
+    payload.meshlet_count = obj.meshlet_count;
 
-    DispatchMesh(push.meshlets_per_object, 1, 1, payload);
+    DispatchMesh(obj.meshlet_count, 1, 1, payload);
 }

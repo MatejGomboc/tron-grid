@@ -15,6 +15,7 @@
 #pragma once
 
 #include <math/vector.hpp>
+#include <array>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -52,6 +53,33 @@ struct MeshData {
     std::vector<uint32_t> vertex_indices; //!< Global vertex indices referenced by each meshlet.
     std::vector<uint8_t> triangle_indices; //!< Packed triangle indices (3 uint8_t per triangle, into vertex_indices).
 };
+
+//! One LOD level of a mesh — offset and count into the global meshlet array.
+struct MeshLOD {
+    uint32_t meshlet_offset{0}; //!< First meshlet index for this LOD level.
+    uint32_t meshlet_count{0}; //!< Number of meshlets in this LOD level.
+};
+
+//! Maximum LOD levels per mesh.
+constexpr uint32_t MAX_LOD_LEVELS{4};
+
+//! Describes a mesh with up to MAX_LOD_LEVELS LOD levels.
+struct MeshDescriptor {
+    uint32_t lod_count{0}; //!< Number of LOD levels (1 = no LOD).
+    std::array<MeshLOD, MAX_LOD_LEVELS> lods{}; //!< LOD levels (0 = highest detail).
+    float bounding_radius{0.0f}; //!< Local-space bounding sphere radius (for culling).
+};
+
+/*!
+    Generates a UV sphere mesh (positions + indices).
+
+    \param stacks Number of horizontal slices (latitude).
+    \param slices Number of vertical segments (longitude).
+    \param radius Sphere radius.
+    \param out_positions Output vertex positions.
+    \param out_indices Output triangle indices.
+*/
+void generateUVSphere(uint32_t stacks, uint32_t slices, float radius, std::vector<MathLib::Vec3>& out_positions, std::vector<uint32_t>& out_indices);
 
 /*!
     Builds meshlets from mesh geometry.
