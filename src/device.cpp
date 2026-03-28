@@ -25,6 +25,7 @@
 //! Required device extensions.
 static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_EXT_MESH_SHADER_EXTENSION_NAME,
 };
 
 //! Holds graphics and present queue family indices discovered during device selection.
@@ -186,13 +187,22 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     shader_draw_params.shaderDrawParameters = vk::True;
     shader_draw_params.pNext = &dynamic_rendering_features;
 
+    // Enable mesh shader features (VK_EXT_mesh_shader)
+    vk::PhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features{};
+    mesh_shader_features.meshShader = vk::True;
+    mesh_shader_features.taskShader = vk::True;
+    mesh_shader_features.pNext = &shader_draw_params;
+
     // Enable Vulkan 1.2 features — all promoted features go here (not separate structs)
     vk::PhysicalDeviceVulkan12Features vulkan12_features{};
     vulkan12_features.drawIndirectCount = vk::True;
     vulkan12_features.descriptorBindingStorageBufferUpdateAfterBind = vk::True;
     vulkan12_features.descriptorBindingPartiallyBound = vk::True;
     vulkan12_features.runtimeDescriptorArray = vk::True;
-    vulkan12_features.pNext = &shader_draw_params;
+    vulkan12_features.shaderInt8 = vk::True;
+    vulkan12_features.uniformAndStorageBuffer8BitAccess = vk::True;
+    vulkan12_features.storageBuffer8BitAccess = vk::True;
+    vulkan12_features.pNext = &mesh_shader_features;
 
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.multiDrawIndirect = vk::True;

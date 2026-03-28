@@ -107,8 +107,10 @@ tron_grid/
 │   ├── components.hpp    # Entity components (Transform, MeshID, Bounds)
 │   ├── scene.hpp         # Scene — flat SoA entity/component arrays
 │   ├── camera.hpp        # Free-flight camera (quaternion, WASD + mouse look)
-│   ├── triangle.slang    # Slang vertex + fragment shader (MVP transform, normal visualisation)
-│   ├── cull.slang        # Slang compute shader (frustum culling, compacted indices)
+│   ├── task.slang        # Slang task shader (per-object frustum culling)
+│   ├── mesh.slang        # Slang mesh + fragment shader (meshlet rendering)
+│   ├── triangle.slang    # Legacy vertex + fragment shader (kept for reference)
+│   ├── cull.slang        # Legacy compute cull shader (kept for reference)
 │   ├── volk.cpp          # Volk dynamic loader translation unit
 │   ├── vma.cpp           # VMA implementation translation unit
 │   └── CMakeLists.txt    # Target definition, shader compilation
@@ -169,9 +171,9 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-GPU-driven rendering (1000 cubes, SSBO, compute culling, IndirectCount) with
-code quality infrastructure (Clang-Tidy, sanitisers, GPU validation, -Werror).
-Currently working on Phase 3 (mesh shaders + scene architecture).
+Mesh shader rendering (1000 cubes via task + mesh shaders, per-object frustum culling,
+meshlet pipeline). Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
+Currently working on Phase 3 (scene architecture + multiple mesh types).
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 
 ## Off Limits

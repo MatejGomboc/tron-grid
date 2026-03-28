@@ -72,9 +72,49 @@ add_custom_command(
     VERBATIM
 )
 
+# Mesh shader pipeline (task + mesh + fragment) — compile, then validate SPIR-V
+set(TASK_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/task.slang)
+set(MESH_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/mesh.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/task.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${TASK_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry taskMain
+        -o ${SHADER_OUTPUT_DIR}/task.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/task.spv
+    DEPENDS ${TASK_SOURCE}
+    COMMENT "Compiling task.slang -> task.spv (with validation)"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/mesh.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${MESH_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -fvk-invert-y
+        -warnings-as-errors all
+        -entry meshMain
+        -entry fragMain
+        -o ${SHADER_OUTPUT_DIR}/mesh.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/mesh.spv
+    DEPENDS ${MESH_SOURCE}
+    COMMENT "Compiling mesh.slang -> mesh.spv (with validation)"
+    VERBATIM
+)
+
 add_custom_target(shaders DEPENDS
     ${SHADER_OUTPUT_DIR}/triangle.spv
     ${SHADER_OUTPUT_DIR}/cull.spv
+    ${SHADER_OUTPUT_DIR}/task.spv
+    ${SHADER_OUTPUT_DIR}/mesh.spv
 )
 add_dependencies(${PROJECT_NAME} shaders)
 
@@ -86,6 +126,12 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/cull.spv
         $<TARGET_FILE_DIR:${PROJECT_NAME}>/cull.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/task.spv
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/task.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/mesh.spv
+        $<TARGET_FILE_DIR:${PROJECT_NAME}>/mesh.spv
     COMMENT "Copying shaders to output directory"
     VERBATIM
 )
