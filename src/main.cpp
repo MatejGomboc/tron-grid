@@ -21,8 +21,8 @@
 #include "pipeline.hpp"
 #include "scene.hpp"
 #include "surface.hpp"
-#include "terrain.hpp"
 #include "swapchain.hpp"
+#include "terrain.hpp"
 #include <log/logger.hpp>
 #include <math/matrix.hpp>
 #include <math/projection.hpp>
@@ -99,80 +99,6 @@ constexpr uint32_t KEY_SHIFT = 50;
 constexpr uint32_t KEY_ESC = 9;
 constexpr uint32_t MOUSE_RIGHT = 2;
 #endif
-
-//! Procedural cube — 24 vertices (4 per face, unique normals for flat shading).
-constexpr std::array<Vertex, 24> CUBE_VERTICES = {{
-    // Front face (Z+)
-    {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    // Back face (Z-)
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
-    {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
-    // Top face (Y+)
-    {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
-    // Bottom face (Y-)
-    {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
-    {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
-    // Right face (X+)
-    {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-    {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
-    // Left face (X-)
-    {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{-0.5f, -0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{-0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
-}};
-
-//! Cube index data — 36 indices (6 per face, 2 triangles each, counter-clockwise).
-constexpr std::array<uint32_t, 36> CUBE_INDICES = {{
-    0,
-    1,
-    2,
-    2,
-    3,
-    0, // Front
-    4,
-    5,
-    6,
-    6,
-    7,
-    4, // Back
-    8,
-    9,
-    10,
-    10,
-    11,
-    8, // Top
-    12,
-    13,
-    14,
-    14,
-    15,
-    12, // Bottom
-    16,
-    17,
-    18,
-    18,
-    19,
-    16, // Right
-    20,
-    21,
-    22,
-    22,
-    23,
-    20, // Left
-}};
 
 /*!
     Records a command buffer with mesh shader rendering. The task shader performs

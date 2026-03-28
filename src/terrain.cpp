@@ -123,7 +123,7 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
             MathLib::Vec3 p11{x1, h11, z1};
 
             // Triangle 1: p00, p10, p01.
-            MathLib::Vec3 n1{(p10 - p00).cross(p01 - p00).normalised()};
+            MathLib::Vec3 n1{(p01 - p00).cross(p10 - p00).normalised()};
             result.positions.push_back(p00);
             result.positions.push_back(p10);
             result.positions.push_back(p01);
