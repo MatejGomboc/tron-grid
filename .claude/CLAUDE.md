@@ -16,6 +16,7 @@ A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tra
 
 | Resource | Location |
 |----------|----------|
+| Dev environment setup | `docs/DEV_ENV_SETUP.md` |
 | Vision | `docs/VISION.md` |
 | Architecture | `docs/ARCHITECTURE.md` |
 | AI interface spec | `docs/AI_INTERFACE.md` (future) |

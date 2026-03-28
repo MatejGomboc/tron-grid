@@ -101,12 +101,16 @@ When submitting:
 
 ### Setup
 
+See [docs/DEV_ENV_SETUP.md](docs/DEV_ENV_SETUP.md) for complete setup instructions
+(Vulkan SDK, compilers, IDE, troubleshooting).
+
+Quick start (prerequisites already installed):
+
 ```bash
-# Clone the repository
 git clone https://github.com/MatejGomboc/tron-grid.git
 cd tron-grid
 
-# Windows (from VS Developer Command Prompt or with MSVC in PATH)
+# Windows
 cmake --preset windows-msvc
 cmake --build build/windows-msvc --config Debug
 
