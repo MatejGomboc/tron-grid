@@ -166,10 +166,10 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-**Phase 2 + 2.1 complete** — GPU-driven rendering (1000 cubes, SSBO, compute culling,
-IndirectCount) + code quality infrastructure (Clang-Tidy, sanitisers, GPU validation, -Werror).
+GPU-driven rendering (1000 cubes, SSBO, compute culling, IndirectCount) with
+code quality infrastructure (Clang-Tidy, sanitisers, GPU validation, -Werror).
+Currently working on Phase 3 (mesh shaders + scene architecture).
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
-See `TODO.md` for the development journal.
 
 ## Off Limits
 

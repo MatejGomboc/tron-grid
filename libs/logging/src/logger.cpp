@@ -37,19 +37,19 @@ namespace LoggingLib
     }
 
     Logger::Logger() :
-        m_worker(&Logger::workerLoop, this)
+        m_worker([this](std::stop_token token) {
+            workerLoop(token);
+        })
     {
     }
 
     Logger::~Logger()
     {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_stop = true;
-        }
-
+        // Request stop and wake the worker. The jthread destructor
+        // joins automatically — the worker drains remaining messages
+        // before returning.
+        m_worker.request_stop();
         m_cv.notify_one();
-        m_worker.join();
     }
 
     void Logger::logDebug(std::string_view message)
@@ -85,30 +85,38 @@ namespace LoggingLib
         m_cv.notify_one();
     }
 
-    void Logger::workerLoop()
+    void Logger::workerLoop(std::stop_token stop_token)
     {
-        while (true) {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_cv.wait(lock, [this]() {
-                return m_stop || !m_queue.empty();
-            });
-
-            bool stopping = m_stop;
-            lock.unlock();
+        while (!stop_token.stop_requested()) {
+            // Wait for messages or stop — the CV checks stop_token automatically
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_cv.wait(lock, stop_token, [this]() {
+                    return !m_queue.empty();
+                });
+            }
+            // Lock released before draining — no lock ordering issue with Signal's mutex
 
             // Drain all pending messages.
             LogMessage msg;
             while (m_queue.consume(msg)) {
-                std::string_view prefix = severityPrefix(msg.severity);
+                std::string_view prefix{severityPrefix(msg.severity)};
                 if (msg.severity >= Severity::Warning) {
                     std::cerr << prefix << " " << msg.text << "\n";
                 } else {
                     std::cout << prefix << " " << msg.text << "\n";
                 }
             }
+        }
 
-            if (stopping) {
-                return;
+        // Final drain — catch messages emitted between last check and stop
+        LogMessage msg;
+        while (m_queue.consume(msg)) {
+            std::string_view prefix{severityPrefix(msg.severity)};
+            if (msg.severity >= Severity::Warning) {
+                std::cerr << prefix << " " << msg.text << "\n";
+            } else {
+                std::cout << prefix << " " << msg.text << "\n";
             }
         }
     }

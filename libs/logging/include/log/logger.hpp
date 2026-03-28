@@ -47,15 +47,15 @@ namespace LoggingLib
         the queue and writes to stdout (Debug, Info) or stderr (Warning,
         Error, Fatal).
 
-        RAII lifecycle: the constructor spawns the worker thread, and the
-        destructor drains any remaining messages before joining.
+        RAII lifecycle: std::jthread auto-joins in the destructor and
+        signals the stop_token to wake the worker.
     */
     class Logger {
     public:
         //! Spawn the background worker thread.
         Logger();
 
-        //! Drain remaining messages and join the worker thread.
+        //! Destructor — std::jthread auto-joins and signals stop.
         ~Logger();
 
         //! Non-copyable, non-movable (owns a thread).
@@ -83,14 +83,13 @@ namespace LoggingLib
         //! Push a message onto the queue and wake the worker.
         void enqueue(Severity severity, std::string_view message);
 
-        //! Worker thread entry point — drains the queue in a loop.
-        void workerLoop();
+        //! Worker thread entry point — drains the queue until stop is requested.
+        void workerLoop(std::stop_token stop_token);
 
         SignalsLib::Signal<LogMessage> m_queue; //!< Thread-safe message queue.
-        std::thread m_worker; //!< Background writer thread.
-        std::mutex m_mutex; //!< Protects the stop flag.
-        std::condition_variable m_cv; //!< Wakes the worker when messages arrive or stop is requested.
-        bool m_stop{false}; //!< Set to true when the logger is shutting down.
+        std::mutex m_mutex; //!< Protects the wake-up condition.
+        std::condition_variable_any m_cv; //!< Wakes the worker when messages arrive.
+        std::jthread m_worker; //!< Background writer thread (auto-joins on destruction).
     };
 
 } // namespace LoggingLib
