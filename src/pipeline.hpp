@@ -142,7 +142,7 @@ private:
     const Device* m_device{nullptr}; //!< Non-owning device reference.
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
 
-    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 7 bindings: UBO + 6 SSBOs.
+    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 8 bindings: UBO + 6 SSBOs + TLAS.
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
     vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.
