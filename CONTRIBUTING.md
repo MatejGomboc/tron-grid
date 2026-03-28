@@ -224,7 +224,7 @@ chore: update Vulkan SDK to 1.4.335.0
 | `STYLE.md` | Code style conventions |
 | `CHANGELOG.md` | User-facing change history |
 | `docs/ARCHITECTURE.md` | Technical architecture |
-| `docs/VISION.md` | Project vision and roadmap (single source of truth) |
+| `docs/VISION.md` | Project vision and roadmap |
 | `docs/AI_INTERFACE.md` | AI brain plugin interface specification (future) |
 
 ### Updating Documentation
