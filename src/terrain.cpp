@@ -74,7 +74,7 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
     uint32_t verts_per_side{config.grid_size + 1};
 
     // Generate heightmap.
-    std::vector<float> heightmap(verts_per_side * verts_per_side);
+    std::vector<float> heightmap(static_cast<size_t>(verts_per_side) * verts_per_side);
     float half_size{static_cast<float>(config.grid_size) * config.tile_spacing * 0.5f};
 
     for (uint32_t z{0}; z < verts_per_side; ++z) {
