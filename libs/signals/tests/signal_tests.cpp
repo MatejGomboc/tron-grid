@@ -22,7 +22,7 @@ TEST_CASE(emit_and_consume)
     SignalsLib::Signal<int> sig;
     sig.emit(42);
 
-    int value = 0;
+    int value{0};
     TEST_CHECK(sig.consume(value));
     TEST_CHECK_EQUAL(value, 42);
 }
@@ -31,7 +31,7 @@ TEST_CASE(consume_empty_returns_false)
 {
     SignalsLib::Signal<int> sig;
 
-    int value = 0;
+    int value{0};
     TEST_CHECK(!sig.consume(value));
 }
 
@@ -42,7 +42,7 @@ TEST_CASE(fifo_order)
     sig.emit(2);
     sig.emit(3);
 
-    int value = 0;
+    int value{0};
     (void)sig.consume(value);
     TEST_CHECK_EQUAL(value, 1);
     (void)sig.consume(value);
@@ -64,8 +64,8 @@ TEST_CASE(empty_and_size)
 
 TEST_CASE(weak_ptr_ownership_model)
 {
-    std::shared_ptr<SignalsLib::Signal<int>> sig = std::make_shared<SignalsLib::Signal<int>>();
-    std::weak_ptr<SignalsLib::Signal<int>> weak = sig;
+    std::shared_ptr<SignalsLib::Signal<int>> sig{std::make_shared<SignalsLib::Signal<int>>()};
+    std::weak_ptr<SignalsLib::Signal<int>> weak{sig};
 
     sig->emit(99);
     TEST_CHECK(!weak.expired());
@@ -77,18 +77,18 @@ TEST_CASE(weak_ptr_ownership_model)
 TEST_CASE(thread_safety)
 {
     SignalsLib::Signal<int> sig;
-    constexpr int count = 1000;
+    constexpr int count{1000};
 
     std::thread producer([&] {
-        for (int i = 0; i < count; ++i) {
+        for (int i{0}; i < count; ++i) {
             sig.emit(i);
         }
     });
 
     std::thread consumer([&] {
-        int consumed = 0;
+        int consumed{0};
         while (consumed < count) {
-            int value = 0;
+            int value{0};
             if (sig.consume(value)) {
                 ++consumed;
             }

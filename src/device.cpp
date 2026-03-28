@@ -44,7 +44,7 @@ struct QueueFamilyIndices {
 static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     QueueFamilyIndices indices;
-    std::vector<vk::QueueFamilyProperties> families = device.getQueueFamilyProperties();
+    std::vector<vk::QueueFamilyProperties> families{device.getQueueFamilyProperties()};
 
     for (uint32_t i = 0; i < static_cast<uint32_t>(families.size()); ++i) {
         // Graphics support
@@ -53,7 +53,7 @@ static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& devi
         }
 
         // Present support
-        vk::Bool32 present_support = device.getSurfaceSupportKHR(i, surface);
+        vk::Bool32 present_support{device.getSurfaceSupportKHR(i, surface)};
         if (present_support) {
             indices.present = i;
         }
@@ -70,12 +70,12 @@ static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& devi
 //! Checks whether the device supports all required extensions.
 static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 {
-    std::vector<vk::ExtensionProperties> available = device.enumerateDeviceExtensionProperties();
+    std::vector<vk::ExtensionProperties> available{device.enumerateDeviceExtensionProperties()};
 
     for (const char* required : REQUIRED_DEVICE_EXTENSIONS) {
-        bool found = std::ranges::any_of(available, [required](const vk::ExtensionProperties& ext) {
+        bool found{std::ranges::any_of(available, [required](const vk::ExtensionProperties& ext) {
             return std::string_view(ext.extensionName.data()) == required;
-        });
+        })};
         if (!found) {
             return false;
         }
@@ -87,8 +87,8 @@ static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 //! Scores a physical device for suitability; returns -1 if unsuitable.
 static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
-    vk::PhysicalDeviceProperties properties = device.getProperties();
-    QueueFamilyIndices indices = findQueueFamilies(device, surface);
+    vk::PhysicalDeviceProperties properties{device.getProperties()};
+    QueueFamilyIndices indices{findQueueFamilies(device, surface)};
 
     // Must support Vulkan 1.3 (for synchronization2, dynamic rendering)
     if (properties.apiVersion < VK_API_VERSION_1_3) {
@@ -100,7 +100,7 @@ static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surfa
         return -1;
     }
 
-    int score = 0;
+    int score{0};
 
     // Strongly prefer discrete GPUs
     if (properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
@@ -121,7 +121,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     m_logger(logger)
 {
     // Step 1: Enumerate physical devices
-    std::vector<vk::raii::PhysicalDevice> physical_devices = instance.get().enumeratePhysicalDevices();
+    std::vector<vk::raii::PhysicalDevice> physical_devices{instance.get().enumeratePhysicalDevices()};
     if (physical_devices.empty()) {
         m_logger.logFatal("No Vulkan-capable GPU found.");
         std::abort();
@@ -129,12 +129,12 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     }
 
     // Step 2: Score and pick the best device
-    int best_score = -1;
-    size_t best_index = 0;
+    int best_score{-1};
+    size_t best_index{0};
 
     for (size_t i = 0; i < physical_devices.size(); ++i) {
-        int score = rateDevice(physical_devices[i], surface);
-        vk::PhysicalDeviceProperties props = physical_devices[i].getProperties();
+        int score{rateDevice(physical_devices[i], surface)};
+        vk::PhysicalDeviceProperties props{physical_devices[i].getProperties()};
         m_logger.logInfo("GPU " + std::to_string(i) + ": " + props.deviceName.data() + " (score: " + std::to_string(score) + ").");
 
         if (score > best_score) {
@@ -150,17 +150,17 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     }
 
     m_physical_device = std::move(physical_devices[best_index]);
-    vk::PhysicalDeviceProperties properties = m_physical_device.getProperties();
+    vk::PhysicalDeviceProperties properties{m_physical_device.getProperties()};
     m_device_name = properties.deviceName.data();
     m_logger.logInfo("Selected GPU: " + m_device_name + ".");
 
     // Step 3: Find queue families
-    QueueFamilyIndices indices = findQueueFamilies(m_physical_device, surface);
+    QueueFamilyIndices indices{findQueueFamilies(m_physical_device, surface)};
     m_graphics_family_index = indices.graphics;
     m_present_family_index = indices.present;
 
     // Step 4: Create logical device
-    constexpr float QUEUE_PRIORITY = 1.0f;
+    constexpr float QUEUE_PRIORITY{1.0f};
     std::vector<vk::DeviceQueueCreateInfo> queue_create_infos;
 
     // Deduplicate queue family indices

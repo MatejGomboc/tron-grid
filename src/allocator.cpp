@@ -13,8 +13,8 @@
 */
 
 #include "allocator.hpp"
-#include "instance.hpp"
 #include "device.hpp"
+#include "instance.hpp"
 #include <cstdlib>
 
 Allocator::Allocator(const Instance& instance, const Device& device, LoggingLib::Logger& logger) :
@@ -27,7 +27,7 @@ Allocator::Allocator(const Instance& instance, const Device& device, LoggingLib:
     alloc_info.vulkanApiVersion = VK_API_VERSION_1_3;
 
     VmaVulkanFunctions vma_functions{};
-    VkResult result = vmaImportVulkanFunctionsFromVolk(&alloc_info, &vma_functions);
+    VkResult result{vmaImportVulkanFunctionsFromVolk(&alloc_info, &vma_functions)};
     if (result != VK_SUCCESS) {
         m_logger.logFatal("Failed to import Vulkan functions from Volk for VMA.");
         std::abort();
@@ -67,7 +67,7 @@ AllocatedBuffer Allocator::createBuffer(VkDeviceSize size, VkBufferUsageFlags bu
 
     VkBuffer buffer{VK_NULL_HANDLE};
     VmaAllocation allocation{VK_NULL_HANDLE};
-    VkResult result = vmaCreateBuffer(m_allocator, &buffer_info, &alloc_create_info, &buffer, &allocation, nullptr);
+    VkResult result{vmaCreateBuffer(m_allocator, &buffer_info, &alloc_create_info, &buffer, &allocation, nullptr)};
     if (result != VK_SUCCESS) {
         m_logger.logFatal("Failed to create VMA buffer.");
         std::abort();
@@ -96,7 +96,7 @@ AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat 
 
     VkImage image{VK_NULL_HANDLE};
     VmaAllocation allocation{VK_NULL_HANDLE};
-    VkResult result = vmaCreateImage(m_allocator, &image_info, &alloc_create_info, &image, &allocation, nullptr);
+    VkResult result{vmaCreateImage(m_allocator, &image_info, &alloc_create_info, &image, &allocation, nullptr)};
     if (result != VK_SUCCESS) {
         m_logger.logFatal("Failed to create VMA image.");
         std::abort();

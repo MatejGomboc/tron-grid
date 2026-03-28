@@ -22,6 +22,7 @@
 #include "scene.hpp"
 #include "surface.hpp"
 #include "swapchain.hpp"
+#include "terrain.hpp"
 #include <log/logger.hpp>
 #include <math/matrix.hpp>
 #include <math/projection.hpp>
@@ -72,12 +73,6 @@ constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 //! Depth buffer format used throughout.
 constexpr vk::Format DEPTH_FORMAT = vk::Format::eD32Sfloat;
 
-//! Cube grid dimensions.
-constexpr int32_t CUBE_GRID_SIZE = 10;
-
-//! Spacing between cubes in the grid.
-constexpr float CUBE_SPACING = 3.0f;
-
 //! Camera movement speed (metres per second).
 constexpr float CAMERA_SPEED = 5.0f;
 
@@ -104,80 +99,6 @@ constexpr uint32_t KEY_SHIFT = 50;
 constexpr uint32_t KEY_ESC = 9;
 constexpr uint32_t MOUSE_RIGHT = 2;
 #endif
-
-//! Procedural cube — 24 vertices (4 per face, unique normals for flat shading).
-constexpr std::array<Vertex, 24> CUBE_VERTICES = {{
-    // Front face (Z+)
-    {{-0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    // Back face (Z-)
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
-    {{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
-    // Top face (Y+)
-    {{-0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
-    // Bottom face (Y-)
-    {{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
-    {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
-    // Right face (X+)
-    {{0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-    {{0.5f, 0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
-    // Left face (X-)
-    {{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{-0.5f, -0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{-0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
-}};
-
-//! Cube index data — 36 indices (6 per face, 2 triangles each, counter-clockwise).
-constexpr std::array<uint32_t, 36> CUBE_INDICES = {{
-    0,
-    1,
-    2,
-    2,
-    3,
-    0, // Front
-    4,
-    5,
-    6,
-    6,
-    7,
-    4, // Back
-    8,
-    9,
-    10,
-    10,
-    11,
-    8, // Top
-    12,
-    13,
-    14,
-    14,
-    15,
-    12, // Bottom
-    16,
-    17,
-    18,
-    18,
-    19,
-    16, // Right
-    20,
-    21,
-    22,
-    22,
-    23,
-    20, // Left
-}};
 
 /*!
     Records a command buffer with mesh shader rendering. The task shader performs
@@ -342,7 +263,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     vk::FenceCreateInfo fence_info{};
     fence_info.flags = vk::FenceCreateFlagBits::eSignaled;
 
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
     }
@@ -352,15 +273,15 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     auto rebuildPresentSemaphores = [&]() {
         render_finished_semaphores.clear();
-        for (uint32_t i = 0; i < swapchain.imageCount(); ++i) {
+        for (uint32_t i{0}; i < swapchain.imageCount(); ++i) {
             render_finished_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         }
     };
     rebuildPresentSemaphores();
 
     // Depth buffer — same dimensions as swapchain, recreated on resize
-    AllocatedImage depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+    AllocatedImage depth_image{
+        allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)};
 
     vk::ImageViewCreateInfo depth_view_info{};
     depth_view_info.image = depth_image.image();
@@ -383,25 +304,24 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     // Per-frame camera UBOs (persistently mapped)
     std::vector<AllocatedBuffer> ubo_buffers;
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-        AllocatedBuffer ubo = allocator.createBuffer(sizeof(CameraUBO), static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eUniformBuffer),
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
+    for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        AllocatedBuffer ubo{allocator.createBuffer(sizeof(CameraUBO), static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eUniformBuffer),
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
         pipeline.bindUBO(i, ubo.buffer());
-        VmaAllocationInfo ubo_info = ubo.allocationInfo();
+        VmaAllocationInfo ubo_info{ubo.allocationInfo()};
         pipeline.setUBOMappedPtr(i, ubo_info.pMappedData);
         ubo_buffers.push_back(std::move(ubo));
     }
 
-    // Camera — start behind the cube grid, looking toward origin
-    float grid_centre = (CUBE_GRID_SIZE - 1) * CUBE_SPACING * 0.5f;
-    Camera camera({grid_centre, grid_centre + 2.0f, grid_centre + 15.0f});
+    // Camera starts above the terrain centre, looking along it.
+    Camera camera({0.0f, 8.0f, 35.0f}, MathLib::PI / 4.0f, 0.1f, 200.0f);
 
     // Input state
     std::unordered_set<uint32_t> keys_held;
     bool mouse_captured{false};
 
     // Delta time
-    std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point last_time{std::chrono::steady_clock::now()};
 
     uint32_t current_frame{0};
 
@@ -466,8 +386,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         // Delta time
-        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
-        float delta_time = std::chrono::duration<float>(now - last_time).count();
+        std::chrono::steady_clock::time_point now{std::chrono::steady_clock::now()};
+        float delta_time{std::chrono::duration<float>(now - last_time).count()};
         last_time = now;
 
         // Clamp delta time to avoid huge jumps (e.g., after breakpoint or resize stall)
@@ -477,7 +397,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         // Process held keys — camera movement
         if (!keys_held.empty()) {
-            float move_delta = CAMERA_SPEED * delta_time;
+            float move_delta{CAMERA_SPEED * delta_time};
             if (keys_held.contains(KEY_W)) {
                 camera.moveForward(move_delta);
             }
@@ -520,7 +440,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         // Wait for this frame's fence
-        vk::Result wait_result = device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, std::numeric_limits<uint64_t>::max());
+        vk::Result wait_result{device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, std::numeric_limits<uint64_t>::max())};
         if (wait_result != vk::Result::eSuccess) {
             logger.logFatal("Failed to wait for fence.");
             std::abort();
@@ -529,9 +449,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         // Acquire next swapchain image
         uint32_t image_index{0};
-        vk::Result acquire_result = vk::Result::eSuccess;
+        vk::Result acquire_result{vk::Result::eSuccess};
         try {
-            vk::ResultValue<uint32_t> acquire = swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(), *image_available_semaphores[current_frame]);
+            vk::ResultValue<uint32_t> acquire{swapchain.get().acquireNextImage(std::numeric_limits<uint64_t>::max(), *image_available_semaphores[current_frame])};
             acquire_result = acquire.result;
             image_index = acquire.value;
         } catch (const vk::OutOfDateKHRError&) {
@@ -543,7 +463,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             continue;
         }
 
-        bool swapchain_suboptimal = (acquire_result == vk::Result::eSuboptimalKHR);
+        bool swapchain_suboptimal{acquire_result == vk::Result::eSuboptimalKHR};
 
         // Only reset fence after we know we will submit work
         device.get().resetFences({*in_flight_fences[current_frame]});
@@ -600,7 +520,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         present_info.pSwapchains = swapchains;
         present_info.pImageIndices = &image_index;
 
-        vk::Result present_result = vk::Result::eSuccess;
+        vk::Result present_result{vk::Result::eSuccess};
         try {
             present_result = device.presentQueue().presentKHR(present_info);
         } catch (const vk::OutOfDateKHRError&) {
@@ -646,7 +566,7 @@ int main()
             .height = 720,
         };
 
-        std::unique_ptr<WindowLib::Window> window = WindowLib::create(config, logger);
+        std::unique_ptr<WindowLib::Window> window{WindowLib::create(config, logger)};
         logger.logInfo("Window created: " + std::to_string(config.width) + "x" + std::to_string(config.height) + ".");
 
         // Vulkan initialisation
@@ -658,7 +578,7 @@ int main()
 #endif
 
         Instance instance(ENABLE_VALIDATION, requiredSurfaceExtensions(), logger);
-        vk::raii::SurfaceKHR surface = createSurface(instance.get(), *window);
+        vk::raii::SurfaceKHR surface{createSurface(instance.get(), *window)};
         Device device(instance, *surface, logger);
 
         logger.logInfo("Vulkan ready - GPU: " + device.name() + ".");
@@ -667,7 +587,7 @@ int main()
         Allocator allocator(instance, device, logger);
 
         // Load shaders and create pipelines
-        std::string exe_dir = executableDirectory();
+        std::string exe_dir{executableDirectory()};
         std::vector<uint32_t> task_spirv{loadSpirv(exe_dir + "task.spv", logger)};
         std::vector<uint32_t> mesh_spirv{loadSpirv(exe_dir + "mesh.spv", logger)};
 
@@ -690,92 +610,34 @@ int main()
         alloc_info.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
         vk::raii::CommandBuffers command_buffers(device.get(), alloc_info);
 
-        // ── Meshlet generation for both cube and sphere ──
+        // ── Terrain generation ──
 
-        // Cube meshlets.
-        std::vector<MathLib::Vec3> cube_positions;
-        cube_positions.reserve(CUBE_VERTICES.size());
-        for (const Vertex& v : CUBE_VERTICES) {
-            cube_positions.push_back({v.position[0], v.position[1], v.position[2]});
-        }
-        MeshData cube_meshlets{buildMeshlets(cube_positions, CUBE_INDICES)};
+        TerrainConfig terrain_config{};
+        terrain_config.grid_size = 64;
+        terrain_config.tile_spacing = 1.0f;
+        terrain_config.height_scale = 5.0f;
+        terrain_config.noise_frequency = 0.08f;
+        terrain_config.noise_octaves = 4;
+        terrain_config.quantise_levels = 8;
 
-        // Sphere mesh + meshlets.
-        constexpr uint32_t SPHERE_STACKS{8};
-        constexpr uint32_t SPHERE_SLICES{16};
-        constexpr float SPHERE_RADIUS{0.5f};
-        std::vector<MathLib::Vec3> sphere_positions;
-        std::vector<uint32_t> sphere_indices;
-        generateUVSphere(SPHERE_STACKS, SPHERE_SLICES, SPHERE_RADIUS, sphere_positions, sphere_indices);
+        TerrainMesh terrain{generateTerrain(terrain_config)};
+        MeshData terrain_meshlets{buildMeshlets(terrain.positions, terrain.indices)};
 
-        // Sphere vertices for GPU upload (position + normal + UV — normal = normalised position for a sphere).
-        std::vector<Vertex> sphere_vertices;
-        sphere_vertices.reserve(sphere_positions.size());
-        for (const MathLib::Vec3& p : sphere_positions) {
-            MathLib::Vec3 n{p.normalised()};
-            sphere_vertices.push_back({{p.x, p.y, p.z}, {n.x, n.y, n.z}, {0.0f, 0.0f}});
-        }
+        uint32_t terrain_meshlet_offset{0};
+        uint32_t terrain_meshlet_count{static_cast<uint32_t>(terrain_meshlets.meshlets.size())};
 
-        MeshData sphere_meshlets{buildMeshlets(sphere_positions, sphere_indices)};
+        logger.logInfo("Terrain: " + std::to_string(terrain.vertices.size()) + " vertices, " + std::to_string(terrain.indices.size() / 3) + " triangles, "
+            + std::to_string(terrain_meshlet_count) + " meshlets.");
 
-        // Mesh descriptors — cube is mesh 0, sphere is mesh 1.
-        // Cube meshlets start at offset 0, sphere meshlets start after cube.
-        uint32_t cube_meshlet_offset{0};
-        uint32_t cube_meshlet_count{static_cast<uint32_t>(cube_meshlets.meshlets.size())};
-        uint32_t sphere_meshlet_offset{cube_meshlet_count};
-        uint32_t sphere_meshlet_count{static_cast<uint32_t>(sphere_meshlets.meshlets.size())};
-
-        // Combine all vertices into a single buffer (cube first, then sphere).
-        // Sphere vertex indices need to be offset by the cube vertex count.
-        uint32_t cube_vertex_count{static_cast<uint32_t>(CUBE_VERTICES.size())};
-        std::vector<Vertex> all_vertices;
-        all_vertices.insert(all_vertices.end(), CUBE_VERTICES.begin(), CUBE_VERTICES.end());
-        all_vertices.insert(all_vertices.end(), sphere_vertices.begin(), sphere_vertices.end());
-
-        // Combine meshlet data — offset sphere's vertex indices by cube vertex count.
-        std::vector<Meshlet> all_meshlets;
-        std::vector<MeshletBounds> all_meshlet_bounds;
-        std::vector<uint32_t> all_vertex_indices;
-        std::vector<uint8_t> all_triangle_indices;
-
-        // Cube meshlets (offsets are already correct — they reference into the start of the vertex buffer).
-        uint32_t vert_idx_base{0};
-        uint32_t tri_idx_base{0};
-        for (const Meshlet& m : cube_meshlets.meshlets) {
-            Meshlet combined{m};
-            combined.vertex_offset = vert_idx_base + m.vertex_offset;
-            combined.triangle_offset = tri_idx_base + m.triangle_offset;
-            all_meshlets.push_back(combined);
-        }
-        all_meshlet_bounds.insert(all_meshlet_bounds.end(), cube_meshlets.bounds.begin(), cube_meshlets.bounds.end());
-        all_vertex_indices.insert(all_vertex_indices.end(), cube_meshlets.vertex_indices.begin(), cube_meshlets.vertex_indices.end());
-        all_triangle_indices.insert(all_triangle_indices.end(), cube_meshlets.triangle_indices.begin(), cube_meshlets.triangle_indices.end());
-
-        // Sphere meshlets — offset vertex indices by cube vertex count.
-        vert_idx_base = static_cast<uint32_t>(all_vertex_indices.size());
-        tri_idx_base = static_cast<uint32_t>(all_triangle_indices.size());
-        for (const Meshlet& m : sphere_meshlets.meshlets) {
-            Meshlet combined{m};
-            combined.vertex_offset = vert_idx_base + m.vertex_offset;
-            combined.triangle_offset = tri_idx_base + m.triangle_offset;
-            all_meshlets.push_back(combined);
-        }
-        all_meshlet_bounds.insert(all_meshlet_bounds.end(), sphere_meshlets.bounds.begin(), sphere_meshlets.bounds.end());
-        // Sphere vertex indices reference into sphere_positions (0-based) — add cube_vertex_count offset.
-        for (uint32_t idx : sphere_meshlets.vertex_indices) {
-            all_vertex_indices.push_back(idx + cube_vertex_count);
-        }
-        all_triangle_indices.insert(all_triangle_indices.end(), sphere_meshlets.triangle_indices.begin(), sphere_meshlets.triangle_indices.end());
-
-        // Combined vertex buffer — cube + sphere vertices, uploaded as SSBO for mesh shader.
-        VkDeviceSize vertex_buffer_size{static_cast<VkDeviceSize>(all_vertices.size() * sizeof(Vertex))};
+        // Vertex buffer.
+        VkDeviceSize vertex_buffer_size{static_cast<VkDeviceSize>(terrain.vertices.size() * sizeof(Vertex))};
         AllocatedBuffer vertex_buffer{allocator.createBuffer(vertex_buffer_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         {
             AllocatedBuffer vertex_staging{allocator.createBuffer(vertex_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
-            std::memcpy(vertex_staging.allocationInfo().pMappedData, all_vertices.data(), vertex_buffer_size);
+            std::memcpy(vertex_staging.allocationInfo().pMappedData, terrain.vertices.data(), vertex_buffer_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
@@ -796,69 +658,40 @@ int main()
 
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
-            vk::CommandBuffer raw_cmd = *copy_cmd;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
             copy_submit.pCommandBuffers = &raw_cmd;
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Vertex buffer uploaded (" + std::to_string(all_vertices.size()) + " vertices, " + std::to_string(vertex_buffer_size) + " bytes).");
+        logger.logInfo("Vertex buffer uploaded (" + std::to_string(terrain.vertices.size()) + " vertices).");
 
-        logger.logInfo("Meshlets: " + std::to_string(cube_meshlet_count) + " cube + " + std::to_string(sphere_meshlet_count)
-            + " sphere = " + std::to_string(all_meshlets.size()) + " total.");
-
-        // ── Build mixed scene — cubes and spheres alternating ──
-
-        constexpr float CUBE_BOUNDING_RADIUS{0.866025f}; // sqrt(3) * 0.5 — half-diagonal of unit cube.
+        // Scene — single terrain entity at origin.
         Scene scene;
-        for (int32_t x{0}; x < CUBE_GRID_SIZE; ++x) {
-            for (int32_t y{0}; y < CUBE_GRID_SIZE; ++y) {
-                for (int32_t z{0}; z < CUBE_GRID_SIZE; ++z) {
-                    MathLib::Vec3 pos{
-                        static_cast<float>(x) * CUBE_SPACING,
-                        static_cast<float>(y) * CUBE_SPACING,
-                        static_cast<float>(z) * CUBE_SPACING,
-                    };
-                    Transform transform{};
-                    transform.position = pos;
-
-                    // Alternate: even positions are cubes (mesh 0), odd are spheres (mesh 1).
-                    bool is_sphere{((x + y + z) % 2) != 0};
-                    uint32_t mesh_id{is_sphere ? 1u : 0u};
-                    float bound_radius{is_sphere ? SPHERE_RADIUS : CUBE_BOUNDING_RADIUS};
-
-                    (void)scene.addEntity(transform, {mesh_id}, {pos, bound_radius});
-                }
-            }
-        }
+        Transform terrain_transform{};
+        (void)scene.addEntity(terrain_transform, {0}, {{0.0f, 0.0f, 0.0f}, terrain.bounding_radius});
 
         uint32_t total_objects{scene.entityCount()};
 
-        // Object SSBO — build from scene with per-object meshlet offset/count.
         std::vector<ObjectData> object_data;
         object_data.reserve(total_objects);
         for (uint32_t i{0}; i < total_objects; ++i) {
             ObjectData obj{};
             obj.model = scene.transforms()[i].modelMatrix();
-            if (scene.meshIDs()[i].id == 0) {
-                obj.meshlet_offset = cube_meshlet_offset;
-                obj.meshlet_count = cube_meshlet_count;
-            } else {
-                obj.meshlet_offset = sphere_meshlet_offset;
-                obj.meshlet_count = sphere_meshlet_count;
-            }
+            obj.meshlet_offset = terrain_meshlet_offset;
+            obj.meshlet_count = terrain_meshlet_count;
             object_data.push_back(obj);
         }
 
-        VkDeviceSize ssbo_size = static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData));
-        AllocatedBuffer object_ssbo = allocator.createBuffer(ssbo_size,
-            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE);
+        VkDeviceSize ssbo_size{static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData))};
+        AllocatedBuffer object_ssbo{allocator.createBuffer(ssbo_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         // Staging upload for SSBO
         {
-            AllocatedBuffer ssbo_staging = allocator.createBuffer(ssbo_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
-                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO);
-            VmaAllocationInfo ssbo_staging_info = ssbo_staging.allocationInfo();
+            AllocatedBuffer ssbo_staging{allocator.createBuffer(ssbo_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            VmaAllocationInfo ssbo_staging_info{ssbo_staging.allocationInfo()};
             std::memcpy(ssbo_staging_info.pMappedData, object_data.data(), ssbo_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
@@ -880,7 +713,7 @@ int main()
 
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
-            vk::CommandBuffer raw_cmd = *copy_cmd;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
             copy_submit.pCommandBuffers = &raw_cmd;
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
@@ -900,15 +733,15 @@ int main()
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         // Meshlet SSBOs — descriptors, vertex indices, triangle indices
-        VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(all_meshlets.size() * sizeof(Meshlet))};
+        VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(terrain_meshlets.meshlets.size() * sizeof(Meshlet))};
         AllocatedBuffer meshlet_desc_ssbo{allocator.createBuffer(meshlet_desc_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        VkDeviceSize meshlet_vert_idx_size{static_cast<VkDeviceSize>(all_vertex_indices.size() * sizeof(uint32_t))};
+        VkDeviceSize meshlet_vert_idx_size{static_cast<VkDeviceSize>(terrain_meshlets.vertex_indices.size() * sizeof(uint32_t))};
         AllocatedBuffer meshlet_vert_idx_ssbo{allocator.createBuffer(meshlet_vert_idx_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        VkDeviceSize meshlet_tri_idx_size{static_cast<VkDeviceSize>(all_triangle_indices.size() * sizeof(uint8_t))};
+        VkDeviceSize meshlet_tri_idx_size{static_cast<VkDeviceSize>(terrain_meshlets.triangle_indices.size() * sizeof(uint8_t))};
         AllocatedBuffer meshlet_tri_idx_ssbo{allocator.createBuffer(meshlet_tri_idx_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
@@ -924,9 +757,9 @@ int main()
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
 
             std::memcpy(bounds_staging.allocationInfo().pMappedData, object_bounds.data(), bounds_size);
-            std::memcpy(desc_staging.allocationInfo().pMappedData, all_meshlets.data(), meshlet_desc_size);
-            std::memcpy(vert_idx_staging.allocationInfo().pMappedData, all_vertex_indices.data(), meshlet_vert_idx_size);
-            std::memcpy(tri_idx_staging.allocationInfo().pMappedData, all_triangle_indices.data(), meshlet_tri_idx_size);
+            std::memcpy(desc_staging.allocationInfo().pMappedData, terrain_meshlets.meshlets.data(), meshlet_desc_size);
+            std::memcpy(vert_idx_staging.allocationInfo().pMappedData, terrain_meshlets.vertex_indices.data(), meshlet_vert_idx_size);
+            std::memcpy(tri_idx_staging.allocationInfo().pMappedData, terrain_meshlets.triangle_indices.data(), meshlet_tri_idx_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
@@ -959,7 +792,7 @@ int main()
 
             vk::SubmitInfo copy_submit{};
             copy_submit.commandBufferCount = 1;
-            vk::CommandBuffer raw_cmd = *copy_cmd;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
             copy_submit.pCommandBuffers = &raw_cmd;
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
@@ -1050,8 +883,6 @@ int main()
         // Request initial frame render
         emitRenderEvent({RenderEvent::Type::Render, 0, 0, 0, 0, false});
 
-        logger.logInfo("Scene: " + std::to_string(total_objects) + " objects, " + std::to_string(CUBE_GRID_SIZE) + "x" + std::to_string(CUBE_GRID_SIZE) + "x"
-            + std::to_string(CUBE_GRID_SIZE) + " grid, GPU-driven indirect draw + compute culling.");
         logger.logInfo("Press ESC to close. Right-click to toggle mouse look. WASD + Space/Shift to fly.");
 
         // Main loop — handles Close and ESC. All other events are forwarded

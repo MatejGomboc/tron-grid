@@ -16,10 +16,10 @@
 
 #include "window_event.hpp"
 #include <log/logger.hpp>
+#include <cstdint>
 #include <memory>
 #include <queue>
 #include <string>
-#include <cstdint>
 
 namespace WindowLib
 {

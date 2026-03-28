@@ -89,12 +89,12 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     vk::ShaderModuleCreateInfo task_module_info{};
     task_module_info.codeSize = task_spirv.size() * sizeof(uint32_t);
     task_module_info.pCode = task_spirv.data();
-    vk::raii::ShaderModule task_module(device.get(), task_module_info);
+    vk::raii::ShaderModule task_module{device.get(), task_module_info};
 
     vk::ShaderModuleCreateInfo mesh_frag_module_info{};
     mesh_frag_module_info.codeSize = mesh_frag_spirv.size() * sizeof(uint32_t);
     mesh_frag_module_info.pCode = mesh_frag_spirv.data();
-    vk::raii::ShaderModule mesh_frag_module(device.get(), mesh_frag_module_info);
+    vk::raii::ShaderModule mesh_frag_module{device.get(), mesh_frag_module_info};
 
     // Shader stages: task → mesh → fragment.
     std::array<vk::PipelineShaderStageCreateInfo, 3> shader_stages{};
@@ -191,7 +191,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     vk::DescriptorSetLayoutCreateInfo layout_info{};
     layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
     layout_info.pBindings = bindings.data();
-    m_descriptor_set_layout = vk::raii::DescriptorSetLayout(device.get(), layout_info);
+    m_descriptor_set_layout = vk::raii::DescriptorSetLayout{device.get(), layout_info};
 
     // Pipeline layout — 1 descriptor set + push constants for task shader.
     vk::PushConstantRange push_range{};
@@ -204,7 +204,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     pipeline_layout_info.pSetLayouts = &*m_descriptor_set_layout;
     pipeline_layout_info.pushConstantRangeCount = 1;
     pipeline_layout_info.pPushConstantRanges = &push_range;
-    m_layout = vk::raii::PipelineLayout(device.get(), pipeline_layout_info);
+    m_layout = vk::raii::PipelineLayout{device.get(), pipeline_layout_info};
 
     // Dynamic rendering — same as before.
     vk::PipelineRenderingCreateInfo rendering_info{};
@@ -227,7 +227,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     pipeline_info.pDynamicState = &dynamic_state;
     pipeline_info.layout = *m_layout;
 
-    m_pipeline = vk::raii::Pipeline(device.get(), nullptr, pipeline_info);
+    m_pipeline = vk::raii::Pipeline{device.get(), nullptr, pipeline_info};
 
     // Descriptor pool — UBO + 6 SSBOs per frame.
     std::array<vk::DescriptorPoolSize, 2> pool_sizes{};
@@ -241,7 +241,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     pool_info.maxSets = frames_in_flight;
     pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
     pool_info.pPoolSizes = pool_sizes.data();
-    m_descriptor_pool = vk::raii::DescriptorPool(device.get(), pool_info);
+    m_descriptor_pool = vk::raii::DescriptorPool{device.get(), pool_info};
 
     std::vector<vk::DescriptorSetLayout> layouts(frames_in_flight, *m_descriptor_set_layout);
     vk::DescriptorSetAllocateInfo alloc_info{};

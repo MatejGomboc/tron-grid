@@ -26,9 +26,9 @@ static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFor
 {
     assert(!available.empty());
     // Prefer sRGB with B8G8R8A8 layout
-    std::vector<vk::SurfaceFormatKHR>::const_iterator it = std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
+    std::vector<vk::SurfaceFormatKHR>::const_iterator it{std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
         return fmt.format == vk::Format::eB8G8R8A8Srgb && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
-    });
+    })};
 
     if (it != available.end()) {
         return *it;
@@ -92,12 +92,12 @@ void Swapchain::recreate(uint32_t width, uint32_t height)
 
 void Swapchain::build(uint32_t width, uint32_t height)
 {
-    const vk::raii::PhysicalDevice& physical_device = m_device->physicalDevice();
+    const vk::raii::PhysicalDevice& physical_device{m_device->physicalDevice()};
 
     // Query surface capabilities
-    vk::SurfaceCapabilitiesKHR capabilities = physical_device.getSurfaceCapabilitiesKHR(m_surface);
-    std::vector<vk::SurfaceFormatKHR> formats = physical_device.getSurfaceFormatsKHR(m_surface);
-    std::vector<vk::PresentModeKHR> present_modes = physical_device.getSurfacePresentModesKHR(m_surface);
+    vk::SurfaceCapabilitiesKHR capabilities{physical_device.getSurfaceCapabilitiesKHR(m_surface)};
+    std::vector<vk::SurfaceFormatKHR> formats{physical_device.getSurfaceFormatsKHR(m_surface)};
+    std::vector<vk::PresentModeKHR> present_modes{physical_device.getSurfacePresentModesKHR(m_surface)};
 
     if (formats.empty()) {
         m_logger->logFatal("No surface formats available.");
@@ -111,7 +111,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
     m_extent = chooseExtent(capabilities, width, height);
 
     // Image count: min + 1 for triple buffering headroom
-    uint32_t image_count = capabilities.minImageCount + 1;
+    uint32_t image_count{capabilities.minImageCount + 1};
     if (capabilities.maxImageCount > 0 && image_count > capabilities.maxImageCount) {
         image_count = capabilities.maxImageCount;
     }
@@ -126,8 +126,8 @@ void Swapchain::build(uint32_t width, uint32_t height)
     create_info.imageArrayLayers = 1;
     create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
 
-    uint32_t graphics_family = m_device->graphicsFamilyIndex();
-    uint32_t present_family = m_device->presentFamilyIndex();
+    uint32_t graphics_family{m_device->graphicsFamilyIndex()};
+    uint32_t present_family{m_device->presentFamilyIndex()};
     uint32_t family_indices[] = {graphics_family, present_family};
 
     if (graphics_family != present_family) {
