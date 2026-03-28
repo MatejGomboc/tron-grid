@@ -236,8 +236,10 @@ Update `pipeline.cpp` descriptor set layout, pool sizes, and add a
 `bindTLAS()` method.
 
 **CameraUBO changes.** Add `float3 light_dir` (normalised, pointing toward
-the light source) and `float3 pad` for 16-byte alignment. The fragment
-shader reads this to determine the shadow ray direction.
+the light source) and `float pad` for 16-byte alignment (std140 rule:
+`float3` occupies 12 bytes, 1 float pad brings the struct to a 16-byte
+boundary). The fragment shader reads this to determine the shadow ray
+direction.
 
 **Slang compilation flags.** The mesh.slang module already compiles to
 SPIR-V 1.4. Ray query requires the `SPV_KHR_ray_query` extension. Add
