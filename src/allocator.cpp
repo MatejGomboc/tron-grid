@@ -25,6 +25,7 @@ Allocator::Allocator(const Instance& instance, const Device& device, LoggingLib:
     alloc_info.physicalDevice = *device.physicalDevice();
     alloc_info.device = *device.get();
     alloc_info.vulkanApiVersion = VK_API_VERSION_1_3;
+    alloc_info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
     VmaVulkanFunctions vma_functions{};
     VkResult result{vmaImportVulkanFunctionsFromVolk(&alloc_info, &vma_functions)};

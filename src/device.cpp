@@ -26,6 +26,9 @@
 static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_EXT_MESH_SHADER_EXTENSION_NAME,
+    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+    VK_KHR_RAY_QUERY_EXTENSION_NAME,
+    VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
 };
 
 //! Holds graphics and present queue family indices discovered during device selection.
@@ -193,6 +196,16 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     mesh_shader_features.taskShader = vk::True;
     mesh_shader_features.pNext = &shader_draw_params;
 
+    // Enable acceleration structure features (VK_KHR_acceleration_structure)
+    vk::PhysicalDeviceAccelerationStructureFeaturesKHR accel_features{};
+    accel_features.accelerationStructure = vk::True;
+    accel_features.pNext = &mesh_shader_features;
+
+    // Enable ray query features (VK_KHR_ray_query)
+    vk::PhysicalDeviceRayQueryFeaturesKHR ray_query_features{};
+    ray_query_features.rayQuery = vk::True;
+    ray_query_features.pNext = &accel_features;
+
     // Enable Vulkan 1.2 features — all promoted features go here (not separate structs)
     vk::PhysicalDeviceVulkan12Features vulkan12_features{};
     vulkan12_features.drawIndirectCount = vk::True;
@@ -202,7 +215,8 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     vulkan12_features.shaderInt8 = vk::True;
     vulkan12_features.uniformAndStorageBuffer8BitAccess = vk::True;
     vulkan12_features.storageBuffer8BitAccess = vk::True;
-    vulkan12_features.pNext = &mesh_shader_features;
+    vulkan12_features.bufferDeviceAddress = vk::True;
+    vulkan12_features.pNext = &ray_query_features;
 
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.multiDrawIndirect = vk::True;
@@ -225,4 +239,11 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     // Step 6: Retrieve queue handles
     m_graphics_queue = m_device.getQueue(m_graphics_family_index, 0);
     m_present_queue = m_device.getQueue(m_present_family_index, 0);
+
+    // Step 7: Log acceleration structure properties
+    vk::StructureChain<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR> props_chain{
+        m_physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()};
+    const vk::PhysicalDeviceAccelerationStructurePropertiesKHR& as_props{props_chain.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()};
+    m_logger.logInfo("RT: acceleration structure scratch alignment = " + std::to_string(as_props.minAccelerationStructureScratchOffsetAlignment)
+        + ", max instances = " + std::to_string(as_props.maxInstanceCount) + ".");
 }
