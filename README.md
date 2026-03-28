@@ -79,34 +79,20 @@ VK_EXT_descriptor_indexing      // Bindless resources
 
 ## Building
 
-### Windows (MSVC)
+For full setup instructions (Vulkan SDK, compilers, IDE), see
+[docs/DEV_ENV_SETUP.md](docs/DEV_ENV_SETUP.md).
+
+Quick start (prerequisites already installed):
 
 ```bash
+# Windows (MSVC)
 cmake --preset windows-msvc
 cmake --build build/windows-msvc --config Debug
-```
 
-### Windows (Clang-CL)
-
-```bash
-cmake --preset windows-clang-cl
-cmake --build build/windows-clang-cl --config Debug
-```
-
-### Linux (GCC)
-
-```bash
+# Linux (GCC)
 sudo apt-get install libxcb1-dev
 cmake --preset linux-x11-gcc
 cmake --build build/linux-x11-gcc --config Debug
-```
-
-### Linux (Clang)
-
-```bash
-sudo apt-get install libxcb1-dev
-cmake --preset linux-x11-clang
-cmake --build build/linux-x11-clang --config Debug
 ```
 
 ## Design Principles
@@ -139,10 +125,11 @@ cmake --build build/linux-x11-clang --config Debug
 
 | Document | Purpose |
 |----------|---------|
-| [docs/VISION.md](docs/VISION.md) | Project vision, phased roadmap (single source of truth) |
+| [docs/DEV_ENV_SETUP.md](docs/DEV_ENV_SETUP.md) | Development environment setup (single source of truth) |
+| [docs/VISION.md](docs/VISION.md) | Project vision, phased roadmap |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture and engine design |
 | docs/AI_INTERFACE.md | AI brain plugin interface specification (future) |
-| [STYLE.md](STYLE.md) | Code style conventions |
+| [STYLE.md](STYLE.md) | Code style conventions and quality tooling |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines |
 | [TODO.md](TODO.md) | Active tasks and development journal |
 
