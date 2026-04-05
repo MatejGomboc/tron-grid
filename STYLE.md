@@ -490,7 +490,7 @@ npx markdownlint-cli2 "**/*.md"
 
 ---
 
-## British Spelling
+## British Spelling 🇬🇧
 
 Use British spelling in all documentation, comments, and user-facing strings:
 
