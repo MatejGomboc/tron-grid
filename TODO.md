@@ -342,14 +342,14 @@ subtle digital noise complete the Tron Legacy look.
 
 ### Acceptance Criteria
 
-- [ ] Compute post-process pipeline replaces the clamping blit
-- [ ] ACES Filmic tonemapping with correct sRGB gamma encoding
-- [ ] Orange neon appears as proper orange (not yellow — hue preserved)
-- [ ] Bloom extraction with brightness threshold
-- [ ] Bloom downsample mip chain (Karis average for first level)
+- [x] Compute post-process pipeline replaces the clamping blit
+- [x] ACES Filmic tonemapping with correct sRGB gamma encoding
+- [x] Orange neon appears as proper orange (not yellow — hue preserved)
+- [x] Bloom extraction with brightness threshold
+- [x] Bloom downsample mip chain (Karis average for first level)
 - [ ] Bloom upsample chain with additive blending
 - [ ] Bloom composite with tunable strength
-- [ ] Bloom texture recreated on swapchain resize
+- [x] Bloom texture recreated on swapchain resize
 - [ ] Neon tubes and light orb have visible soft glow halos
 - [ ] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
 - [ ] AA resources recreated on swapchain resize
@@ -357,9 +357,9 @@ subtle digital noise complete the Tron Legacy look.
 - [ ] Per-material PBR via material SSBO
 - [ ] Cinematic post-process (colour grade, chromatic aberration, vignette)
 - [ ] No new Vulkan extensions needed (compute + MSAA are core 1.0)
-- [ ] Proper synchronisation barriers for all compute passes
-- [ ] Proper doxygen, STYLE.md compliant, British spelling
-- [ ] All existing + new tests pass on all CI presets
+- [x] Proper synchronisation barriers for all compute passes
+- [x] Proper doxygen, STYLE.md compliant, British spelling
+- [x] All existing + new tests pass on all CI presets
 - [ ] **Phase 7 complete — visual polish**
 
 ---

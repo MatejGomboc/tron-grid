@@ -181,12 +181,13 @@ Smith-GGX visibility, Schlick Fresnel) and dual-colour neon tube edges (cyan
 primary + orange accent on major grid lines). HDR framebuffer
 (`R16G16B16A16_SFLOAT`), compute post-process pass (ACES fitted RRT+ODT
 tonemapping with AP1 hue preservation, exact sRGB encoding, swapchain
-`B8G8R8A8_UNORM` with storage writes). RT hard shadows and
-single-bounce reflections via inline ray query (`VK_KHR_ray_query`, BLAS/TLAS).
-Mesh shaders (task + mesh + fragment), per-object frustum culling, meshlet
-pipeline. Entity/component scene with SoA arrays. Code quality: Clang-Tidy,
-sanitisers, GPU validation, -Werror. See `docs/VISION.md` § Phased Roadmap for
-the full 11-phase plan.
+`B8G8R8A8_UNORM` with storage writes). Bloom extraction with Karis average
+(firefly suppression) and mip chain downsample (up to 6 levels). RT hard
+shadows and single-bounce reflections via inline ray query (`VK_KHR_ray_query`,
+BLAS/TLAS). Mesh shaders (task + mesh + fragment), per-object frustum culling,
+meshlet pipeline. Entity/component scene with SoA arrays. Code quality:
+Clang-Tidy, sanitisers, GPU validation, -Werror. See `docs/VISION.md` §
+Phased Roadmap for the full 11-phase plan.
 
 ## Off Limits
 
