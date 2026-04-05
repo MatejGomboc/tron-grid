@@ -73,12 +73,11 @@ TronGrid's business. The AI interface specification will be documented in a futu
 ### Required Vulkan Extensions
 
 ```text
+VK_KHR_swapchain                // Presentation
 VK_EXT_mesh_shader              // Task + Mesh shaders
 VK_KHR_acceleration_structure   // RT acceleration structures
-VK_KHR_ray_tracing_pipeline     // RT pipeline
+VK_KHR_ray_query                // Inline ray queries (shadows, reflections)
 VK_KHR_deferred_host_operations // Async AS builds
-VK_KHR_buffer_device_address    // GPU pointers for bindless
-VK_EXT_descriptor_indexing      // Bindless resources
 ```
 
 ## Building

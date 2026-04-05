@@ -526,6 +526,21 @@ scaling for weaker hardware.
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
 
+### 2026-04-05 — Phase 7 Etapes 29-31: compute post-process + ACES tonemapping + bloom extraction
+
+Fullscreen compute post-process pipeline (Etape 29, PR #77) replaces the
+clamping blit with a compute shader writing directly to swapchain storage
+images (B8G8R8A8_UNORM). ACES fitted RRT+ODT tonemapping with AP1
+hue-preserving colour space transforms (Etape 30, PR #78) restores correct
+neon colours — orange stays orange instead of clamping to yellow. Exact
+IEC 61966-2-1 sRGB encoding replaces the pow(x, 1/2.2) approximation.
+Bloom extraction (Etape 31, PR #79) with Karis average (firefly suppression)
+and 6-level mip chain downsample via 2×2 box filter. Per-mip ImageViews and
+per-step barriers. Bloom texture recreated on swapchain resize. Codebase-wide
+modernisation: all Vulkan struct count+pointer assignments replaced with
+vulkan-hpp setter methods, all compound conditionals parenthesised. 79 PRs
+merged.
+
 ### 2026-04-05 — Phase 6 complete: PBR obsidian floor with neon tube reflections
 
 HDR framebuffer (R16G16B16A16_SFLOAT → blit to sRGB swapchain),
