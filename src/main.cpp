@@ -244,8 +244,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
 
     std::array<vk::ImageMemoryBarrier2, 2> to_render_barriers{hdr_to_render, depth_to_render};
     vk::DependencyInfo dep_to_render{};
-    dep_to_render.imageMemoryBarrierCount = static_cast<uint32_t>(to_render_barriers.size());
-    dep_to_render.pImageMemoryBarriers = to_render_barriers.data();
+    dep_to_render.setImageMemoryBarriers(to_render_barriers);
     cmd.pipelineBarrier2(dep_to_render);
 
     // ── Render scene to HDR image ──
@@ -268,8 +267,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     rendering_info.renderArea.offset = vk::Offset2D{0, 0};
     rendering_info.renderArea.extent = extent;
     rendering_info.layerCount = 1;
-    rendering_info.colorAttachmentCount = 1;
-    rendering_info.pColorAttachments = &colour_attachment;
+    rendering_info.setColorAttachments(colour_attachment);
     rendering_info.pDepthAttachment = &depth_attachment;
 
     cmd.beginRendering(rendering_info);
@@ -402,8 +400,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     swap_to_present.subresourceRange = colour_range;
 
     vk::DependencyInfo dep_to_present{};
-    dep_to_present.imageMemoryBarrierCount = 1;
-    dep_to_present.pImageMemoryBarriers = &swap_to_present;
+    dep_to_present.setImageMemoryBarriers(swap_to_present);
     cmd.pipelineBarrier2(dep_to_present);
 
     cmd.end();
@@ -558,18 +555,15 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     pp_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
 
     vk::DescriptorSetLayoutCreateInfo pp_layout_info{};
-    pp_layout_info.bindingCount = static_cast<uint32_t>(pp_bindings.size());
-    pp_layout_info.pBindings = pp_bindings.data();
+    pp_layout_info.setBindings(pp_bindings);
     vk::raii::DescriptorSetLayout pp_descriptor_set_layout{device.get(), pp_layout_info};
 
     vk::PipelineLayoutCreateInfo pp_pipeline_layout_info{};
-    pp_pipeline_layout_info.setLayoutCount = 1;
-    pp_pipeline_layout_info.pSetLayouts = &*pp_descriptor_set_layout;
+    pp_pipeline_layout_info.setSetLayouts(*pp_descriptor_set_layout);
     vk::raii::PipelineLayout pp_pipeline_layout{device.get(), pp_pipeline_layout_info};
 
     vk::ShaderModuleCreateInfo pp_module_info{};
-    pp_module_info.codeSize = postprocess_spirv.size() * sizeof(uint32_t);
-    pp_module_info.pCode = postprocess_spirv.data();
+    pp_module_info.setCode(postprocess_spirv);
     vk::raii::ShaderModule pp_module{device.get(), pp_module_info};
 
     vk::PipelineShaderStageCreateInfo pp_stage{};
@@ -592,15 +586,13 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     vk::DescriptorPoolCreateInfo pp_pool_info{};
     pp_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     pp_pool_info.maxSets = MAX_FRAMES_IN_FLIGHT;
-    pp_pool_info.poolSizeCount = static_cast<uint32_t>(pp_pool_sizes.size());
-    pp_pool_info.pPoolSizes = pp_pool_sizes.data();
+    pp_pool_info.setPoolSizes(pp_pool_sizes);
     vk::raii::DescriptorPool pp_descriptor_pool{device.get(), pp_pool_info};
 
     std::vector<vk::DescriptorSetLayout> pp_layouts(MAX_FRAMES_IN_FLIGHT, *pp_descriptor_set_layout);
     vk::DescriptorSetAllocateInfo pp_alloc_info{};
     pp_alloc_info.descriptorPool = *pp_descriptor_pool;
-    pp_alloc_info.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-    pp_alloc_info.pSetLayouts = pp_layouts.data();
+    pp_alloc_info.setSetLayouts(pp_layouts);
     std::vector<vk::raii::DescriptorSet> pp_descriptor_sets{device.get().allocateDescriptorSets(pp_alloc_info)};
 
     // Updates post-process descriptor set bindings for the given frame.
@@ -618,15 +610,13 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         writes[0].dstBinding = 0;
         writes[0].dstArrayElement = 0;
         writes[0].descriptorType = vk::DescriptorType::eStorageImage;
-        writes[0].descriptorCount = 1;
-        writes[0].pImageInfo = &hdr_info;
+        writes[0].setImageInfo(hdr_info);
 
         writes[1].dstSet = *pp_descriptor_sets[frame_index];
         writes[1].dstBinding = 1;
         writes[1].dstArrayElement = 0;
         writes[1].descriptorType = vk::DescriptorType::eStorageImage;
-        writes[1].descriptorCount = 1;
-        writes[1].pImageInfo = &swap_info;
+        writes[1].setImageInfo(swap_info);
 
         device.get().updateDescriptorSets(writes, {});
     };
@@ -827,7 +817,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 }
                 break;
             case RenderEvent::Type::MouseButton:
-                if (ev.width == MOUSE_RIGHT && ev.pressed) {
+                if ((ev.width == MOUSE_RIGHT) && ev.pressed) {
                     mouse_captured = !mouse_captured;
                     should_render = true;
                 }
@@ -879,7 +869,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         // Handle swapchain recreation — skip if minimised (0x0)
         if (needs_resize) {
-            if (resize_width > 0 && resize_height > 0) {
+            if ((resize_width > 0) && (resize_height > 0)) {
                 swapchain.recreate(resize_width, resize_height);
                 rebuildPresentSemaphores();
                 rebuildFrameBuffers();
@@ -889,7 +879,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         // Skip rendering while minimised or if no render was requested
-        if (!should_render || swapchain.extent().width == 0 || swapchain.extent().height == 0) {
+        if ((!should_render) || (swapchain.extent().width == 0) || (swapchain.extent().height == 0)) {
             // If keys are held, request another frame via self-notification
             if (!keys_held.empty()) {
                 render_cv.notify_one();
@@ -916,7 +906,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             // The semaphore may be in an undefined state after OutOfDateKHR.
             // waitIdle drains all GPU work and resets semaphore signal state.
             device.get().waitIdle();
-            if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
+            if ((swapchain.extent().width > 0) && (swapchain.extent().height > 0)) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildFrameBuffers();
@@ -982,22 +972,17 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         cmd_submit.commandBuffer = *cmd;
 
         vk::SubmitInfo2 submit_info{};
-        submit_info.waitSemaphoreInfoCount = 1;
-        submit_info.pWaitSemaphoreInfos = &wait_sem;
-        submit_info.commandBufferInfoCount = 1;
-        submit_info.pCommandBufferInfos = &cmd_submit;
-        submit_info.signalSemaphoreInfoCount = 1;
-        submit_info.pSignalSemaphoreInfos = &signal_sem;
+        submit_info.setWaitSemaphoreInfos(wait_sem);
+        submit_info.setCommandBufferInfos(cmd_submit);
+        submit_info.setSignalSemaphoreInfos(signal_sem);
 
         device.graphicsQueue().submit2({submit_info}, *in_flight_fences[current_frame]);
 
         // Present
         vk::PresentInfoKHR present_info{};
         std::array<vk::SwapchainKHR, 1> swapchains{*swapchain.get()};
-        present_info.waitSemaphoreCount = 1;
-        present_info.pWaitSemaphores = &*render_finished_semaphores[image_index];
-        present_info.swapchainCount = 1;
-        present_info.pSwapchains = swapchains.data();
+        present_info.setWaitSemaphores(*render_finished_semaphores[image_index]);
+        present_info.setSwapchains(swapchains);
         present_info.pImageIndices = &image_index;
 
         vk::Result present_result{vk::Result::eSuccess};
@@ -1006,7 +991,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         } catch (const vk::OutOfDateKHRError&) {
             // waitIdle drains in-flight GPU work before destroying swapchain resources.
             device.get().waitIdle();
-            if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
+            if ((swapchain.extent().width > 0) && (swapchain.extent().height > 0)) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildFrameBuffers();
@@ -1014,10 +999,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             continue;
         }
 
-        if (present_result == vk::Result::eSuboptimalKHR || swapchain_suboptimal) {
+        if ((present_result == vk::Result::eSuboptimalKHR) || swapchain_suboptimal) {
             // waitIdle drains in-flight GPU work before destroying swapchain resources.
             device.get().waitIdle();
-            if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
+            if ((swapchain.extent().width > 0) && (swapchain.extent().height > 0)) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
                 rebuildFrameBuffers();
@@ -1204,10 +1189,9 @@ int main()
 
             copy_cmd.end();
 
-            vk::SubmitInfo copy_submit{};
-            copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*copy_cmd};
-            copy_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1244,10 +1228,9 @@ int main()
 
             copy_cmd.end();
 
-            vk::SubmitInfo copy_submit{};
-            copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*copy_cmd};
-            copy_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1338,16 +1321,14 @@ int main()
             as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
 
             vk::DependencyInfo dep_info{};
-            dep_info.memoryBarrierCount = 1;
-            dep_info.pMemoryBarriers = &as_barrier;
+            dep_info.setMemoryBarriers(as_barrier);
             build_cmd.pipelineBarrier2(dep_info);
 
             build_cmd.end();
 
-            vk::SubmitInfo build_submit{};
-            build_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*build_cmd};
-            build_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo build_submit{};
+            build_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({build_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1384,10 +1365,9 @@ int main()
 
             copy_cmd.end();
 
-            vk::SubmitInfo copy_submit{};
-            copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*copy_cmd};
-            copy_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1469,16 +1449,14 @@ int main()
             as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
 
             vk::DependencyInfo dep_info{};
-            dep_info.memoryBarrierCount = 1;
-            dep_info.pMemoryBarriers = &as_barrier;
+            dep_info.setMemoryBarriers(as_barrier);
             build_cmd.pipelineBarrier2(dep_info);
 
             build_cmd.end();
 
-            vk::SubmitInfo build_submit{};
-            build_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*build_cmd};
-            build_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo build_submit{};
+            build_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({build_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1565,10 +1543,9 @@ int main()
 
             copy_cmd.end();
 
-            vk::SubmitInfo copy_submit{};
-            copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*copy_cmd};
-            copy_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1644,16 +1621,14 @@ int main()
             tlas_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
 
             vk::DependencyInfo tlas_dep_info{};
-            tlas_dep_info.memoryBarrierCount = 1;
-            tlas_dep_info.pMemoryBarriers = &tlas_barrier;
+            tlas_dep_info.setMemoryBarriers(tlas_barrier);
             build_cmd.pipelineBarrier2(tlas_dep_info);
 
             build_cmd.end();
 
-            vk::SubmitInfo build_submit{};
-            build_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*build_cmd};
-            build_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo build_submit{};
+            build_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({build_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1712,10 +1687,9 @@ int main()
 
             copy_cmd.end();
 
-            vk::SubmitInfo copy_submit{};
-            copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*copy_cmd};
-            copy_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
         }
@@ -1805,10 +1779,9 @@ int main()
 
             copy_cmd.end();
 
-            vk::SubmitInfo copy_submit{};
-            copy_submit.commandBufferCount = 1;
             vk::CommandBuffer raw_cmd{*copy_cmd};
-            copy_submit.pCommandBuffers = &raw_cmd;
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
             device.graphicsQueue().submit({copy_submit});
             device.graphicsQueue().waitIdle();
         }

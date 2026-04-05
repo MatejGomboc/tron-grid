@@ -83,7 +83,7 @@ void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
     uint height;
     hdr_input.GetDimensions(width, height);
 
-    if (thread_id.x >= width || thread_id.y >= height)
+    if ((thread_id.x >= width) || (thread_id.y >= height))
     {
         return;
     }

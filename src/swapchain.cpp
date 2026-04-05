@@ -121,7 +121,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
 
     // Image count: min + 1 for triple buffering headroom
     uint32_t image_count{capabilities.minImageCount + 1};
-    if (capabilities.maxImageCount > 0 && image_count > capabilities.maxImageCount) {
+    if ((capabilities.maxImageCount > 0) && (image_count > capabilities.maxImageCount)) {
         image_count = capabilities.maxImageCount;
     }
 
@@ -156,8 +156,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
 
     if (graphics_family != present_family) {
         create_info.imageSharingMode = vk::SharingMode::eConcurrent;
-        create_info.queueFamilyIndexCount = 2;
-        create_info.pQueueFamilyIndices = family_indices.data();
+        create_info.setQueueFamilyIndices(family_indices);
     } else {
         create_info.imageSharingMode = vk::SharingMode::eExclusive;
     }

@@ -38,7 +38,7 @@ std::string executableDirectory()
 #ifdef _WIN32
     wchar_t wide_path[MAX_PATH]{};
     DWORD path_len{GetModuleFileNameW(nullptr, wide_path, MAX_PATH)};
-    if (path_len == 0 || path_len >= MAX_PATH) {
+    if ((path_len == 0) || (path_len >= MAX_PATH)) {
         return {};
     }
 
@@ -93,13 +93,11 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 {
     // Shader modules — task shader and mesh+fragment combined module.
     vk::ShaderModuleCreateInfo task_module_info{};
-    task_module_info.codeSize = task_spirv.size() * sizeof(uint32_t);
-    task_module_info.pCode = task_spirv.data();
+    task_module_info.setCode(task_spirv);
     vk::raii::ShaderModule task_module{device.get(), task_module_info};
 
     vk::ShaderModuleCreateInfo mesh_frag_module_info{};
-    mesh_frag_module_info.codeSize = mesh_frag_spirv.size() * sizeof(uint32_t);
-    mesh_frag_module_info.pCode = mesh_frag_spirv.data();
+    mesh_frag_module_info.setCode(mesh_frag_spirv);
     vk::raii::ShaderModule mesh_frag_module{device.get(), mesh_frag_module_info};
 
     // Shader stages: task → mesh → fragment.
@@ -119,8 +117,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     std::array<vk::DynamicState, 2> dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
     vk::PipelineDynamicStateCreateInfo dynamic_state{};
-    dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
-    dynamic_state.pDynamicStates = dynamic_states.data();
+    dynamic_state.setDynamicStates(dynamic_states);
 
     vk::PipelineViewportStateCreateInfo viewport_state{};
     viewport_state.viewportCount = 1;
@@ -200,8 +197,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     bindings[7].stageFlags = vk::ShaderStageFlagBits::eFragment;
 
     vk::DescriptorSetLayoutCreateInfo layout_info{};
-    layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
-    layout_info.pBindings = bindings.data();
+    layout_info.setBindings(bindings);
     m_descriptor_set_layout = vk::raii::DescriptorSetLayout{device.get(), layout_info};
 
     // Pipeline layout — 1 descriptor set + push constants for task shader.
@@ -211,23 +207,19 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     push_range.size = sizeof(TaskPushConstants);
 
     vk::PipelineLayoutCreateInfo pipeline_layout_info{};
-    pipeline_layout_info.setLayoutCount = 1;
-    pipeline_layout_info.pSetLayouts = &*m_descriptor_set_layout;
-    pipeline_layout_info.pushConstantRangeCount = 1;
-    pipeline_layout_info.pPushConstantRanges = &push_range;
+    pipeline_layout_info.setSetLayouts(*m_descriptor_set_layout);
+    pipeline_layout_info.setPushConstantRanges(push_range);
     m_layout = vk::raii::PipelineLayout{device.get(), pipeline_layout_info};
 
     // Dynamic rendering — same as before.
     vk::PipelineRenderingCreateInfo rendering_info{};
-    rendering_info.colorAttachmentCount = 1;
-    rendering_info.pColorAttachmentFormats = &colour_format;
+    rendering_info.setColorAttachmentFormats(colour_format);
     rendering_info.depthAttachmentFormat = depth_format;
 
     // Mesh shader pipeline — no vertex input state, no input assembly state.
     vk::GraphicsPipelineCreateInfo pipeline_info{};
     pipeline_info.pNext = &rendering_info;
-    pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
-    pipeline_info.pStages = shader_stages.data();
+    pipeline_info.setStages(shader_stages);
     pipeline_info.pVertexInputState = nullptr; // Mesh shaders don't use vertex input.
     pipeline_info.pInputAssemblyState = nullptr; // Mesh shaders output primitives directly.
     pipeline_info.pViewportState = &viewport_state;
@@ -252,15 +244,13 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     vk::DescriptorPoolCreateInfo pool_info{};
     pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     pool_info.maxSets = frames_in_flight;
-    pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
-    pool_info.pPoolSizes = pool_sizes.data();
+    pool_info.setPoolSizes(pool_sizes);
     m_descriptor_pool = vk::raii::DescriptorPool{device.get(), pool_info};
 
     std::vector<vk::DescriptorSetLayout> layouts(frames_in_flight, *m_descriptor_set_layout);
     vk::DescriptorSetAllocateInfo alloc_info{};
     alloc_info.descriptorPool = *m_descriptor_pool;
-    alloc_info.descriptorSetCount = frames_in_flight;
-    alloc_info.pSetLayouts = layouts.data();
+    alloc_info.setSetLayouts(layouts);
     m_descriptor_sets = device.get().allocateDescriptorSets(alloc_info);
 
     m_ubo_mapped_ptrs.resize(frames_in_flight);
@@ -283,8 +273,7 @@ void Pipeline::bindUBO(uint32_t frame_index, VkBuffer buffer) const
     write.dstBinding = 0;
     write.dstArrayElement = 0;
     write.descriptorType = vk::DescriptorType::eUniformBuffer;
-    write.descriptorCount = 1;
-    write.pBufferInfo = &buffer_info;
+    write.setBufferInfo(buffer_info);
 
     m_device->get().updateDescriptorSets({write}, {});
 }
@@ -319,8 +308,7 @@ void Pipeline::bindSSBOs(uint32_t frame_index, VkBuffer object_ssbo, VkDeviceSiz
         writes[i].dstBinding = i + 1; // Bindings 1-6 (0 is UBO).
         writes[i].dstArrayElement = 0;
         writes[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-        writes[i].descriptorCount = 1;
-        writes[i].pBufferInfo = &buffer_infos[i];
+        writes[i].setBufferInfo(buffer_infos[i]);
     }
 
     m_device->get().updateDescriptorSets(writes, {});

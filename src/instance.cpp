@@ -119,10 +119,8 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
 
     vk::InstanceCreateInfo create_info{};
     create_info.pApplicationInfo = &app_info;
-    create_info.enabledLayerCount = static_cast<uint32_t>(layers.size());
-    create_info.ppEnabledLayerNames = layers.empty() ? nullptr : layers.data();
-    create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-    create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
+    create_info.setPEnabledLayerNames(layers);
+    create_info.setPEnabledExtensionNames(extensions);
 
     // Chain debug messenger and validation features to instance creation
     vk::DebugUtilsMessengerCreateInfoEXT debug_create_info{};
@@ -141,8 +139,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
             vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
             vk::ValidationFeatureEnableEXT::eBestPractices,
         };
-        validation_features.enabledValidationFeatureCount = static_cast<uint32_t>(ENABLED_VALIDATION_FEATURES.size());
-        validation_features.pEnabledValidationFeatures = ENABLED_VALIDATION_FEATURES.data();
+        validation_features.setEnabledValidationFeatures(ENABLED_VALIDATION_FEATURES);
         validation_features.pNext = &debug_create_info;
 
         create_info.pNext = &validation_features;
