@@ -141,6 +141,41 @@ add_custom_command(
     VERBATIM
 )
 
+# Bloom downsample shaders (two entry points from one source) — compile, then validate SPIR-V
+set(BLOOM_DOWN_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/bloom_downsample.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/bloom_extract.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${BLOOM_DOWN_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry bloomExtractMain
+        -o ${SHADER_OUTPUT_DIR}/bloom_extract.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/bloom_extract.spv
+    DEPENDS ${BLOOM_DOWN_SOURCE}
+    COMMENT "Compiling bloom_downsample.slang (extract) -> bloom_extract.spv (with validation)"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${BLOOM_DOWN_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry bloomDownsampleMain
+        -o ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
+    DEPENDS ${BLOOM_DOWN_SOURCE}
+    COMMENT "Compiling bloom_downsample.slang (downsample) -> bloom_downsample.spv (with validation)"
+    VERBATIM
+)
+
 # Compile shaders — ALL target ensures they build even when the executable is up to date.
 add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/triangle.spv
@@ -148,6 +183,8 @@ add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/task.spv
     ${SHADER_OUTPUT_DIR}/mesh.spv
     ${SHADER_OUTPUT_DIR}/postprocess.spv
+    ${SHADER_OUTPUT_DIR}/bloom_extract.spv
+    ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
 )
 add_dependencies(${PROJECT_NAME} shaders)
 
@@ -167,6 +204,10 @@ add_custom_target(copy_shaders ALL
         ${SHADER_OUTPUT_DIR}/mesh.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/mesh.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/postprocess.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/postprocess.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/bloom_extract.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_extract.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/bloom_downsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_downsample.spv
     COMMENT "Copying shaders to output directory"
     VERBATIM
 )

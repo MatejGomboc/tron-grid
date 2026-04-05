@@ -77,14 +77,14 @@ AllocatedBuffer Allocator::createBuffer(VkDeviceSize size, VkBufferUsageFlags bu
     return AllocatedBuffer(m_allocator, buffer, allocation);
 }
 
-AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage) const
+AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, uint32_t mip_levels) const
 {
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.imageType = VK_IMAGE_TYPE_2D;
     image_info.format = format;
     image_info.extent = {width, height, 1};
-    image_info.mipLevels = 1;
+    image_info.mipLevels = mip_levels;
     image_info.arrayLayers = 1;
     image_info.samples = VK_SAMPLE_COUNT_1_BIT;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
