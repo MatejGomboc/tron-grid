@@ -30,7 +30,7 @@ struct ObjectData {
     float4x4 model;
     uint meshlet_offset;
     uint meshlet_count;
-    uint pad0;
+    uint material_type; // 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
     uint pad1;
 };
 
@@ -60,6 +60,7 @@ struct MeshOutput {
     float3 barycentric; // Barycentric coordinates for wireframe edge detection.
     float3 world_position; // World-space position for shadow ray origin.
     float3 world_normal; // World-space face normal for shadow ray offset.
+    nointerpolation uint material_type; // 0 = terrain, 1 = emissive orb.
 };
 
 [[vk::binding(0, 0)]]
@@ -98,6 +99,10 @@ static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
 
 // Major grid line spacing — every Nth grid cell gets orange neon tubes.
 static const float MAJOR_GRID_SPACING = 8.0;
+
+// Light orb — solid emissive orange ball floating above the grid.
+static const float3 ORB_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Same orange as neon accent.
+static const float ORB_EMISSIVE_STRENGTH = 20.0; // Bright emissive — visible from the ground.
 
 // Edge detection.
 static const float WIRE_WIDTH = 0.005; // Edge thickness in barycentric space.
@@ -154,6 +159,11 @@ float3 neonEmissiveColour(float3 world_pos)
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
 {
+    // Emissive orb — solid glowing orange ball, no wireframe or PBR.
+    if (input.material_type == 1) {
+        return float4(ORB_EMISSIVE_COLOUR * ORB_EMISSIVE_STRENGTH, 1.0);
+    }
+
     // Edge detection — wire=0 at edges (neon tube), wire=1 on faces (obsidian).
     float edge = min(input.barycentric.x, min(input.barycentric.y, input.barycentric.z));
     float wire = smoothstep(0.0, WIRE_WIDTH, edge);
@@ -298,9 +308,10 @@ void meshMain(
     uint out_vert_count = out_tri_count * 3;
     SetMeshOutputCounts(out_vert_count, out_tri_count);
 
-    // Load the object transform.
+    // Load the object transform and material type.
     float4x4 model = objects[task_payload.object_index].model;
     float4x4 mvp = mul(camera.projection, mul(camera.view, model));
+    uint mat_type = objects[task_payload.object_index].material_type;
 
     // Barycentric coordinate lookup — vertex 0, 1, 2 of each triangle.
     static const float3 BARY[3] = {
@@ -359,6 +370,7 @@ void meshMain(
                 output.barycentric = BARY[v] + diagonal_mask;
                 output.world_position = world_pos.xyz;
                 output.world_normal = normals[v];
+                output.material_type = mat_type;
                 out_vertices[vert_base + v] = output;
             }
 

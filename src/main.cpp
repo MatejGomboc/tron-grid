@@ -711,8 +711,70 @@ int main()
         logger.logInfo("Terrain: " + std::to_string(terrain.vertices.size()) + " vertices, " + std::to_string(terrain.indices.size() / 3) + " triangles, "
             + std::to_string(terrain_meshlet_count) + " meshlets.");
 
-        // Vertex buffer.
-        VkDeviceSize vertex_buffer_size{static_cast<VkDeviceSize>(terrain.vertices.size() * sizeof(Vertex))};
+        // ── Light orb sphere ──
+
+        constexpr float LIGHT_ORB_RADIUS{3.0f};
+        MathLib::Vec3 light_pos{0.0f, 50.0f, 0.0f};
+
+        std::vector<MathLib::Vec3> sphere_raw_positions;
+        std::vector<uint32_t> sphere_raw_indices;
+        generateUVSphere(12, 24, LIGHT_ORB_RADIUS, sphere_raw_positions, sphere_raw_indices);
+
+        // Convert indexed sphere to per-face Vertex format (smooth normals).
+        std::vector<Vertex> sphere_vertices;
+        std::vector<uint32_t> sphere_indices;
+        std::vector<MathLib::Vec3> sphere_positions;
+
+        uint32_t sphere_vi{0};
+        for (size_t t{0}; t < sphere_raw_indices.size(); t += 3) {
+            MathLib::Vec3 p0{sphere_raw_positions[sphere_raw_indices[t + 0]]};
+            MathLib::Vec3 p1{sphere_raw_positions[sphere_raw_indices[t + 1]]};
+            MathLib::Vec3 p2{sphere_raw_positions[sphere_raw_indices[t + 2]]};
+
+            MathLib::Vec3 n0{p0.normalised()};
+            MathLib::Vec3 n1{p1.normalised()};
+            MathLib::Vec3 n2{p2.normalised()};
+
+            sphere_positions.push_back(p0);
+            sphere_positions.push_back(p1);
+            sphere_positions.push_back(p2);
+            sphere_vertices.push_back({{p0.x, p0.y, p0.z}, {n0.x, n0.y, n0.z}, {0.0f, 0.0f}});
+            sphere_vertices.push_back({{p1.x, p1.y, p1.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}});
+            sphere_vertices.push_back({{p2.x, p2.y, p2.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}});
+            sphere_indices.push_back(sphere_vi++);
+            sphere_indices.push_back(sphere_vi++);
+            sphere_indices.push_back(sphere_vi++);
+        }
+
+        MeshData sphere_meshlets{buildMeshlets(sphere_positions, sphere_indices)};
+        uint32_t sphere_meshlet_offset{terrain_meshlet_count};
+        uint32_t sphere_meshlet_count{static_cast<uint32_t>(sphere_meshlets.meshlets.size())};
+
+        // Offset sphere meshlet vertex indices to reference the combined vertex buffer.
+        uint32_t terrain_vertex_count{static_cast<uint32_t>(terrain.vertices.size())};
+        for (uint32_t& idx : sphere_meshlets.vertex_indices) {
+            idx += terrain_vertex_count;
+        }
+
+        // Offset sphere meshlet descriptors for combined meshlet arrays.
+        uint32_t terrain_vert_idx_count{static_cast<uint32_t>(terrain_meshlets.vertex_indices.size())};
+        uint32_t terrain_tri_idx_count{static_cast<uint32_t>(terrain_meshlets.triangle_indices.size())};
+        for (Meshlet& m : sphere_meshlets.meshlets) {
+            m.vertex_offset += terrain_vert_idx_count;
+            m.triangle_offset += terrain_tri_idx_count;
+        }
+
+        // Combined vertex data — terrain followed by sphere.
+        std::vector<Vertex> all_vertices;
+        all_vertices.reserve(terrain.vertices.size() + sphere_vertices.size());
+        all_vertices.insert(all_vertices.end(), terrain.vertices.begin(), terrain.vertices.end());
+        all_vertices.insert(all_vertices.end(), sphere_vertices.begin(), sphere_vertices.end());
+
+        logger.logInfo("Light orb: " + std::to_string(sphere_vertices.size()) + " vertices, " + std::to_string(sphere_indices.size() / 3) + " triangles, "
+            + std::to_string(sphere_meshlet_count) + " meshlets.");
+
+        // Vertex buffer — combined terrain + sphere.
+        VkDeviceSize vertex_buffer_size{static_cast<VkDeviceSize>(all_vertices.size() * sizeof(Vertex))};
         AllocatedBuffer vertex_buffer{allocator.createBuffer(vertex_buffer_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst
                 | vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
@@ -721,7 +783,7 @@ int main()
         {
             AllocatedBuffer vertex_staging{allocator.createBuffer(vertex_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
-            std::memcpy(vertex_staging.allocationInfo().pMappedData, terrain.vertices.data(), vertex_buffer_size);
+            std::memcpy(vertex_staging.allocationInfo().pMappedData, all_vertices.data(), vertex_buffer_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
@@ -748,7 +810,7 @@ int main()
             device.graphicsQueue().waitIdle();
         }
 
-        logger.logInfo("Vertex buffer uploaded (" + std::to_string(terrain.vertices.size()) + " vertices).");
+        logger.logInfo("Vertex buffer uploaded (" + std::to_string(all_vertices.size()) + " vertices).");
 
         // ── Index buffer for BLAS (raw triangle indices, not meshlet indices) ──
 
@@ -888,19 +950,160 @@ int main()
 
         logger.logInfo("BLAS built: " + std::to_string(triangle_count) + " triangles, " + std::to_string(build_sizes.accelerationStructureSize) + " bytes.");
 
-        // Scene — single terrain entity at origin.
+        // ── Sphere index buffer + BLAS ──
+
+        VkDeviceSize sphere_index_buffer_size{static_cast<VkDeviceSize>(sphere_indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer sphere_index_buffer{allocator.createBuffer(sphere_index_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress
+                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer sphere_idx_staging{allocator.createBuffer(sphere_index_buffer_size,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(sphere_idx_staging.allocationInfo().pMappedData, sphere_indices.data(), sphere_index_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = sphere_index_buffer_size;
+            copy_cmd.copyBuffer(sphere_idx_staging.buffer(), sphere_index_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::SubmitInfo copy_submit{};
+            copy_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            copy_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        // Sphere BLAS — references the sphere portion of the combined vertex buffer.
+        vk::DeviceAddress sphere_vertex_address{vertex_device_address + static_cast<vk::DeviceSize>(terrain_vertex_count * sizeof(Vertex))};
+
+        vk::BufferDeviceAddressInfo sphere_index_addr_info{};
+        sphere_index_addr_info.buffer = sphere_index_buffer.buffer();
+        vk::DeviceAddress sphere_index_device_address{device.get().getBufferAddress(sphere_index_addr_info)};
+
+        vk::AccelerationStructureGeometryTrianglesDataKHR sphere_tri_data{};
+        sphere_tri_data.vertexFormat = vk::Format::eR32G32B32Sfloat;
+        sphere_tri_data.vertexData.deviceAddress = sphere_vertex_address;
+        sphere_tri_data.vertexStride = sizeof(Vertex);
+        sphere_tri_data.maxVertex = static_cast<uint32_t>(sphere_vertices.size() - 1);
+        sphere_tri_data.indexType = vk::IndexType::eUint32;
+        sphere_tri_data.indexData.deviceAddress = sphere_index_device_address;
+
+        vk::AccelerationStructureGeometryKHR sphere_geometry{};
+        sphere_geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+        sphere_geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+        sphere_geometry.geometry.triangles = sphere_tri_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR sphere_build_info{};
+        sphere_build_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        sphere_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        sphere_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        sphere_build_info.geometryCount = 1;
+        sphere_build_info.pGeometries = &sphere_geometry;
+
+        uint32_t sphere_triangle_count{static_cast<uint32_t>(sphere_indices.size() / 3)};
+        vk::AccelerationStructureBuildSizesInfoKHR sphere_build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, sphere_build_info, {sphere_triangle_count})};
+
+        AllocatedBuffer sphere_blas_buffer{allocator.createBuffer(sphere_build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR sphere_as_create_info{};
+        sphere_as_create_info.buffer = sphere_blas_buffer.buffer();
+        sphere_as_create_info.size = sphere_build_sizes.accelerationStructureSize;
+        sphere_as_create_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        vk::raii::AccelerationStructureKHR sphere_blas{device.get(), sphere_as_create_info};
+
+        sphere_build_info.dstAccelerationStructure = *sphere_blas;
+
+        AllocatedBuffer sphere_scratch{allocator.createBuffer(sphere_build_sizes.buildScratchSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::BufferDeviceAddressInfo sphere_scratch_addr_info{};
+        sphere_scratch_addr_info.buffer = sphere_scratch.buffer();
+        sphere_build_info.scratchData.deviceAddress = device.get().getBufferAddress(sphere_scratch_addr_info);
+
+        {
+            vk::CommandBufferAllocateInfo cmd_alloc{};
+            cmd_alloc.commandPool = *command_pool;
+            cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
+            cmd_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers cmds(device.get(), cmd_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = cmds[0];
+            vk::CommandBufferBeginInfo begin_info{};
+            begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(begin_info);
+
+            vk::AccelerationStructureBuildRangeInfoKHR sphere_range{};
+            sphere_range.primitiveCount = sphere_triangle_count;
+            const vk::AccelerationStructureBuildRangeInfoKHR* sphere_range_ptr{&sphere_range};
+            build_cmd.buildAccelerationStructuresKHR({sphere_build_info}, {sphere_range_ptr});
+
+            vk::MemoryBarrier2 as_barrier{};
+            as_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            as_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            as_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo dep_info{};
+            dep_info.memoryBarrierCount = 1;
+            dep_info.pMemoryBarriers = &as_barrier;
+            build_cmd.pipelineBarrier2(dep_info);
+
+            build_cmd.end();
+
+            vk::SubmitInfo build_submit{};
+            build_submit.commandBufferCount = 1;
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            build_submit.pCommandBuffers = &raw_cmd;
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Sphere BLAS built: " + std::to_string(sphere_triangle_count) + " triangles.");
+
+        // Scene — terrain at origin + light orb sphere at light position.
         Scene scene;
         Transform terrain_transform{};
         (void)scene.addEntity(terrain_transform, {0}, {{0.0f, 0.0f, 0.0f}, terrain.bounding_radius});
+
+        Transform orb_transform{};
+        orb_transform.position = light_pos;
+        (void)scene.addEntity(orb_transform, {1}, {light_pos, LIGHT_ORB_RADIUS});
 
         uint32_t total_objects{scene.entityCount()};
 
         // ── TLAS build ──
 
-        // Get BLAS device address.
-        vk::AccelerationStructureDeviceAddressInfoKHR blas_addr_info{};
-        blas_addr_info.accelerationStructure = *blas;
-        vk::DeviceAddress blas_device_address{device.get().getAccelerationStructureAddressKHR(blas_addr_info)};
+        // Get BLAS device addresses.
+        vk::AccelerationStructureDeviceAddressInfoKHR terrain_blas_addr_info{};
+        terrain_blas_addr_info.accelerationStructure = *blas;
+        vk::DeviceAddress terrain_blas_address{device.get().getAccelerationStructureAddressKHR(terrain_blas_addr_info)};
+
+        vk::AccelerationStructureDeviceAddressInfoKHR sphere_blas_addr_info{};
+        sphere_blas_addr_info.accelerationStructure = *sphere_blas;
+        vk::DeviceAddress sphere_blas_address{device.get().getAccelerationStructureAddressKHR(sphere_blas_addr_info)};
+
+        // BLAS reference per entity — terrain uses terrain BLAS, orb uses sphere BLAS.
+        std::vector<vk::DeviceAddress> blas_addresses{terrain_blas_address, sphere_blas_address};
 
         // Build instance data — one per scene entity.
         std::vector<VkAccelerationStructureInstanceKHR> as_instances;
@@ -922,7 +1125,7 @@ int main()
             as_inst.mask = 0xFF;
             as_inst.instanceShaderBindingTableRecordOffset = 0;
             as_inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-            as_inst.accelerationStructureReference = blas_device_address;
+            as_inst.accelerationStructureReference = blas_addresses[i];
             as_instances.push_back(as_inst);
         }
 
@@ -1048,13 +1251,26 @@ int main()
 
         logger.logInfo("TLAS built: " + std::to_string(total_objects) + " instances, " + std::to_string(tlas_build_sizes.accelerationStructureSize) + " bytes.");
 
+        // Per-object data — meshlet offsets and material type.
+        // pad0 = material type: 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
+        struct MeshInfo {
+            uint32_t meshlet_offset;
+            uint32_t meshlet_count;
+            uint32_t material_type;
+        };
+        std::vector<MeshInfo> mesh_infos{
+            {terrain_meshlet_offset, terrain_meshlet_count, 0},
+            {sphere_meshlet_offset, sphere_meshlet_count, 1},
+        };
+
         std::vector<ObjectData> object_data;
         object_data.reserve(total_objects);
         for (uint32_t i{0}; i < total_objects; ++i) {
             ObjectData obj{};
             obj.model = scene.transforms()[i].modelMatrix();
-            obj.meshlet_offset = terrain_meshlet_offset;
-            obj.meshlet_count = terrain_meshlet_count;
+            obj.meshlet_offset = mesh_infos[i].meshlet_offset;
+            obj.meshlet_count = mesh_infos[i].meshlet_count;
+            obj.pad0 = mesh_infos[i].material_type;
             object_data.push_back(obj);
         }
 
@@ -1107,16 +1323,30 @@ int main()
         AllocatedBuffer bounds_ssbo{allocator.createBuffer(bounds_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        // Meshlet SSBOs — descriptors, vertex indices, triangle indices
-        VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(terrain_meshlets.meshlets.size() * sizeof(Meshlet))};
+        // ── Combined meshlet SSBOs ──
+
+        // Combine meshlet data from terrain + sphere.
+        std::vector<Meshlet> all_meshlets;
+        all_meshlets.insert(all_meshlets.end(), terrain_meshlets.meshlets.begin(), terrain_meshlets.meshlets.end());
+        all_meshlets.insert(all_meshlets.end(), sphere_meshlets.meshlets.begin(), sphere_meshlets.meshlets.end());
+
+        std::vector<uint32_t> all_vert_indices;
+        all_vert_indices.insert(all_vert_indices.end(), terrain_meshlets.vertex_indices.begin(), terrain_meshlets.vertex_indices.end());
+        all_vert_indices.insert(all_vert_indices.end(), sphere_meshlets.vertex_indices.begin(), sphere_meshlets.vertex_indices.end());
+
+        std::vector<uint8_t> all_tri_indices;
+        all_tri_indices.insert(all_tri_indices.end(), terrain_meshlets.triangle_indices.begin(), terrain_meshlets.triangle_indices.end());
+        all_tri_indices.insert(all_tri_indices.end(), sphere_meshlets.triangle_indices.begin(), sphere_meshlets.triangle_indices.end());
+
+        VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(all_meshlets.size() * sizeof(Meshlet))};
         AllocatedBuffer meshlet_desc_ssbo{allocator.createBuffer(meshlet_desc_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        VkDeviceSize meshlet_vert_idx_size{static_cast<VkDeviceSize>(terrain_meshlets.vertex_indices.size() * sizeof(uint32_t))};
+        VkDeviceSize meshlet_vert_idx_size{static_cast<VkDeviceSize>(all_vert_indices.size() * sizeof(uint32_t))};
         AllocatedBuffer meshlet_vert_idx_ssbo{allocator.createBuffer(meshlet_vert_idx_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        VkDeviceSize meshlet_tri_idx_size{static_cast<VkDeviceSize>(terrain_meshlets.triangle_indices.size() * sizeof(uint8_t))};
+        VkDeviceSize meshlet_tri_idx_size{static_cast<VkDeviceSize>(all_tri_indices.size() * sizeof(uint8_t))};
         AllocatedBuffer meshlet_tri_idx_ssbo{allocator.createBuffer(meshlet_tri_idx_size,
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
@@ -1132,9 +1362,9 @@ int main()
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
 
             std::memcpy(bounds_staging.allocationInfo().pMappedData, object_bounds.data(), bounds_size);
-            std::memcpy(desc_staging.allocationInfo().pMappedData, terrain_meshlets.meshlets.data(), meshlet_desc_size);
-            std::memcpy(vert_idx_staging.allocationInfo().pMappedData, terrain_meshlets.vertex_indices.data(), meshlet_vert_idx_size);
-            std::memcpy(tri_idx_staging.allocationInfo().pMappedData, terrain_meshlets.triangle_indices.data(), meshlet_tri_idx_size);
+            std::memcpy(desc_staging.allocationInfo().pMappedData, all_meshlets.data(), meshlet_desc_size);
+            std::memcpy(vert_idx_staging.allocationInfo().pMappedData, all_vert_indices.data(), meshlet_vert_idx_size);
+            std::memcpy(tri_idx_staging.allocationInfo().pMappedData, all_tri_indices.data(), meshlet_tri_idx_size);
 
             vk::CommandBufferAllocateInfo copy_alloc{};
             copy_alloc.commandPool = *command_pool;
