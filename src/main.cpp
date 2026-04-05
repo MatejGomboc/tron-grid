@@ -104,11 +104,14 @@ constexpr uint32_t MOUSE_RIGHT{1};
 #endif
 
 /*!
-    Records a command buffer with mesh shader rendering. The task shader performs
-    per-object frustum culling and dispatches mesh shader workgroups for visible objects.
+    Records a command buffer with mesh shader rendering and compute post-processing.
+    The task shader performs per-object frustum culling and dispatches mesh shader
+    workgroups for visible objects. A compute post-process pass reads the HDR image
+    and writes the tonemapped result to the swapchain image.
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image, vk::ImageView hdr_view, vk::ImageView depth_view, vk::Image depth_image,
-    vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects)
+    vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects,
+    vk::Pipeline pp_pipeline, vk::PipelineLayout pp_layout, vk::DescriptorSet pp_descriptor_set)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -131,10 +134,10 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     depth_range.layerCount = 1;
 
     // Transition HDR image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL.
-    // srcStage = eBlit to wait for the previous frame's blit read to complete.
+    // srcStage = eComputeShader to wait for the previous frame's post-process read.
     vk::ImageMemoryBarrier2 hdr_to_render{};
-    hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eBlit;
-    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eTransferRead;
+    hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
     hdr_to_render.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     hdr_to_render.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_render.oldLayout = vk::ImageLayout::eUndefined;
@@ -216,69 +219,56 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
 
     cmd.endRendering();
 
-    // ── Blit HDR image → swapchain image ──
+    // ── Post-process: compute dispatch HDR → swapchain ──
 
-    // Transition HDR: COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL.
-    // Transition swapchain: UNDEFINED → TRANSFER_DST_OPTIMAL.
-    vk::ImageMemoryBarrier2 hdr_to_src{};
-    hdr_to_src.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    hdr_to_src.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-    hdr_to_src.dstStageMask = vk::PipelineStageFlagBits2::eBlit;
-    hdr_to_src.dstAccessMask = vk::AccessFlagBits2::eTransferRead;
-    hdr_to_src.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
-    hdr_to_src.newLayout = vk::ImageLayout::eTransferSrcOptimal;
-    hdr_to_src.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-    hdr_to_src.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-    hdr_to_src.image = hdr_image;
-    hdr_to_src.subresourceRange = colour_range;
+    // Transition HDR: COLOR_ATTACHMENT_OPTIMAL → GENERAL (compute shader storage read).
+    // Transition swapchain: UNDEFINED → GENERAL (compute shader storage write).
+    vk::ImageMemoryBarrier2 hdr_to_general{};
+    hdr_to_general.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    hdr_to_general.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+    hdr_to_general.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    hdr_to_general.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+    hdr_to_general.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    hdr_to_general.newLayout = vk::ImageLayout::eGeneral;
+    hdr_to_general.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_to_general.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_to_general.image = hdr_image;
+    hdr_to_general.subresourceRange = colour_range;
 
     // srcStage = eColorAttachmentOutput to sync with the acquire semaphore wait.
-    vk::ImageMemoryBarrier2 swap_to_dst{};
-    swap_to_dst.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    swap_to_dst.srcAccessMask = vk::AccessFlagBits2::eNone;
-    swap_to_dst.dstStageMask = vk::PipelineStageFlagBits2::eBlit;
-    swap_to_dst.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
-    swap_to_dst.oldLayout = vk::ImageLayout::eUndefined;
-    swap_to_dst.newLayout = vk::ImageLayout::eTransferDstOptimal;
-    swap_to_dst.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-    swap_to_dst.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-    swap_to_dst.image = swapchain_image;
-    swap_to_dst.subresourceRange = colour_range;
+    vk::ImageMemoryBarrier2 swap_to_general{};
+    swap_to_general.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    swap_to_general.srcAccessMask = vk::AccessFlagBits2::eNone;
+    swap_to_general.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    swap_to_general.dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    swap_to_general.oldLayout = vk::ImageLayout::eUndefined;
+    swap_to_general.newLayout = vk::ImageLayout::eGeneral;
+    swap_to_general.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    swap_to_general.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    swap_to_general.image = swapchain_image;
+    swap_to_general.subresourceRange = colour_range;
 
-    std::array<vk::ImageMemoryBarrier2, 2> to_blit_barriers{hdr_to_src, swap_to_dst};
-    vk::DependencyInfo dep_to_blit{};
-    dep_to_blit.imageMemoryBarrierCount = static_cast<uint32_t>(to_blit_barriers.size());
-    dep_to_blit.pImageMemoryBarriers = to_blit_barriers.data();
-    cmd.pipelineBarrier2(dep_to_blit);
+    std::array<vk::ImageMemoryBarrier2, 2> to_compute_barriers{hdr_to_general, swap_to_general};
+    vk::DependencyInfo dep_to_compute{};
+    dep_to_compute.imageMemoryBarrierCount = static_cast<uint32_t>(to_compute_barriers.size());
+    dep_to_compute.pImageMemoryBarriers = to_compute_barriers.data();
+    cmd.pipelineBarrier2(dep_to_compute);
 
-    // Blit HDR (float16) → swapchain (SRGB) with format conversion and clamping.
-    vk::ImageBlit2 blit_region{};
-    blit_region.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-    blit_region.srcSubresource.layerCount = 1;
-    blit_region.srcOffsets[0] = vk::Offset3D{0, 0, 0};
-    blit_region.srcOffsets[1] = vk::Offset3D{static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
-    blit_region.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-    blit_region.dstSubresource.layerCount = 1;
-    blit_region.dstOffsets[0] = vk::Offset3D{0, 0, 0};
-    blit_region.dstOffsets[1] = vk::Offset3D{static_cast<int32_t>(extent.width), static_cast<int32_t>(extent.height), 1};
+    // Bind compute pipeline and dispatch post-process.
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_layout, 0, {pp_descriptor_set}, {});
 
-    vk::BlitImageInfo2 blit_info{};
-    blit_info.srcImage = hdr_image;
-    blit_info.srcImageLayout = vk::ImageLayout::eTransferSrcOptimal;
-    blit_info.dstImage = swapchain_image;
-    blit_info.dstImageLayout = vk::ImageLayout::eTransferDstOptimal;
-    blit_info.regionCount = 1;
-    blit_info.pRegions = &blit_region;
-    blit_info.filter = vk::Filter::eNearest;
-    cmd.blitImage2(blit_info);
+    uint32_t group_x{(extent.width + 7) / 8};
+    uint32_t group_y{(extent.height + 7) / 8};
+    cmd.dispatch(group_x, group_y, 1);
 
-    // Transition swapchain: TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR.
+    // Transition swapchain: GENERAL → PRESENT_SRC_KHR.
     vk::ImageMemoryBarrier2 swap_to_present{};
-    swap_to_present.srcStageMask = vk::PipelineStageFlagBits2::eBlit;
-    swap_to_present.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+    swap_to_present.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    swap_to_present.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
     swap_to_present.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
     swap_to_present.dstAccessMask = vk::AccessFlagBits2::eNone;
-    swap_to_present.oldLayout = vk::ImageLayout::eTransferDstOptimal;
+    swap_to_present.oldLayout = vk::ImageLayout::eGeneral;
     swap_to_present.newLayout = vk::ImageLayout::ePresentSrcKHR;
     swap_to_present.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
     swap_to_present.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
@@ -341,9 +331,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     depth_view_info.subresourceRange.layerCount = 1;
     vk::raii::ImageView depth_view(device.get(), depth_view_info);
 
-    // HDR colour buffer — same dimensions as swapchain, recreated on resize
+    // HDR colour buffer — same dimensions as swapchain, recreated on resize.
+    // STORAGE_BIT allows the post-process compute shader to read the HDR image.
     AllocatedImage hdr_image{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT)};
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT)};
 
     vk::ImageViewCreateInfo hdr_view_info{};
     hdr_view_info.image = hdr_image.image();
@@ -356,17 +347,129 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     hdr_view_info.subresourceRange.layerCount = 1;
     vk::raii::ImageView hdr_view(device.get(), hdr_view_info);
 
-    // Rebuilds the depth buffer and HDR colour buffer to match the current swapchain extent.
-    auto rebuildDepthBuffer = [&]() {
+    // Per-swapchain-image storage views for compute shader write access.
+    std::vector<vk::raii::ImageView> swapchain_storage_views;
+
+    auto rebuildSwapchainStorageViews = [&]() {
+        swapchain_storage_views.clear();
+        for (uint32_t i{0}; i < swapchain.imageCount(); ++i) {
+            vk::ImageViewCreateInfo view_info{};
+            view_info.image = swapchain.images()[i];
+            view_info.viewType = vk::ImageViewType::e2D;
+            view_info.format = swapchain.format().format;
+            view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            view_info.subresourceRange.baseMipLevel = 0;
+            view_info.subresourceRange.levelCount = 1;
+            view_info.subresourceRange.baseArrayLayer = 0;
+            view_info.subresourceRange.layerCount = 1;
+            swapchain_storage_views.push_back(vk::raii::ImageView(device.get(), view_info));
+        }
+    };
+    rebuildSwapchainStorageViews();
+
+    // Rebuilds depth, HDR, and swapchain storage views to match the current swapchain extent.
+    auto rebuildFrameBuffers = [&]() {
         depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
         depth_view_info.image = depth_image.image();
         depth_view = vk::raii::ImageView(device.get(), depth_view_info);
 
         hdr_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT);
         hdr_view_info.image = hdr_image.image();
         hdr_view = vk::raii::ImageView(device.get(), hdr_view_info);
+
+        rebuildSwapchainStorageViews();
+    };
+
+    // ── Post-process compute pipeline (inline — no class until second use case) ──
+
+    std::string exe_dir_rt{executableDirectory()};
+    std::vector<uint32_t> postprocess_spirv{loadSpirv(exe_dir_rt + "postprocess.spv", logger)};
+
+    // Descriptor set layout: 2 storage images (HDR input + swapchain output).
+    std::array<vk::DescriptorSetLayoutBinding, 2> pp_bindings{};
+    pp_bindings[0].binding = 0;
+    pp_bindings[0].descriptorType = vk::DescriptorType::eStorageImage;
+    pp_bindings[0].descriptorCount = 1;
+    pp_bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pp_bindings[1].binding = 1;
+    pp_bindings[1].descriptorType = vk::DescriptorType::eStorageImage;
+    pp_bindings[1].descriptorCount = 1;
+    pp_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo pp_layout_info{};
+    pp_layout_info.bindingCount = static_cast<uint32_t>(pp_bindings.size());
+    pp_layout_info.pBindings = pp_bindings.data();
+    vk::raii::DescriptorSetLayout pp_descriptor_set_layout{device.get(), pp_layout_info};
+
+    vk::PipelineLayoutCreateInfo pp_pipeline_layout_info{};
+    pp_pipeline_layout_info.setLayoutCount = 1;
+    pp_pipeline_layout_info.pSetLayouts = &*pp_descriptor_set_layout;
+    vk::raii::PipelineLayout pp_pipeline_layout{device.get(), pp_pipeline_layout_info};
+
+    vk::ShaderModuleCreateInfo pp_module_info{};
+    pp_module_info.codeSize = postprocess_spirv.size() * sizeof(uint32_t);
+    pp_module_info.pCode = postprocess_spirv.data();
+    vk::raii::ShaderModule pp_module{device.get(), pp_module_info};
+
+    vk::PipelineShaderStageCreateInfo pp_stage{};
+    pp_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    pp_stage.module = *pp_module;
+    pp_stage.pName = "postprocessMain";
+
+    vk::ComputePipelineCreateInfo pp_pipeline_info{};
+    pp_pipeline_info.stage = pp_stage;
+    pp_pipeline_info.layout = *pp_pipeline_layout;
+    vk::raii::Pipeline pp_pipeline{device.get(), nullptr, pp_pipeline_info};
+
+    logger.logInfo("Post-process compute pipeline created.");
+
+    // Descriptor pool and sets for post-process.
+    std::array<vk::DescriptorPoolSize, 1> pp_pool_sizes{};
+    pp_pool_sizes[0].type = vk::DescriptorType::eStorageImage;
+    pp_pool_sizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
+
+    vk::DescriptorPoolCreateInfo pp_pool_info{};
+    pp_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    pp_pool_info.maxSets = MAX_FRAMES_IN_FLIGHT;
+    pp_pool_info.poolSizeCount = static_cast<uint32_t>(pp_pool_sizes.size());
+    pp_pool_info.pPoolSizes = pp_pool_sizes.data();
+    vk::raii::DescriptorPool pp_descriptor_pool{device.get(), pp_pool_info};
+
+    std::vector<vk::DescriptorSetLayout> pp_layouts(MAX_FRAMES_IN_FLIGHT, *pp_descriptor_set_layout);
+    vk::DescriptorSetAllocateInfo pp_alloc_info{};
+    pp_alloc_info.descriptorPool = *pp_descriptor_pool;
+    pp_alloc_info.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    pp_alloc_info.pSetLayouts = pp_layouts.data();
+    std::vector<vk::raii::DescriptorSet> pp_descriptor_sets{device.get().allocateDescriptorSets(pp_alloc_info)};
+
+    // Updates post-process descriptor set bindings for the given frame.
+    auto updatePostProcessDescriptors = [&](uint32_t frame_index, vk::ImageView hdr_sv, vk::ImageView swap_sv) {
+        vk::DescriptorImageInfo hdr_info{};
+        hdr_info.imageView = hdr_sv;
+        hdr_info.imageLayout = vk::ImageLayout::eGeneral;
+
+        vk::DescriptorImageInfo swap_info{};
+        swap_info.imageView = swap_sv;
+        swap_info.imageLayout = vk::ImageLayout::eGeneral;
+
+        std::array<vk::WriteDescriptorSet, 2> writes{};
+        writes[0].dstSet = *pp_descriptor_sets[frame_index];
+        writes[0].dstBinding = 0;
+        writes[0].dstArrayElement = 0;
+        writes[0].descriptorType = vk::DescriptorType::eStorageImage;
+        writes[0].descriptorCount = 1;
+        writes[0].pImageInfo = &hdr_info;
+
+        writes[1].dstSet = *pp_descriptor_sets[frame_index];
+        writes[1].dstBinding = 1;
+        writes[1].dstArrayElement = 0;
+        writes[1].descriptorType = vk::DescriptorType::eStorageImage;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo = &swap_info;
+
+        device.get().updateDescriptorSets(writes, {});
     };
 
     // Per-frame camera UBOs (persistently mapped)
@@ -491,7 +594,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (resize_width > 0 && resize_height > 0) {
                 swapchain.recreate(resize_width, resize_height);
                 rebuildPresentSemaphores();
-                rebuildDepthBuffer();
+                rebuildFrameBuffers();
             } else {
                 should_render = false;
             }
@@ -528,7 +631,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
-                rebuildDepthBuffer();
+                rebuildFrameBuffers();
             }
             continue;
         }
@@ -562,11 +665,12 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
         }
 
-        // Record command buffer — compute culling + graphics rendering in one submission
+        // Record command buffer — mesh shaders + compute post-process in one submission
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
+        updatePostProcessDescriptors(current_frame, *hdr_view, *swapchain_storage_views[image_index]);
         recordFrame(cmd, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index], swapchain.extent(), pipeline,
-            pipeline.descriptorSet(current_frame), frustum, total_objects);
+            pipeline.descriptorSet(current_frame), frustum, total_objects, *pp_pipeline, *pp_pipeline_layout, *pp_descriptor_sets[current_frame]);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -606,7 +710,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
-                rebuildDepthBuffer();
+                rebuildFrameBuffers();
             }
             continue;
         }
@@ -615,7 +719,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
-                rebuildDepthBuffer();
+                rebuildFrameBuffers();
             }
         }
 

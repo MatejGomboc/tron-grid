@@ -122,12 +122,32 @@ add_custom_command(
     VERBATIM
 )
 
+# Post-process shader (compute) — compile, then validate SPIR-V
+set(POSTPROCESS_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/postprocess.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/postprocess.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${POSTPROCESS_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry postprocessMain
+        -o ${SHADER_OUTPUT_DIR}/postprocess.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/postprocess.spv
+    DEPENDS ${POSTPROCESS_SOURCE}
+    COMMENT "Compiling postprocess.slang -> postprocess.spv (with validation)"
+    VERBATIM
+)
+
 # Compile shaders — ALL target ensures they build even when the executable is up to date.
 add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/triangle.spv
     ${SHADER_OUTPUT_DIR}/cull.spv
     ${SHADER_OUTPUT_DIR}/task.spv
     ${SHADER_OUTPUT_DIR}/mesh.spv
+    ${SHADER_OUTPUT_DIR}/postprocess.spv
 )
 add_dependencies(${PROJECT_NAME} shaders)
 
@@ -145,6 +165,8 @@ add_custom_target(copy_shaders ALL
         ${SHADER_OUTPUT_DIR}/task.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/task.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/mesh.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/mesh.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/postprocess.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/postprocess.spv
     COMMENT "Copying shaders to output directory"
     VERBATIM
 )
