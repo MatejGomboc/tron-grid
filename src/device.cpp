@@ -104,6 +104,22 @@ struct QueueFamilyIndices {
         return -1;
     }
 
+    // Must support required features.
+    vk::PhysicalDeviceFeatures features{device.getFeatures()};
+    if (!features.multiDrawIndirect || !features.shaderStorageBufferArrayDynamicIndexing || !features.shaderStorageImageWriteWithoutFormat) {
+        return -1;
+    }
+
+    vk::PhysicalDeviceVulkan12Features vulkan12{};
+    vulkan12.sType = vk::StructureType::ePhysicalDeviceVulkan12Features;
+    vk::PhysicalDeviceFeatures2 features2{};
+    features2.pNext = &vulkan12;
+    device.getFeatures2(&features2);
+
+    if (!vulkan12.bufferDeviceAddress || !vulkan12.shaderInt8 || !vulkan12.storageBuffer8BitAccess) {
+        return -1;
+    }
+
     int score{0};
 
     // Strongly prefer discrete GPUs

@@ -75,6 +75,7 @@ public:
         m_buffer(other.m_buffer),
         m_allocation(other.m_allocation)
     {
+        other.m_allocator = VK_NULL_HANDLE;
         other.m_buffer = VK_NULL_HANDLE;
         other.m_allocation = VK_NULL_HANDLE;
     }
@@ -88,6 +89,7 @@ public:
             m_allocator = other.m_allocator;
             m_buffer = other.m_buffer;
             m_allocation = other.m_allocation;
+            other.m_allocator = VK_NULL_HANDLE;
             other.m_buffer = VK_NULL_HANDLE;
             other.m_allocation = VK_NULL_HANDLE;
         }
@@ -148,6 +150,7 @@ public:
         m_image(other.m_image),
         m_allocation(other.m_allocation)
     {
+        other.m_allocator = VK_NULL_HANDLE;
         other.m_image = VK_NULL_HANDLE;
         other.m_allocation = VK_NULL_HANDLE;
     }
@@ -161,6 +164,7 @@ public:
             m_allocator = other.m_allocator;
             m_image = other.m_image;
             m_allocation = other.m_allocation;
+            other.m_allocator = VK_NULL_HANDLE;
             other.m_image = VK_NULL_HANDLE;
             other.m_allocation = VK_NULL_HANDLE;
         }
