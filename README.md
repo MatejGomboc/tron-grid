@@ -15,11 +15,12 @@ sensory) are written in-house with no third-party libraries.
 ## Status
 
 PBR obsidian floor with dual-colour neon tube edges (cyan + orange accent),
-Cook-Torrance BRDF, HDR framebuffer, RT hard shadows and single-bounce
-reflections via inline ray query (`VK_KHR_ray_query`). Mesh shader rendering
-(task + mesh + fragment), procedural Tron terrain, per-object frustum culling,
-meshlet-based geometry, entity/component scene. Code quality: Clang-Tidy,
-spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU validation.
+Cook-Torrance BRDF, HDR framebuffer with compute post-process pass (exact
+sRGB encoding), RT hard shadows and single-bounce reflections via inline ray
+query (`VK_KHR_ray_query`). Mesh shader rendering (task + mesh + fragment),
+procedural Tron terrain, per-object frustum culling, meshlet-based geometry,
+entity/component scene. Code quality: Clang-Tidy, spirv-val,
+`-Werror`/`/WX`, ASan/UBSan/TSan, GPU validation.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 

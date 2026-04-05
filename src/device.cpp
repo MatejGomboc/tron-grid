@@ -222,6 +222,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.multiDrawIndirect = vk::True;
     features2.features.shaderStorageBufferArrayDynamicIndexing = vk::True;
+    features2.features.shaderStorageImageWriteWithoutFormat = vk::True;
     features2.pNext = &vulkan12_features;
 
     vk::DeviceCreateInfo device_info{};

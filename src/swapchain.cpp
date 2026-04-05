@@ -22,14 +22,16 @@
 #include <ranges>
 #include <string>
 
-//! Selects the best surface format, preferring B8G8R8A8 sRGB.
+//! Selects the best surface format, preferring B8G8R8A8 UNORM for compute storage writes.
 [[nodiscard]] static vk::SurfaceFormatKHR chooseSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& available)
 {
     assert(!available.empty());
 
-    // Prefer sRGB with B8G8R8A8 layout
+    // Prefer UNORM with sRGB colour space — the post-process compute shader applies
+    // sRGB gamma manually, so the format must support VK_IMAGE_USAGE_STORAGE_BIT
+    // (sRGB formats do not). The display still interprets values as sRGB.
     std::vector<vk::SurfaceFormatKHR>::const_iterator it{std::ranges::find_if(available, [](const vk::SurfaceFormatKHR& fmt) {
-        return fmt.format == vk::Format::eB8G8R8A8Srgb && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
+        return fmt.format == vk::Format::eB8G8R8A8Unorm && fmt.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear;
     })};
 
     if (it != available.end()) {
@@ -118,6 +120,13 @@ void Swapchain::build(uint32_t width, uint32_t height)
         image_count = capabilities.maxImageCount;
     }
 
+    // The post-process compute shader writes directly to swapchain images.
+    if (!(capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eStorage)) {
+        m_logger->logFatal("Swapchain does not support storage image usage.");
+        std::abort();
+        return;
+    }
+
     // Create swapchain
     vk::SwapchainCreateInfoKHR create_info{};
     create_info.surface = m_surface;
@@ -126,7 +135,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
     create_info.imageColorSpace = m_format.colorSpace;
     create_info.imageExtent = m_extent;
     create_info.imageArrayLayers = 1;
-    create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst;
+    create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eStorage;
 
     uint32_t graphics_family{m_device->graphicsFamilyIndex()};
     uint32_t present_family{m_device->presentFamilyIndex()};
