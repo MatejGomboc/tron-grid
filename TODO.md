@@ -76,10 +76,11 @@ sky bleeds light across the frame. This is bloom.
 **Target pipeline (Phase 7):**
 
 ```text
-1. Render scene → HDR image (R16G16B16A16_SFLOAT)
-2. Bloom extraction → bright pixels above threshold into bloom texture
-3. Bloom blur → multi-pass Gaussian downsample/upsample (mip chain)
-4. Composite → HDR + bloom → tonemapped → swapchain (sRGB)
+1. Render scene → MSAA HDR image (R16G16B16A16_SFLOAT, 4× samples)
+2. Resolve MSAA → single-sample HDR image
+3. Bloom extraction → bright pixels above threshold into bloom texture
+4. Bloom blur → multi-pass Gaussian downsample/upsample (mip chain)
+5. Composite → HDR + bloom → tonemapped → swapchain (sRGB)
 ```
 
 ### Etape 29 — Fullscreen Compute Pass Infrastructure
@@ -92,16 +93,25 @@ tonemapping), proving the compute pipeline works.
 **Approach:**
 
 - Write a Slang compute shader (`postprocess.slang`) that reads from
-  the HDR image (sampled or storage) and writes to the swapchain image.
-  Entry point `postprocessMain`, workgroup size 8×8.
-- Create a compute pipeline with a descriptor set layout: 1 sampled
-  image (HDR input) + 1 storage image (swapchain output).
-- Replace the `vkCmdBlitImage2` call in `recordFrame` with a compute
-  dispatch: transition swapchain to `eGeneral`, dispatch workgroups
-  covering the full resolution, transition swapchain to `ePresentSrcKHR`.
-- The compute shader initially performs a simple copy (identity):
-  `output[coord] = input[coord]`. This verifies the pipeline, barriers,
-  and descriptor bindings before adding tonemapping.
+  the HDR image and writes to the swapchain image. Entry point
+  `postprocessMain`, workgroup size 8×8. Uses `imageLoad()`/`imageStore()`
+  with `gl_GlobalInvocationID.xy` as pixel coordinates.
+- Descriptor set layout: 1 storage image (HDR input, `rgba16f`,
+  `readonly`) + 1 storage image (swapchain output, `rgba8`, `writeonly`).
+- Create a `VkComputePipeline` with `VK_PIPELINE_BIND_POINT_COMPUTE`.
+  No render pass, no viewport — just bind pipeline, bind descriptors,
+  dispatch.
+- Replace the `vkCmdBlitImage2` call in `recordFrame` with:
+  1. Transition HDR: `eColorAttachmentOptimal` → `eGeneral` (compute read).
+  2. Transition swapchain: `eUndefined` → `eGeneral` (compute write).
+  3. Bind compute pipeline + descriptors.
+  4. `vkCmdDispatch(ceil(width/8), ceil(height/8), 1)`.
+  5. Transition swapchain: `eGeneral` → `ePresentSrcKHR`.
+- The compute shader initially performs a simple copy with clamping:
+  `output[coord] = clamp(input[coord], 0, 1)`. This verifies the
+  pipeline, barriers, and descriptor bindings before adding tonemapping.
+- Swapchain image usage must include `VK_IMAGE_USAGE_STORAGE_BIT`
+  (verify via `VkSurfaceCapabilitiesKHR::supportedUsageFlags`).
 
 **After this step:** rendering goes through a compute post-process pass.
 Visually identical to the current blit (still clamping), but the
@@ -141,14 +151,18 @@ mip chain for the bloom halo.
 **Approach:**
 
 - **Bloom threshold extraction:** a compute pass reads the HDR image
-  and writes pixels above a brightness threshold (e.g.,
-  `luminance > 1.0`) to a separate bloom texture at half resolution.
-  Pixels below threshold are black.
+  and writes pixels above a brightness threshold to a separate bloom
+  texture at half resolution. Pixels below threshold are black.
+  Brightness is computed as weighted luminance:
+  `dot(colour.rgb, float3(0.2126, 0.7152, 0.0722))`. Threshold at
+  `luminance > 1.0` — only HDR-bright pixels contribute to bloom.
 - **Downsample chain:** Create a mip chain (e.g., 6 levels) on the
   bloom texture. Each level is half the resolution of the previous.
   A compute pass downsamples each level with a 13-tap filter (the
   Karis average for the first downsample to prevent fireflies from
-  sub-pixel bright spots).
+  sub-pixel bright spots). Each mip level needs its own `ImageView`
+  for the compute shader to write to. Note: multisampled images
+  cannot have mip chains — resolve MSAA before bloom.
 - The bloom texture uses `R16G16B16A16_SFLOAT` (same as HDR) to
   preserve colour fidelity through the blur chain.
 - Recreate the bloom texture and its mip chain on swapchain resize.
@@ -209,14 +223,27 @@ to FXAA.
 
 **Approach (MSAA 4×):**
 
-- Create the HDR colour image with `VK_SAMPLE_COUNT_4_BIT`.
-- Create a single-sample HDR resolve target at the same resolution.
-- The mesh shader pass renders to the 4× MSAA HDR image.
-- After rendering, resolve the MSAA image to the single-sample image
-  via `vkCmdResolveImage2` or as a dynamic rendering resolve attachment.
+- Query `VkPhysicalDeviceLimits::framebufferColorSampleCounts &
+  framebufferDepthSampleCounts` to confirm 4× support. Fall back to
+  2× or 1× if not available.
+- Create the HDR colour image with `VK_SAMPLE_COUNT_4_BIT` and
+  `VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | COLOR_ATTACHMENT_BIT`.
+  Multisampled images must have exactly 1 mip level.
+- Create a single-sample HDR resolve target (the existing HDR image
+  becomes this). The MSAA image is a new, separate resource.
+- The depth buffer also needs `VK_SAMPLE_COUNT_4_BIT` to match.
+- The mesh shader pipeline's `VkPipelineMultisampleStateCreateInfo`
+  must set `rasterizationSamples = VK_SAMPLE_COUNT_4_BIT`.
+- Dynamic rendering: set the MSAA image as the colour attachment and
+  the single-sample HDR image as the resolve attachment (`resolveMode =
+  VK_RESOLVE_MODE_AVERAGE_BIT`). The resolve happens automatically at
+  the end of rendering — no separate `vkCmdResolveImage2` needed.
 - The post-process (bloom + tonemap) reads from the resolved
   single-sample image as before.
-- The depth buffer also needs `VK_SAMPLE_COUNT_4_BIT` to match.
+- Recreate both MSAA + resolve images on swapchain resize.
+- Optional: enable `sampleRateShading` with `minSampleShading = 0.25`
+  for even better quality on thin sub-pixel neon lines (trades
+  performance for smoother anti-aliasing).
 
 **After this step:** neon grid lines are smooth and clean, no jagged
 stair-stepping. The Tron aesthetic is polished.
