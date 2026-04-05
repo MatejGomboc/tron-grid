@@ -104,13 +104,13 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     std::array<vk::PipelineShaderStageCreateInfo, 3> shader_stages{};
     shader_stages[0].stage = vk::ShaderStageFlagBits::eTaskEXT;
     shader_stages[0].module = *task_module;
-    shader_stages[0].pName = "taskMain";
+    shader_stages[0].setPName("taskMain");
     shader_stages[1].stage = vk::ShaderStageFlagBits::eMeshEXT;
     shader_stages[1].module = *mesh_frag_module;
-    shader_stages[1].pName = "meshMain";
+    shader_stages[1].setPName("meshMain");
     shader_stages[2].stage = vk::ShaderStageFlagBits::eFragment;
     shader_stages[2].module = *mesh_frag_module; // Same module, different entry point.
-    shader_stages[2].pName = "fragMain";
+    shader_stages[2].setPName("fragMain");
 
     // No vertex input — mesh shaders read from SSBOs.
     // No input assembly — mesh shaders output primitives directly.
@@ -150,8 +150,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     vk::PipelineColorBlendStateCreateInfo colour_blend{};
     colour_blend.logicOpEnable = vk::False;
-    colour_blend.attachmentCount = 1;
-    colour_blend.pAttachments = &colour_blend_attachment;
+    colour_blend.setAttachments(colour_blend_attachment);
 
     // Descriptor set layout — 8 bindings for the mesh shader pipeline.
     // Binding 0: camera UBO (task + mesh + fragment stages)
@@ -218,16 +217,16 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     // Mesh shader pipeline — no vertex input state, no input assembly state.
     vk::GraphicsPipelineCreateInfo pipeline_info{};
-    pipeline_info.pNext = &rendering_info;
+    pipeline_info.setPNext(&rendering_info);
     pipeline_info.setStages(shader_stages);
-    pipeline_info.pVertexInputState = nullptr; // Mesh shaders don't use vertex input.
-    pipeline_info.pInputAssemblyState = nullptr; // Mesh shaders output primitives directly.
-    pipeline_info.pViewportState = &viewport_state;
-    pipeline_info.pRasterizationState = &rasterisation;
-    pipeline_info.pMultisampleState = &multisample;
-    pipeline_info.pDepthStencilState = &depth_stencil;
-    pipeline_info.pColorBlendState = &colour_blend;
-    pipeline_info.pDynamicState = &dynamic_state;
+    pipeline_info.setPVertexInputState(nullptr); // Mesh shaders don't use vertex input.
+    pipeline_info.setPInputAssemblyState(nullptr); // Mesh shaders output primitives directly.
+    pipeline_info.setPViewportState(&viewport_state);
+    pipeline_info.setPRasterizationState(&rasterisation);
+    pipeline_info.setPMultisampleState(&multisample);
+    pipeline_info.setPDepthStencilState(&depth_stencil);
+    pipeline_info.setPColorBlendState(&colour_blend);
+    pipeline_info.setPDynamicState(&dynamic_state);
     pipeline_info.layout = *m_layout;
 
     m_pipeline = vk::raii::Pipeline{device.get(), nullptr, pipeline_info};
@@ -326,11 +325,10 @@ void Pipeline::updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const
 void Pipeline::bindTLAS(uint32_t frame_index, vk::AccelerationStructureKHR tlas) const
 {
     vk::WriteDescriptorSetAccelerationStructureKHR as_write{};
-    as_write.accelerationStructureCount = 1;
-    as_write.pAccelerationStructures = &tlas;
+    as_write.setAccelerationStructures(tlas);
 
     vk::WriteDescriptorSet write{};
-    write.pNext = &as_write;
+    write.setPNext(&as_write);
     write.dstSet = *m_descriptor_sets[frame_index];
     write.dstBinding = 7;
     write.dstArrayElement = 0;

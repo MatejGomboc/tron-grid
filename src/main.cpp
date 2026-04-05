@@ -268,7 +268,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     rendering_info.renderArea.extent = extent;
     rendering_info.layerCount = 1;
     rendering_info.setColorAttachments(colour_attachment);
-    rendering_info.pDepthAttachment = &depth_attachment;
+    rendering_info.setPDepthAttachment(&depth_attachment);
 
     cmd.beginRendering(rendering_info);
 
@@ -569,7 +569,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     vk::PipelineShaderStageCreateInfo pp_stage{};
     pp_stage.stage = vk::ShaderStageFlagBits::eCompute;
     pp_stage.module = *pp_module;
-    pp_stage.pName = "postprocessMain";
+    pp_stage.setPName("postprocessMain");
 
     vk::ComputePipelineCreateInfo pp_pipeline_info{};
     pp_pipeline_info.stage = pp_stage;
@@ -663,7 +663,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     vk::PipelineShaderStageCreateInfo bloom_extract_stage{};
     bloom_extract_stage.stage = vk::ShaderStageFlagBits::eCompute;
     bloom_extract_stage.module = *bloom_extract_module;
-    bloom_extract_stage.pName = "bloomExtractMain";
+    bloom_extract_stage.setPName("bloomExtractMain");
 
     vk::ComputePipelineCreateInfo bloom_extract_pipeline_info{};
     bloom_extract_pipeline_info.stage = bloom_extract_stage;
@@ -678,7 +678,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     vk::PipelineShaderStageCreateInfo bloom_down_stage{};
     bloom_down_stage.stage = vk::ShaderStageFlagBits::eCompute;
     bloom_down_stage.module = *bloom_down_module;
-    bloom_down_stage.pName = "bloomDownsampleMain";
+    bloom_down_stage.setPName("bloomDownsampleMain");
 
     vk::ComputePipelineCreateInfo bloom_down_pipeline_info{};
     bloom_down_pipeline_info.stage = bloom_down_stage;
@@ -983,7 +983,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         std::array<vk::SwapchainKHR, 1> swapchains{*swapchain.get()};
         present_info.setWaitSemaphores(*render_finished_semaphores[image_index]);
         present_info.setSwapchains(swapchains);
-        present_info.pImageIndices = &image_index;
+        present_info.setPImageIndices(&image_index);
 
         vk::Result present_result{vk::Result::eSuccess};
         try {
@@ -1265,7 +1265,7 @@ int main()
         build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace | vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
         build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
         build_info.geometryCount = 1;
-        build_info.pGeometries = &geometry;
+        build_info.setGeometries(geometry);
 
         uint32_t triangle_count{static_cast<uint32_t>(terrain.indices.size() / 3)};
         vk::AccelerationStructureBuildSizesInfoKHR build_sizes{
@@ -1397,7 +1397,7 @@ int main()
         sphere_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
         sphere_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
         sphere_build_info.geometryCount = 1;
-        sphere_build_info.pGeometries = &sphere_geometry;
+        sphere_build_info.setGeometries(sphere_geometry);
 
         uint32_t sphere_triangle_count{static_cast<uint32_t>(sphere_indices.size() / 3)};
         vk::AccelerationStructureBuildSizesInfoKHR sphere_build_sizes{
@@ -1567,7 +1567,7 @@ int main()
         tlas_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
         tlas_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
         tlas_build_info.geometryCount = 1;
-        tlas_build_info.pGeometries = &tlas_geometry;
+        tlas_build_info.setGeometries(tlas_geometry);
 
         vk::AccelerationStructureBuildSizesInfoKHR tlas_build_sizes{
             device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, tlas_build_info, {total_objects})};

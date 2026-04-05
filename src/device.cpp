@@ -186,8 +186,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     for (uint32_t family : unique_families) {
         vk::DeviceQueueCreateInfo queue_info{};
         queue_info.queueFamilyIndex = family;
-        queue_info.queueCount = 1;
-        queue_info.pQueuePriorities = &QUEUE_PRIORITY;
+        queue_info.setQueuePriorities(QUEUE_PRIORITY);
         queue_create_infos.push_back(queue_info);
     }
 
@@ -198,28 +197,28 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     // Enable dynamic rendering (Vulkan 1.3 core)
     vk::PhysicalDeviceDynamicRenderingFeatures dynamic_rendering_features{};
     dynamic_rendering_features.dynamicRendering = vk::True;
-    dynamic_rendering_features.pNext = &sync2_features;
+    dynamic_rendering_features.setPNext(&sync2_features);
 
     // Enable shader draw parameters (Vulkan 1.1 core) — needed for SV_InstanceID in SSBO indexing
     vk::PhysicalDeviceShaderDrawParametersFeatures shader_draw_params{};
     shader_draw_params.shaderDrawParameters = vk::True;
-    shader_draw_params.pNext = &dynamic_rendering_features;
+    shader_draw_params.setPNext(&dynamic_rendering_features);
 
     // Enable mesh shader features (VK_EXT_mesh_shader)
     vk::PhysicalDeviceMeshShaderFeaturesEXT mesh_shader_features{};
     mesh_shader_features.meshShader = vk::True;
     mesh_shader_features.taskShader = vk::True;
-    mesh_shader_features.pNext = &shader_draw_params;
+    mesh_shader_features.setPNext(&shader_draw_params);
 
     // Enable acceleration structure features (VK_KHR_acceleration_structure)
     vk::PhysicalDeviceAccelerationStructureFeaturesKHR accel_features{};
     accel_features.accelerationStructure = vk::True;
-    accel_features.pNext = &mesh_shader_features;
+    accel_features.setPNext(&mesh_shader_features);
 
     // Enable ray query features (VK_KHR_ray_query)
     vk::PhysicalDeviceRayQueryFeaturesKHR ray_query_features{};
     ray_query_features.rayQuery = vk::True;
-    ray_query_features.pNext = &accel_features;
+    ray_query_features.setPNext(&accel_features);
 
     // Enable Vulkan 1.2 features — all promoted features go here (not separate structs)
     vk::PhysicalDeviceVulkan12Features vulkan12_features{};
@@ -231,16 +230,16 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     vulkan12_features.uniformAndStorageBuffer8BitAccess = vk::True;
     vulkan12_features.storageBuffer8BitAccess = vk::True;
     vulkan12_features.bufferDeviceAddress = vk::True;
-    vulkan12_features.pNext = &ray_query_features;
+    vulkan12_features.setPNext(&ray_query_features);
 
     vk::PhysicalDeviceFeatures2 features2{};
     features2.features.multiDrawIndirect = vk::True;
     features2.features.shaderStorageBufferArrayDynamicIndexing = vk::True;
     features2.features.shaderStorageImageWriteWithoutFormat = vk::True;
-    features2.pNext = &vulkan12_features;
+    features2.setPNext(&vulkan12_features);
 
     vk::DeviceCreateInfo device_info{};
-    device_info.pNext = &features2;
+    device_info.setPNext(&features2);
     device_info.setQueueCreateInfos(queue_create_infos);
     device_info.setPEnabledExtensionNames(REQUIRED_DEVICE_EXTENSIONS);
 

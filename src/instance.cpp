@@ -74,7 +74,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
 
     // Step 2: Check Vulkan version >= 1.3
     uint32_t api_version{vk::enumerateInstanceVersion()};
-    if (VK_API_VERSION_MAJOR(api_version) < 1 || (VK_API_VERSION_MAJOR(api_version) == 1 && VK_API_VERSION_MINOR(api_version) < 3)) {
+    if ((VK_API_VERSION_MAJOR(api_version) < 1) || ((VK_API_VERSION_MAJOR(api_version) == 1) && (VK_API_VERSION_MINOR(api_version) < 3))) {
         m_logger.logFatal("Vulkan 1.3 or later required (found " + std::to_string(VK_API_VERSION_MAJOR(api_version)) + "."
             + std::to_string(VK_API_VERSION_MINOR(api_version)) + ").");
         std::abort();
@@ -111,14 +111,14 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
 
     // Step 5: Create instance
     vk::ApplicationInfo app_info{};
-    app_info.pApplicationName = "TronGrid";
+    app_info.setPApplicationName("TronGrid");
     app_info.applicationVersion = VK_MAKE_API_VERSION(0, 0, 1, 0);
-    app_info.pEngineName = "TronGrid";
+    app_info.setPEngineName("TronGrid");
     app_info.engineVersion = VK_MAKE_API_VERSION(0, 0, 1, 0);
     app_info.apiVersion = VK_API_VERSION_1_3;
 
     vk::InstanceCreateInfo create_info{};
-    create_info.pApplicationInfo = &app_info;
+    create_info.setPApplicationInfo(&app_info);
     create_info.setPEnabledLayerNames(layers);
     create_info.setPEnabledExtensionNames(extensions);
 
@@ -131,7 +131,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
         debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
             | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
         debug_create_info.pfnUserCallback = vulkanDebugCallback;
-        debug_create_info.pUserData = &m_logger;
+        debug_create_info.setPUserData(&m_logger);
 
         // Enable GPU-assisted, synchronisation, and best practices validation
         static constexpr std::array<vk::ValidationFeatureEnableEXT, 3> ENABLED_VALIDATION_FEATURES = {
@@ -140,9 +140,9 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
             vk::ValidationFeatureEnableEXT::eBestPractices,
         };
         validation_features.setEnabledValidationFeatures(ENABLED_VALIDATION_FEATURES);
-        validation_features.pNext = &debug_create_info;
+        validation_features.setPNext(&debug_create_info);
 
-        create_info.pNext = &validation_features;
+        create_info.setPNext(&validation_features);
     }
 
     m_instance = vk::raii::Instance(m_context, create_info);
