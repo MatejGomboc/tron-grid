@@ -15,6 +15,7 @@
 #include "device.hpp"
 #include "instance.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <ranges>
 #include <set>
@@ -23,7 +24,7 @@
 #include <vector>
 
 //! Required device extensions.
-static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
+static constexpr std::array REQUIRED_DEVICE_EXTENSIONS{
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_EXT_MESH_SHADER_EXTENSION_NAME,
     VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
@@ -44,12 +45,12 @@ struct QueueFamilyIndices {
 };
 
 //! Finds graphics and present queue family indices for the given device and surface.
-static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
+[[nodiscard]] static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     QueueFamilyIndices indices;
     std::vector<vk::QueueFamilyProperties> families{device.getQueueFamilyProperties()};
 
-    for (uint32_t i = 0; i < static_cast<uint32_t>(families.size()); ++i) {
+    for (uint32_t i{0}; i < static_cast<uint32_t>(families.size()); ++i) {
         // Graphics support
         if (families[i].queueFlags & vk::QueueFlagBits::eGraphics) {
             indices.graphics = i;
@@ -71,7 +72,7 @@ static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& devi
 }
 
 //! Checks whether the device supports all required extensions.
-static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
+[[nodiscard]] static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 {
     std::vector<vk::ExtensionProperties> available{device.enumerateDeviceExtensionProperties()};
 
@@ -88,7 +89,7 @@ static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 }
 
 //! Scores a physical device for suitability; returns -1 if unsuitable.
-static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
+[[nodiscard]] static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     vk::PhysicalDeviceProperties properties{device.getProperties()};
     QueueFamilyIndices indices{findQueueFamilies(device, surface)};
@@ -135,7 +136,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     int best_score{-1};
     size_t best_index{0};
 
-    for (size_t i = 0; i < physical_devices.size(); ++i) {
+    for (size_t i{0}; i < physical_devices.size(); ++i) {
         int score{rateDevice(physical_devices[i], surface)};
         vk::PhysicalDeviceProperties props{physical_devices[i].getProperties()};
         m_logger.logInfo("GPU " + std::to_string(i) + ": " + props.deviceName.data() + " (score: " + std::to_string(score) + ").");
@@ -167,7 +168,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     std::vector<vk::DeviceQueueCreateInfo> queue_create_infos;
 
     // Deduplicate queue family indices
-    std::set<uint32_t> unique_families = {m_graphics_family_index, m_present_family_index};
+    std::set<uint32_t> unique_families{m_graphics_family_index, m_present_family_index};
     for (uint32_t family : unique_families) {
         vk::DeviceQueueCreateInfo queue_info{};
         queue_info.queueFamilyIndex = family;
@@ -227,8 +228,8 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     device_info.pNext = &features2;
     device_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
     device_info.pQueueCreateInfos = queue_create_infos.data();
-    device_info.enabledExtensionCount = static_cast<uint32_t>(std::size(REQUIRED_DEVICE_EXTENSIONS));
-    device_info.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS;
+    device_info.enabledExtensionCount = static_cast<uint32_t>(REQUIRED_DEVICE_EXTENSIONS.size());
+    device_info.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS.data();
 
     m_device = vk::raii::Device(m_physical_device, device_info);
 
@@ -244,6 +245,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     vk::StructureChain<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR> props_chain{
         m_physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()};
     const vk::PhysicalDeviceAccelerationStructurePropertiesKHR& as_props{props_chain.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()};
-    m_logger.logInfo("RT: acceleration structure scratch alignment = " + std::to_string(as_props.minAccelerationStructureScratchOffsetAlignment)
+    m_as_scratch_alignment = as_props.minAccelerationStructureScratchOffsetAlignment;
+    m_logger.logInfo("RT: acceleration structure scratch alignment = " + std::to_string(m_as_scratch_alignment)
         + ", max instances = " + std::to_string(as_props.maxInstanceCount) + ".");
 }

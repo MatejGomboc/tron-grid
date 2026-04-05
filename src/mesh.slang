@@ -30,7 +30,7 @@ struct ObjectData {
     float4x4 model;
     uint meshlet_offset;
     uint meshlet_count;
-    uint pad0;
+    uint material_type; // 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
     uint pad1;
 };
 
@@ -57,9 +57,10 @@ struct TaskPayload {
 
 struct MeshOutput {
     float4 position : SV_Position;
-    float3 barycentric; // Barycentric coordinates for wireframe edge detection.
-    float3 world_position; // World-space position for shadow ray origin.
-    float3 world_normal; // World-space face normal for shadow ray offset.
+    float3 barycentric : TEXCOORD0; // Barycentric coordinates for wireframe edge detection.
+    float3 world_position : TEXCOORD1; // World-space position for shadow ray origin.
+    nointerpolation float3 world_normal : TEXCOORD2; // World-space face normal (flat shading).
+    nointerpolation uint material_type : TEXCOORD3; // 0 = terrain, 1 = emissive orb.
 };
 
 [[vk::binding(0, 0)]]
@@ -90,12 +91,21 @@ static const float3 OBSIDIAN_COLOUR = float3(0.005, 0.005, 0.01); // Deep black 
 static const float OBSIDIAN_ROUGHNESS = 0.06; // Polished obsidian — sharp but slightly softened reflections.
 
 // Neon tube edges — bright emissive light strips embedded in the floor.
-static const float3 TUBE_EMISSIVE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon.
+// Dual-colour palette: cyan primary grid with orange accents on major grid lines.
+static const float3 CYAN_EMISSIVE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon — primary grid colour.
+static const float3 ORANGE_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Orange neon — accent on major grid lines. Low green survives HDR clamping.
 static const float TUBE_EMISSIVE_STRENGTH = 15.0; // HDR intensity — well above 1.0.
 static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
 
+// Major grid line spacing — every Nth grid cell gets orange neon tubes.
+static const float MAJOR_GRID_SPACING = 8.0;
+
+// Light orb — solid emissive orange ball floating above the grid.
+static const float3 ORB_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Same orange as neon accent.
+static const float ORB_EMISSIVE_STRENGTH = 20.0; // Bright emissive — visible from the ground.
+
 // Edge detection.
-static const float WIRE_WIDTH = 0.03; // Edge thickness in barycentric space.
+static const float WIRE_WIDTH = 0.005; // Edge thickness in barycentric space.
 
 // PBR constants.
 static const float PI = 3.14159265359;
@@ -125,7 +135,8 @@ float V_SmithGGXCorrelated(float NdotV, float NdotL, float roughness)
     float a2 = roughness * roughness;
     float GGXV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
     float GGXL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
-    return 0.5 / (GGXV + GGXL);
+    // Clamp denominator to prevent float16 overflow (inf) at extreme grazing angles.
+    return 0.5 / max(GGXV + GGXL, 1e-4);
 }
 
 // Schlick Fresnel approximation.
@@ -134,23 +145,47 @@ float3 F_Schlick(float cosTheta, float3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Selects the neon tube emissive colour based on world position.
+// Cells along every Nth row or column (major grid lines) glow orange;
+// all other cells glow cyan. Creates a coarse orange supergrid overlay.
+float3 neonEmissiveColour(float3 world_pos)
+{
+    float mod_x = fmod(abs(floor(world_pos.x)), MAJOR_GRID_SPACING);
+    float mod_z = fmod(abs(floor(world_pos.z)), MAJOR_GRID_SPACING);
+    bool is_orange = (mod_x < 0.5) || (mod_z < 0.5);
+    return is_orange ? ORANGE_EMISSIVE_COLOUR : CYAN_EMISSIVE_COLOUR;
+}
+
 // Fragment shader — obsidian floor with neon tube edges, Cook-Torrance PBR, RT shadows.
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
 {
+    // Emissive orb — solid glowing orange ball, no wireframe or PBR.
+    if (input.material_type == 1) {
+        return float4(ORB_EMISSIVE_COLOUR * ORB_EMISSIVE_STRENGTH, 1.0);
+    }
+
     // Edge detection — wire=0 at edges (neon tube), wire=1 on faces (obsidian).
     float edge = min(input.barycentric.x, min(input.barycentric.y, input.barycentric.z));
     float wire = smoothstep(0.0, WIRE_WIDTH, edge);
+
+    // Determine neon tube colour — cyan or orange based on grid position.
+    float3 tube_colour = neonEmissiveColour(input.world_position);
 
     // Blend material properties between neon tube and obsidian.
     float3 base_colour = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, wire);
     float perceptual_roughness = lerp(TUBE_ROUGHNESS, OBSIDIAN_ROUGHNESS, wire);
     float roughness = max(perceptual_roughness * perceptual_roughness, MIN_ROUGHNESS);
-    float3 emissive = lerp(TUBE_EMISSIVE_COLOUR * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
+    float3 emissive = lerp(tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
 
     // Vectors.
+    // Flip normal to face the camera — two-sided lighting prevents steep terrain
+    // slopes from appearing invisible when their face normal points away from the viewer.
     float3 N = normalize(input.world_normal);
     float3 V = normalize(camera.camera_pos - input.world_position);
+    if (dot(N, V) < 0.0) {
+        N = -N;
+    }
     float3 to_light = camera.light_pos - input.world_position;
     float dist_to_light = length(to_light);
     float3 L = to_light / dist_to_light;
@@ -226,13 +261,20 @@ float4 fragMain(MeshOutput input) : SV_Target
         {
             // Evaluate wireframe edge detection at the reflected hit point.
             // hit_bary = (u, v), with w = 1 - u - v.
+            // NOTE: these are raw hardware barycentrics — the diagonal suppression
+            // applied in the mesh shader output is not available here, so reflected
+            // wireframe may show quad diagonals that the direct view suppresses.
             float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
             float bary_w = 1.0 - hit_bary.x - hit_bary.y;
             float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
             float hit_wire = smoothstep(0.0, WIRE_WIDTH, hit_edge);
 
+            // Compute world-space position of the reflected hit for neon colour lookup.
+            float3 hit_pos = reflect_origin + reflect_dir * reflect_query.CommittedRayT();
+            float3 hit_tube_colour = neonEmissiveColour(hit_pos);
+
             // Evaluate material at the reflected hit point.
-            float3 hit_emissive = lerp(TUBE_EMISSIVE_COLOUR * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
+            float3 hit_emissive = lerp(hit_tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
             float3 hit_base = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, hit_wire);
 
             // The reflected colour is primarily the emissive neon tubes.
@@ -270,9 +312,10 @@ void meshMain(
     uint out_vert_count = out_tri_count * 3;
     SetMeshOutputCounts(out_vert_count, out_tri_count);
 
-    // Load the object transform.
+    // Load the object transform and material type.
     float4x4 model = objects[task_payload.object_index].model;
     float4x4 mvp = mul(camera.projection, mul(camera.view, model));
+    uint mat_type = objects[task_payload.object_index].material_type;
 
     // Barycentric coordinate lookup — vertex 0, 1, 2 of each triangle.
     static const float3 BARY[3] = {
@@ -294,22 +337,44 @@ void meshMain(
                 uint(meshlet_triangle_indices[base + 2])
             };
 
-            // Load vertex data — positions and face normal from the terrain vertex buffer.
+            // Load all 3 vertices for this triangle.
             // Terrain uses flat shading: all 3 vertices share the same pre-computed normal.
             uint vert_base = tri_index * 3;
 
+            float3 positions[3];
+            float3 normals[3];
+            float diagonal_flags[3];
             for (uint v = 0; v < 3; ++v) {
                 uint global_idx = meshlet_vertex_indices[meshlet.vertex_offset + local_indices[v]];
                 Vertex vtx = vertices[global_idx];
-                float3 pos = float3(vtx.pos_x, vtx.pos_y, vtx.pos_z);
-                float3 normal = float3(vtx.norm_x, vtx.norm_y, vtx.norm_z);
-                float4 world_pos = mul(model, float4(pos, 1.0));
+                positions[v] = float3(vtx.pos_x, vtx.pos_y, vtx.pos_z);
+                normals[v] = float3(vtx.norm_x, vtx.norm_y, vtx.norm_z);
+                diagonal_flags[v] = vtx.uv_x;
+            }
+
+            // Find which vertex is opposite the quad diagonal edge.
+            // That vertex has uv_x = 1.0 (set by the terrain generator).
+            // Adding its barycentric component to all 3 vertices pushes the
+            // diagonal's interpolated value above the wireframe threshold,
+            // effectively merging coplanar triangle pairs into quads.
+            float3 diagonal_mask = float3(0.0, 0.0, 0.0);
+            for (uint d = 0; d < 3; ++d) {
+                if (diagonal_flags[d] > 0.5) {
+                    diagonal_mask = BARY[d];
+                    break;
+                }
+            }
+
+            // Output vertices with diagonal-suppressed barycentrics.
+            for (uint v = 0; v < 3; ++v) {
+                float4 world_pos = mul(model, float4(positions[v], 1.0));
 
                 MeshOutput output;
-                output.position = mul(mvp, float4(pos, 1.0));
-                output.barycentric = BARY[v];
+                output.position = mul(mvp, float4(positions[v], 1.0));
+                output.barycentric = BARY[v] + diagonal_mask;
                 output.world_position = world_pos.xyz;
-                output.world_normal = normal;
+                output.world_normal = mul((float3x3)model, normals[v]);
+                output.material_type = mat_type;
                 out_vertices[vert_base + v] = output;
             }
 

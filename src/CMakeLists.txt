@@ -19,6 +19,16 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${Vulkan_INCLUDE_DIRS}
 )
 
+# Vulkan-specific definitions — scoped to this target only.
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    VK_NO_PROTOTYPES
+    VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
+    VMA_STATIC_VULKAN_FUNCTIONS=0
+    VMA_DYNAMIC_VULKAN_FUNCTIONS=0
+    $<$<PLATFORM_ID:Windows>:VK_USE_PLATFORM_WIN32_KHR NOMINMAX WIN32_LEAN_AND_MEAN>
+    $<$<PLATFORM_ID:Linux>:VK_USE_PLATFORM_XCB_KHR>
+)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
     window
     signals
@@ -48,7 +58,7 @@ add_custom_command(
         -entry vertMain
         -entry fragMain
         -o ${SHADER_OUTPUT_DIR}/triangle.spv
-    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/triangle.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/triangle.spv
     DEPENDS ${TRIANGLE_SOURCE}
     COMMENT "Compiling triangle.slang -> triangle.spv (with validation)"
     VERBATIM
@@ -67,7 +77,7 @@ add_custom_command(
         -warnings-as-errors all
         -entry cullMain
         -o ${SHADER_OUTPUT_DIR}/cull.spv
-    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/cull.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/cull.spv
     DEPENDS ${CULL_SOURCE}
     COMMENT "Compiling cull.slang -> cull.spv (with validation)"
     VERBATIM
@@ -87,7 +97,7 @@ add_custom_command(
         -warnings-as-errors all
         -entry taskMain
         -o ${SHADER_OUTPUT_DIR}/task.spv
-    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/task.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/task.spv
     DEPENDS ${TASK_SOURCE}
     COMMENT "Compiling task.slang -> task.spv (with validation)"
     VERBATIM
@@ -106,12 +116,13 @@ add_custom_command(
         -entry meshMain
         -entry fragMain
         -o ${SHADER_OUTPUT_DIR}/mesh.spv
-    COMMAND ${SPIRV_VAL_EXECUTABLE} ${SHADER_OUTPUT_DIR}/mesh.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/mesh.spv
     DEPENDS ${MESH_SOURCE}
     COMMENT "Compiling mesh.slang -> mesh.spv (with validation)"
     VERBATIM
 )
 
+# Compile shaders — ALL target ensures they build even when the executable is up to date.
 add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/triangle.spv
     ${SHADER_OUTPUT_DIR}/cull.spv
@@ -120,20 +131,21 @@ add_custom_target(shaders ALL DEPENDS
 )
 add_dependencies(${PROJECT_NAME} shaders)
 
-# Copy compiled shaders next to the executable
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+# Copy compiled shaders next to the executable.
+# Uses an ALL custom target with explicit dependency on the shaders target
+# so the copy always runs after shader compilation — unlike POST_BUILD
+# which only triggers when the executable itself is relinked.
+# copy_if_different makes this a no-op when files are unchanged.
+add_custom_target(copy_shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/triangle.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/triangle.spv
+        ${SHADER_OUTPUT_DIR}/triangle.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/triangle.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/cull.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/cull.spv
+        ${SHADER_OUTPUT_DIR}/cull.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/cull.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/task.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/task.spv
+        ${SHADER_OUTPUT_DIR}/task.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/task.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/mesh.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/mesh.spv
+        ${SHADER_OUTPUT_DIR}/mesh.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/mesh.spv
     COMMENT "Copying shaders to output directory"
     VERBATIM
 )
+add_dependencies(copy_shaders shaders)

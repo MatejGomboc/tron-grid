@@ -19,7 +19,7 @@
 #include <cstring>
 
 //! Looks up or creates an X11 atom by name.
-static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
+[[nodiscard]] static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
 {
     xcb_intern_atom_cookie_t cookie{xcb_intern_atom(conn, 0, strlen(name), name)};
     xcb_intern_atom_reply_t* reply{xcb_intern_atom_reply(conn, cookie, nullptr)};
@@ -165,9 +165,18 @@ namespace WindowLib
             xcb_create_cursor(m_connection, cursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 0, 0);
             xcb_free_pixmap(m_connection, pixmap);
 
-            // Grab pointer with invisible cursor
-            xcb_grab_pointer(m_connection, 1, m_window, XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION, XCB_GRAB_MODE_ASYNC,
-                XCB_GRAB_MODE_ASYNC, m_window, cursor, XCB_CURRENT_TIME);
+            // Grab pointer with invisible cursor.
+            xcb_grab_pointer_cookie_t grab_cookie{xcb_grab_pointer(m_connection, 1, m_window,
+                XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, m_window, cursor,
+                XCB_CURRENT_TIME)};
+            xcb_grab_pointer_reply_t* grab_reply{xcb_grab_pointer_reply(m_connection, grab_cookie, nullptr)};
+            if (grab_reply != nullptr) {
+                bool grab_ok{grab_reply->status == XCB_GRAB_STATUS_SUCCESS};
+                free(grab_reply);
+                if (!grab_ok) {
+                    m_cursor_captured = false;
+                }
+            }
 
             // Centre cursor
             xcb_warp_pointer(m_connection, XCB_NONE, m_window, 0, 0, 0, 0, static_cast<int16_t>(m_width / 2), static_cast<int16_t>(m_height / 2));

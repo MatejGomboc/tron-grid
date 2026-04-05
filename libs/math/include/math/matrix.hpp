@@ -17,6 +17,7 @@
 #include "math/vector.hpp"
 #include <array>
 #include <cmath>
+#include <cstdint>
 
 namespace MathLib
 {
@@ -96,8 +97,8 @@ namespace MathLib
         [[nodiscard]] constexpr Mat4 transposed() const
         {
             Mat4 result{};
-            for (int col = 0; col < 4; ++col) {
-                for (int row = 0; row < 4; ++row) {
+            for (uint32_t col{0}; col < 4; ++col) {
+                for (uint32_t row{0}; row < 4; ++row) {
                     result.m[col][row] = m[row][col];
                 }
             }
@@ -119,8 +120,8 @@ namespace MathLib
         [[nodiscard]] constexpr Mat4 operator*(const Mat4& other) const
         {
             Mat4 result{};
-            for (int col = 0; col < 4; ++col) {
-                for (int row = 0; row < 4; ++row) {
+            for (uint32_t col{0}; col < 4; ++col) {
+                for (uint32_t row{0}; row < 4; ++row) {
                     result.m[col][row] = m[0][row] * other.m[col][0] + m[1][row] * other.m[col][1] + m[2][row] * other.m[col][2] + m[3][row] * other.m[col][3];
                 }
             }

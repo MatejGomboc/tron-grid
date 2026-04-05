@@ -16,7 +16,7 @@
 #include <cmath>
 
 //! Simple hash-based value noise (deterministic, no external dependencies).
-static float valueNoise(float x, float z, uint32_t seed)
+[[nodiscard]] static float valueNoise(float x, float z, uint32_t seed)
 {
     // Hash the integer coordinates.
     int32_t ix{static_cast<int32_t>(std::floor(x))};
@@ -32,7 +32,8 @@ static float valueNoise(float x, float z, uint32_t seed)
 
     // Hash function — produces pseudo-random values from integer coordinates.
     auto hash = [seed](int32_t px, int32_t pz) -> float {
-        uint32_t h{static_cast<uint32_t>(px * 374761393 + pz * 668265263 + seed * 1274126177)};
+        // Use unsigned arithmetic to avoid signed integer overflow UB.
+        uint32_t h{static_cast<uint32_t>(px) * 374761393u + static_cast<uint32_t>(pz) * 668265263u + seed * 1274126177u};
         h = (h ^ (h >> 13)) * 1103515245;
         h = h ^ (h >> 16);
         return static_cast<float>(h & 0x7FFFFFFF) / static_cast<float>(0x7FFFFFFF);
@@ -50,7 +51,7 @@ static float valueNoise(float x, float z, uint32_t seed)
 }
 
 //! Layered noise (octaves) for terrain detail.
-static float layeredNoise(float x, float z, uint32_t octaves, float frequency, uint32_t seed)
+[[nodiscard]] static float layeredNoise(float x, float z, uint32_t octaves, float frequency, uint32_t seed)
 {
     float value{0.0f};
     float amplitude{1.0f};
@@ -123,11 +124,12 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
             MathLib::Vec3 p11{x1, h11, z1};
 
             // Triangle 1: p00, p10, p01.
+            // p00 is opposite the diagonal (p10-p01) — flag with uv.x = 1.0.
             MathLib::Vec3 n1{(p01 - p00).cross(p10 - p00).normalised()};
             result.positions.push_back(p00);
             result.positions.push_back(p10);
             result.positions.push_back(p01);
-            result.vertices.push_back({{p00.x, p00.y, p00.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}});
+            result.vertices.push_back({{p00.x, p00.y, p00.z}, {n1.x, n1.y, n1.z}, {1.0f, 0.0f}});
             result.vertices.push_back({{p10.x, p10.y, p10.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}});
             result.vertices.push_back({{p01.x, p01.y, p01.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}});
             result.indices.push_back(vertex_index++);
@@ -135,12 +137,13 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
             result.indices.push_back(vertex_index++);
 
             // Triangle 2: p10, p11, p01.
+            // p11 is opposite the diagonal (p10-p01) — flag with uv.x = 1.0.
             MathLib::Vec3 n2{(p01 - p10).cross(p11 - p10).normalised()};
             result.positions.push_back(p10);
             result.positions.push_back(p11);
             result.positions.push_back(p01);
             result.vertices.push_back({{p10.x, p10.y, p10.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}});
-            result.vertices.push_back({{p11.x, p11.y, p11.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}});
+            result.vertices.push_back({{p11.x, p11.y, p11.z}, {n2.x, n2.y, n2.z}, {1.0f, 0.0f}});
             result.vertices.push_back({{p01.x, p01.y, p01.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}});
             result.indices.push_back(vertex_index++);
             result.indices.push_back(vertex_index++);
@@ -156,7 +159,7 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
             max_dist = dist;
         }
     }
-    result.bounding_radius = max_dist;
 
+    result.bounding_radius = max_dist;
     return result;
 }

@@ -165,10 +165,10 @@ namespace MathLib
         f.planes[5] = {vp.m[0][3] - vp.m[0][2], vp.m[1][3] - vp.m[1][2], vp.m[2][3] - vp.m[2][2], vp.m[3][3] - vp.m[3][2]};
 
         // Normalise planes so distance tests give true distances
-        for (int i = 0; i < 6; ++i) {
-            float len = Vec3{f.planes[i].x, f.planes[i].y, f.planes[i].z}.length();
+        for (uint32_t i{0}; i < 6; ++i) {
+            float len{Vec3{f.planes[i].x, f.planes[i].y, f.planes[i].z}.length()};
             if (len > 0.0f) {
-                float inv = 1.0f / len;
+                float inv{1.0f / len};
                 f.planes[i] = {f.planes[i].x * inv, f.planes[i].y * inv, f.planes[i].z * inv, f.planes[i].w * inv};
             }
         }
@@ -186,7 +186,7 @@ namespace MathLib
     */
     [[nodiscard]] inline bool isInsideFrustum(const Frustum& frustum, const Vec3& centre, float radius)
     {
-        for (int i = 0; i < 6; ++i) {
+        for (uint32_t i{0}; i < 6; ++i) {
             float distance = frustum.planes[i].x * centre.x + frustum.planes[i].y * centre.y + frustum.planes[i].z * centre.z + frustum.planes[i].w;
             if (distance < -radius) {
                 return false;

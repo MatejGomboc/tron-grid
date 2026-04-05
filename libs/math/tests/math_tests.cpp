@@ -99,7 +99,7 @@ TEST_CASE(vec2_arithmetic)
 TEST_CASE(vec3_default_zero)
 {
     MathLib::Vec3 v;
-    TEST_CHECK(v.x == 0.0f && v.y == 0.0f && v.z == 0.0f);
+    TEST_CHECK((v.x == 0.0f) && (v.y == 0.0f) && (v.z == 0.0f));
 }
 
 TEST_CASE(vec3_dot)
@@ -273,7 +273,7 @@ TEST_CASE(mat4_data_pointer)
 TEST_CASE(quat_identity)
 {
     MathLib::Quat q{MathLib::Quat::identity()};
-    TEST_CHECK(q.w == 1.0f && q.x == 0.0f && q.y == 0.0f && q.z == 0.0f);
+    TEST_CHECK((q.w == 1.0f) && (q.x == 0.0f) && (q.y == 0.0f) && (q.z == 0.0f));
 }
 
 TEST_CASE(quat_from_axis_angle_identity)
@@ -449,7 +449,7 @@ TEST_CASE(vec2_compound_assignment)
 TEST_CASE(vec4_default_zero)
 {
     MathLib::Vec4 v;
-    TEST_CHECK(v.x == 0.0f && v.y == 0.0f && v.z == 0.0f && v.w == 0.0f);
+    TEST_CHECK((v.x == 0.0f) && (v.y == 0.0f) && (v.z == 0.0f) && (v.w == 0.0f));
 }
 
 TEST_CASE(vec4_arithmetic)

@@ -24,7 +24,7 @@
 constexpr uint32_t MAX_MESHLET_VERTICES{64};
 
 //! Maximum triangles per meshlet. Limited to 84 to support barycentric vertex
-//! duplication in the mesh shader (84 × 3 = 252 vertices ≤ 255 output limit).
+//! duplication in the mesh shader (84 × 3 = 252 vertices ≤ 256 output limit).
 constexpr uint32_t MAX_MESHLET_TRIANGLES{84};
 
 //! Describes one meshlet — a small fixed-size chunk of mesh geometry.
@@ -32,7 +32,7 @@ struct Meshlet {
     uint32_t vertex_offset{0}; //!< Offset into the meshlet vertex index buffer.
     uint32_t vertex_count{0}; //!< Number of unique vertices (max 64).
     uint32_t triangle_offset{0}; //!< Offset into the meshlet triangle index buffer.
-    uint32_t triangle_count{0}; //!< Number of triangles (max 124).
+    uint32_t triangle_count{0}; //!< Number of triangles (max 84).
 };
 
 //! Bounding sphere for per-meshlet frustum culling (local space).

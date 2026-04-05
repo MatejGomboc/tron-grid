@@ -41,10 +41,12 @@ std::string executableDirectory()
     if (path_len == 0 || path_len >= MAX_PATH) {
         return {};
     }
+
     int len{WideCharToMultiByte(CP_UTF8, 0, wide_path, -1, nullptr, 0, nullptr, nullptr)};
     if (len <= 0) {
         return {};
     }
+
     std::string narrow(static_cast<std::string::size_type>(len - 1), '\0');
     WideCharToMultiByte(CP_UTF8, 0, wide_path, -1, narrow.data(), len, nullptr, nullptr);
     std::string::size_type pos{narrow.find_last_of("\\/")};
@@ -75,6 +77,10 @@ std::vector<uint32_t> loadSpirv(const std::string& path, LoggingLib::Logger& log
     std::vector<uint32_t> buffer(static_cast<std::vector<uint32_t>::size_type>(file_size) / sizeof(uint32_t));
     file.seekg(0);
     file.read(reinterpret_cast<char*>(buffer.data()), file_size);
+    if (!file.good()) {
+        logger.logFatal("Failed to read SPIR-V file: " + path + ".");
+        std::abort();
+    }
 
     logger.logInfo("Loaded SPIR-V: " + path + " (" + std::to_string(file_size) + " bytes).");
     return buffer;

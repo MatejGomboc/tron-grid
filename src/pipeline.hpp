@@ -49,7 +49,7 @@ struct ObjectData {
     MathLib::Mat4 model{}; //!< Model-to-world transform.
     uint32_t meshlet_offset{0}; //!< First meshlet index for this object's mesh.
     uint32_t meshlet_count{0}; //!< Number of meshlets for this object's mesh.
-    uint32_t pad0{0}; //!< Padding to 16-byte alignment.
+    uint32_t material_type{0}; //!< Material type: 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
     uint32_t pad1{0}; //!< Padding to 16-byte alignment.
 };
 

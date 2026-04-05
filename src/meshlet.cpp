@@ -18,7 +18,7 @@
 #include <unordered_map>
 
 //! Computes the bounding sphere of a set of vertex positions.
-static MeshletBounds computeBoundingSphere(const std::vector<MathLib::Vec3>& positions)
+[[nodiscard]] static MeshletBounds computeBoundingSphere(const std::vector<MathLib::Vec3>& positions)
 {
     if (positions.empty()) {
         return {};
