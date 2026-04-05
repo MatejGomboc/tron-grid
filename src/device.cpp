@@ -110,11 +110,9 @@ struct QueueFamilyIndices {
         return -1;
     }
 
-    vk::PhysicalDeviceVulkan12Features vulkan12{};
-    vulkan12.sType = vk::StructureType::ePhysicalDeviceVulkan12Features;
-    vk::PhysicalDeviceFeatures2 features2{};
-    features2.pNext = &vulkan12;
-    device.getFeatures2(&features2);
+    vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features> features_chain{
+        device.getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features>()};
+    const vk::PhysicalDeviceVulkan12Features& vulkan12{features_chain.get<vk::PhysicalDeviceVulkan12Features>()};
 
     if ((!vulkan12.bufferDeviceAddress) || (!vulkan12.shaderInt8) || (!vulkan12.storageBuffer8BitAccess)) {
         return -1;
