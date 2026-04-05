@@ -358,6 +358,8 @@ Less desaturation but no toe (blacks stay linear).
 
 ## References
 
+### PBR and Microfacet Theory
+
 - [PBRT 4th Ed — Roughness Using Microfacet Theory](https://www.pbr-book.org/4ed/Reflection_Models/Roughness_Using_Microfacet_Theory)
 - [Google Filament — PBR Material Model](https://google.github.io/filament/Filament.html)
 - [LearnOpenGL — PBR Theory](https://learnopengl.com/PBR/Theory)
@@ -366,7 +368,79 @@ Less desaturation but no toe (blacks stay linear).
 - [Burley 2012 — Physically Based Shading at Disney](https://media.disneyanimation.com/uploads/production_asset/48/asset/s2012_pbs_disney_brdf_notes_v3.pdf)
 - [Kulla & Conty 2017 — Multi-Scattering Compensation](https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf)
 - [Nathan Reed — How Is The NDF Really Defined?](https://www.reedbeta.com/blog/hows-the-ndf-really-defined/)
+
+### Tonemapping and HDR
+
+- [Narkowicz 2016 — ACES Filmic Tone Mapping Curve](https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/)
+- [64 — Tone Mapping (comprehensive comparison)](https://64.github.io/tonemapping/)
+- [c0de517e — Tonemapping on HDR Displays](http://c0de517e.blogspot.com/2017/02/tonemapping-on-hdr-displays-aces-to.html)
+
+### Bloom
+
+- [LearnOpenGL — Physically Based Bloom](https://learnopengl.com/Guest-Articles/2022/Phys.-Based-Bloom)
+- [LearnOpenGL — Bloom (classic two-pass Gaussian)](https://learnopengl.com/Advanced-Lighting/Bloom)
+- [Catlike Coding — Bloom (mip chain downsample/upsample)](https://catlikecoding.com/unity/tutorials/advanced-rendering/bloom/)
+
+### Ray Tracing and Light Sampling
+
 - [Khronos — Ray Tracing Best Practices for Hybrid Rendering](https://www.khronos.org/blog/vulkan-ray-tracing-best-practices-for-hybrid-rendering)
+- [NVIDIA — RTXDI (ReSTIR Direct Illumination)](https://developer.nvidia.com/rtx/ray-tracing/rtxdi)
+- [NVIDIA Blog — Lighting with Millions of Lights Using RTXDI](https://developer.nvidia.com/blog/lighting-scenes-with-millions-of-lights-using-rtx-direct-illumination/)
+- [Bitterli et al. — Spatiotemporal Reservoir Resampling (ReSTIR)](https://github.com/NVIDIA-RTX/RTXDI)
+- [NVIDIA — Cyberpunk 2077 RT Overdrive Interview](https://www.nvidia.com/en-us/geforce/news/cyberpunk-2077-ray-tracing-overdrive-mode-interview/)
+- [SIGGRAPH 2025 — Vulkan Ray Tracing with Dynamic Rendering](https://docs.vulkan.org/tutorial/latest/courses/18_Ray_tracing/00_Overview.html)
+
+### Volumetric Fog
+
+- [Wronski 2014 — Volumetric Fog (SIGGRAPH, froxel raymarching)](https://bartwronski.com/wp-content/uploads/2014/08/bwronski_volumetric_fog_siggraph2014.pdf)
+- [diharaw — Volumetric Fog (OpenGL compute, frustum-aligned voxels)](https://github.com/diharaw/volumetric-fog)
+- [Meteoros — Real-time Cloudscapes in Vulkan (Decima Engine)](https://github.com/AmanSachan1/Meteoros)
+
+### Transparency
+
+- [NVIDIA — 7 OIT Techniques in Vulkan](https://github.com/nvpro-samples/vk_order_independent_transparency)
+- [Vulkan Docs — OIT with Per-Pixel Ordered Linked Lists](https://docs.vulkan.org/samples/latest/samples/api/oit_linked_lists/README.html)
+- [LearnOpenGL — Weighted Blended OIT](https://learnopengl.com/Guest-Articles/2020/OIT/Weighted-Blended)
+- [Tsopouridis 2024 — Deep and Fast Approximate OIT](https://onlinelibrary.wiley.com/doi/10.1111/cgf.15071)
+
+### GPU Particle Systems
+
+- [Vulkan Tutorial — Compute Shader (particle system)](https://vulkan-tutorial.com/Compute_Shader)
+- [Sascha Willems — Vulkan Compute Particles](https://github.com/SaschaWillems/Vulkan/blob/master/examples/computeparticles/computeparticles.cpp)
+- [Intel — Parallel Particle Systems Using Vulkan](https://www.intel.cn/content/dam/develop/external/us/en/documents/paralleltechniquesinmodelingparticlesystemsusingvulkanapi-754322.pdf)
+
+### Nanite-Like Adaptive LOD
+
+- [Epic — Nanite Virtualized Geometry (UE5 Docs)](https://dev.epicgames.com/documentation/unreal-engine/nanite-virtualized-geometry-in-unreal-engine)
+- [Medium — Nanite: Epic's Practical Implementation](https://medium.com/@GroundZer0/nanite-epics-practical-implementation-of-virtualized-geometry-e6a9281e7f52)
+- [jglrxavpok 2024 — Recreating Nanite: Mesh Shader Time](https://blog.jglrxavpok.eu/2024/05/13/recreating-nanite-mesh-shader-time.html)
+- [Vulcanite — Nanite-like Vulkan Implementation](https://github.com/bdwhst/Vulcanite)
+
+### Cinematic Post-Processing (CRT, Chromatic Aberration, Vignette)
+
+- [GM Shaders — CRT Effect Breakdown](https://mini.gmshaders.com/p/gm-shaders-mini-crt)
+- [Babylon.js — Retro CRT Shader Study](https://babylonjs.medium.com/retro-crt-shader-a-post-processing-effect-study-1cb3f783afbc)
+- [Cyan — CRT Shader Breakdown](https://cyangamedev.wordpress.com/2020/09/10/retro-crt-shader-breakdown/)
+
+### Procedural Sky and Clouds
+
+- [keijiro — Volumetric Cloud Skybox Shader](https://github.com/keijiro/CloudSkybox)
+- [shff — Pure-Shader Procedural Sky (OpenGL)](https://github.com/shff/opengl_sky)
+- [Heckel — Real-time Cloudscapes with Volumetric Raymarching](https://blog.maximeheckel.com/posts/real-time-cloudscapes-with-volumetric-raymarching/)
+
+### Light Trails and Glow
+
+- [NVIDIA GPU Gems — Real-Time Glow](https://developer.nvidia.com/gpugems/gpugems/part-iv-image-processing/chapter-21-real-time-glow)
+- [Gamasutra — Real-Time Glow Technique](https://www.gamedeveloper.com/programming/real-time-glow)
+
+### Industry Rendering Analyses
+
+- [c0de517e — Cyberpunk 2077 Rendering Analysis](http://c0de517e.blogspot.com/2020/12/hallucinations-re-rendering-of.html)
+- [zhangdoa — Cyberpunk 2077 Frame Analysis](https://zhangdoa.com/rendering-analysis-cyberpunk-2077/)
+- [AMD GPUOpen — Porting Detroit: Become Human (Vulkan)](https://gpuopen.com/learn/porting-detroit-1/)
+- [Quantic Dream — Detroit: A Vulkan in the Engine](https://blog.quanticdream.com/detroit-a-vulkan-in-the-engine/)
+- [GMUNK — TRON: Legacy VFX](https://gmunk.com/TRON-Legacy)
+- [Front Effects — TRON Legacy Digital World Breakdown](https://fronteffects.wordpress.com/2014/05/20/tron-legacy-2010-the-computer-world-of-tron-seen-28-years-later/)
 
 ---
 
