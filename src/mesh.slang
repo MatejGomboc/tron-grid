@@ -57,10 +57,10 @@ struct TaskPayload {
 
 struct MeshOutput {
     float4 position : SV_Position;
-    float3 barycentric; // Barycentric coordinates for wireframe edge detection.
-    float3 world_position; // World-space position for shadow ray origin.
-    float3 world_normal; // World-space face normal for shadow ray offset.
-    nointerpolation uint material_type; // 0 = terrain, 1 = emissive orb.
+    float3 barycentric : TEXCOORD0; // Barycentric coordinates for wireframe edge detection.
+    float3 world_position : TEXCOORD1; // World-space position for shadow ray origin.
+    nointerpolation float3 world_normal : TEXCOORD2; // World-space face normal (flat shading).
+    nointerpolation uint material_type : TEXCOORD3; // 0 = terrain, 1 = emissive orb.
 };
 
 [[vk::binding(0, 0)]]

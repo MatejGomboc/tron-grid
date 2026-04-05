@@ -15,6 +15,7 @@
 #include "device.hpp"
 #include "instance.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <ranges>
 #include <set>
@@ -23,7 +24,7 @@
 #include <vector>
 
 //! Required device extensions.
-static constexpr const char* REQUIRED_DEVICE_EXTENSIONS[] = {
+static constexpr std::array REQUIRED_DEVICE_EXTENSIONS{
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
     VK_EXT_MESH_SHADER_EXTENSION_NAME,
     VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
@@ -135,7 +136,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     int best_score{-1};
     size_t best_index{0};
 
-    for (size_t i = 0; i < physical_devices.size(); ++i) {
+    for (size_t i{0}; i < physical_devices.size(); ++i) {
         int score{rateDevice(physical_devices[i], surface)};
         vk::PhysicalDeviceProperties props{physical_devices[i].getProperties()};
         m_logger.logInfo("GPU " + std::to_string(i) + ": " + props.deviceName.data() + " (score: " + std::to_string(score) + ").");

@@ -75,6 +75,10 @@ std::vector<uint32_t> loadSpirv(const std::string& path, LoggingLib::Logger& log
     std::vector<uint32_t> buffer(static_cast<std::vector<uint32_t>::size_type>(file_size) / sizeof(uint32_t));
     file.seekg(0);
     file.read(reinterpret_cast<char*>(buffer.data()), file_size);
+    if (!file.good()) {
+        logger.logFatal("Failed to read SPIR-V file: " + path + ".");
+        std::abort();
+    }
 
     logger.logInfo("Loaded SPIR-V: " + path + " (" + std::to_string(file_size) + " bytes).");
     return buffer;

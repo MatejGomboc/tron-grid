@@ -145,7 +145,7 @@ namespace MathLib
                     .normalised();
             }
 
-            float theta = std::acos(cos_theta);
+            float theta = std::acos(std::min(cos_theta, 1.0f));
             float sin_theta = std::sin(theta);
             float wa = std::sin((1.0f - t) * theta) / sin_theta;
             float wb = std::sin(t * theta) / sin_theta;
