@@ -97,7 +97,7 @@ void Swapchain::recreate(uint32_t width, uint32_t height)
 void Swapchain::build(uint32_t width, uint32_t height)
 {
     // Guard against zero-extent (minimised window) — Vulkan requires imageExtent > 0.
-    if (width == 0 || height == 0) {
+    if ((width == 0) || (height == 0)) {
         return;
     }
 

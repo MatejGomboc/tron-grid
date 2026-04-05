@@ -106,7 +106,7 @@ struct QueueFamilyIndices {
 
     // Must support required features.
     vk::PhysicalDeviceFeatures features{device.getFeatures()};
-    if (!features.multiDrawIndirect || !features.shaderStorageBufferArrayDynamicIndexing || !features.shaderStorageImageWriteWithoutFormat) {
+    if ((!features.multiDrawIndirect) || (!features.shaderStorageBufferArrayDynamicIndexing) || (!features.shaderStorageImageWriteWithoutFormat)) {
         return -1;
     }
 
@@ -116,7 +116,7 @@ struct QueueFamilyIndices {
     features2.pNext = &vulkan12;
     device.getFeatures2(&features2);
 
-    if (!vulkan12.bufferDeviceAddress || !vulkan12.shaderInt8 || !vulkan12.storageBuffer8BitAccess) {
+    if ((!vulkan12.bufferDeviceAddress) || (!vulkan12.shaderInt8) || (!vulkan12.storageBuffer8BitAccess)) {
         return -1;
     }
 

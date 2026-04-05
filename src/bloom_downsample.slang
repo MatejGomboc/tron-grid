@@ -54,7 +54,7 @@ void bloomExtractMain(uint3 thread_id : SV_DispatchThreadID)
     uint dst_h;
     bloom_dst.GetDimensions(dst_w, dst_h);
 
-    if (thread_id.x >= dst_w || thread_id.y >= dst_h)
+    if ((thread_id.x >= dst_w) || (thread_id.y >= dst_h))
     {
         return;
     }
@@ -104,7 +104,7 @@ void bloomDownsampleMain(uint3 thread_id : SV_DispatchThreadID)
     uint dst_h;
     bloom_dst.GetDimensions(dst_w, dst_h);
 
-    if (thread_id.x >= dst_w || thread_id.y >= dst_h)
+    if ((thread_id.x >= dst_w) || (thread_id.y >= dst_h))
     {
         return;
     }
