@@ -100,7 +100,7 @@ static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
 static const float MAJOR_GRID_SPACING = 8.0;
 
 // Edge detection.
-static const float WIRE_WIDTH = 0.01; // Edge thickness in barycentric space.
+static const float WIRE_WIDTH = 0.005; // Edge thickness in barycentric space.
 
 // PBR constants.
 static const float PI = 3.14159265359;
@@ -322,22 +322,43 @@ void meshMain(
                 uint(meshlet_triangle_indices[base + 2])
             };
 
-            // Load vertex data — positions and face normal from the terrain vertex buffer.
+            // Load all 3 vertices for this triangle.
             // Terrain uses flat shading: all 3 vertices share the same pre-computed normal.
             uint vert_base = tri_index * 3;
 
+            float3 positions[3];
+            float3 normals[3];
+            float diagonal_flags[3];
             for (uint v = 0; v < 3; ++v) {
                 uint global_idx = meshlet_vertex_indices[meshlet.vertex_offset + local_indices[v]];
                 Vertex vtx = vertices[global_idx];
-                float3 pos = float3(vtx.pos_x, vtx.pos_y, vtx.pos_z);
-                float3 normal = float3(vtx.norm_x, vtx.norm_y, vtx.norm_z);
-                float4 world_pos = mul(model, float4(pos, 1.0));
+                positions[v] = float3(vtx.pos_x, vtx.pos_y, vtx.pos_z);
+                normals[v] = float3(vtx.norm_x, vtx.norm_y, vtx.norm_z);
+                diagonal_flags[v] = vtx.uv_x;
+            }
+
+            // Find which vertex is opposite the quad diagonal edge.
+            // That vertex has uv_x = 1.0 (set by the terrain generator).
+            // Adding its barycentric component to all 3 vertices pushes the
+            // diagonal's interpolated value above the wireframe threshold,
+            // effectively merging coplanar triangle pairs into quads.
+            float3 diagonal_mask = float3(0.0, 0.0, 0.0);
+            for (uint d = 0; d < 3; ++d) {
+                if (diagonal_flags[d] > 0.5) {
+                    diagonal_mask = BARY[d];
+                    break;
+                }
+            }
+
+            // Output vertices with diagonal-suppressed barycentrics.
+            for (uint v = 0; v < 3; ++v) {
+                float4 world_pos = mul(model, float4(positions[v], 1.0));
 
                 MeshOutput output;
-                output.position = mul(mvp, float4(pos, 1.0));
-                output.barycentric = BARY[v];
+                output.position = mul(mvp, float4(positions[v], 1.0));
+                output.barycentric = BARY[v] + diagonal_mask;
                 output.world_position = world_pos.xyz;
-                output.world_normal = normal;
+                output.world_normal = normals[v];
                 out_vertices[vert_base + v] = output;
             }
 
