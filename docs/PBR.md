@@ -243,6 +243,39 @@ glossy sheen — the characteristic obsidian look.
 
 ---
 
+## Neon Tube Dual-Colour Palette
+
+The Tron aesthetic uses two neon colours: cyan as the primary grid colour
+and orange as an accent on major grid lines. This matches the concept art
+(`images/landscape_dark.png`, `images/landscape_light.png`) where both
+colours appear in the floor grid.
+
+| Colour | Linear RGB | Role |
+|--------|-----------|------|
+| Cyan | (0.0, 0.8, 1.0) | Primary grid — most cells |
+| Orange | (1.0, 0.53, 0.0) | Accent — major grid lines (every 8th row/column) |
+
+### Pattern Logic
+
+The `neonEmissiveColour()` function in `mesh.slang` selects the emissive
+colour based on the world-space position of the fragment:
+
+```hlsl
+float mod_x = fmod(abs(floor(world_pos.x)), MAJOR_GRID_SPACING);
+float mod_z = fmod(abs(floor(world_pos.z)), MAJOR_GRID_SPACING);
+bool is_orange = (mod_x < 0.5) || (mod_z < 0.5);
+```
+
+Cells whose X or Z coordinate falls on a multiple of `MAJOR_GRID_SPACING`
+(8) get orange neon tubes. All other cells get cyan. This creates a coarse
+orange supergrid overlay on top of the finer cyan grid — approximately 23%
+of cells are orange.
+
+The same function is used for both primary fragments and reflection hit
+points, ensuring reflected neon tubes display the correct colour.
+
+---
+
 ## HDR Pipeline
 
 ### Why HDR?
@@ -337,4 +370,4 @@ Less desaturation but no toe (blacks stay linear).
 
 ---
 
-*Last updated: 2026-03-28*
+*Last updated: 2026-04-05*

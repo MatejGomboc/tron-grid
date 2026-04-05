@@ -90,12 +90,17 @@ static const float3 OBSIDIAN_COLOUR = float3(0.005, 0.005, 0.01); // Deep black 
 static const float OBSIDIAN_ROUGHNESS = 0.06; // Polished obsidian — sharp but slightly softened reflections.
 
 // Neon tube edges — bright emissive light strips embedded in the floor.
-static const float3 TUBE_EMISSIVE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon.
+// Dual-colour palette: cyan primary grid with orange accents on major grid lines.
+static const float3 CYAN_EMISSIVE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon — primary grid colour.
+static const float3 ORANGE_EMISSIVE_COLOUR = float3(1.0, 0.53, 0.0); // Orange neon — accent on major grid lines.
 static const float TUBE_EMISSIVE_STRENGTH = 15.0; // HDR intensity — well above 1.0.
 static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
 
+// Major grid line spacing — every Nth grid cell gets orange neon tubes.
+static const float MAJOR_GRID_SPACING = 8.0;
+
 // Edge detection.
-static const float WIRE_WIDTH = 0.03; // Edge thickness in barycentric space.
+static const float WIRE_WIDTH = 0.01; // Edge thickness in barycentric space.
 
 // PBR constants.
 static const float PI = 3.14159265359;
@@ -134,6 +139,17 @@ float3 F_Schlick(float cosTheta, float3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Selects the neon tube emissive colour based on world position.
+// Cells along every Nth row or column (major grid lines) glow orange;
+// all other cells glow cyan. Creates a coarse orange supergrid overlay.
+float3 neonEmissiveColour(float3 world_pos)
+{
+    float mod_x = fmod(abs(floor(world_pos.x)), MAJOR_GRID_SPACING);
+    float mod_z = fmod(abs(floor(world_pos.z)), MAJOR_GRID_SPACING);
+    bool is_orange = (mod_x < 0.5) || (mod_z < 0.5);
+    return is_orange ? ORANGE_EMISSIVE_COLOUR : CYAN_EMISSIVE_COLOUR;
+}
+
 // Fragment shader — obsidian floor with neon tube edges, Cook-Torrance PBR, RT shadows.
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
@@ -142,15 +158,23 @@ float4 fragMain(MeshOutput input) : SV_Target
     float edge = min(input.barycentric.x, min(input.barycentric.y, input.barycentric.z));
     float wire = smoothstep(0.0, WIRE_WIDTH, edge);
 
+    // Determine neon tube colour — cyan or orange based on grid position.
+    float3 tube_colour = neonEmissiveColour(input.world_position);
+
     // Blend material properties between neon tube and obsidian.
     float3 base_colour = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, wire);
     float perceptual_roughness = lerp(TUBE_ROUGHNESS, OBSIDIAN_ROUGHNESS, wire);
     float roughness = max(perceptual_roughness * perceptual_roughness, MIN_ROUGHNESS);
-    float3 emissive = lerp(TUBE_EMISSIVE_COLOUR * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
+    float3 emissive = lerp(tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
 
     // Vectors.
+    // Flip normal to face the camera — two-sided lighting prevents steep terrain
+    // slopes from appearing invisible when their face normal points away from the viewer.
     float3 N = normalize(input.world_normal);
     float3 V = normalize(camera.camera_pos - input.world_position);
+    if (dot(N, V) < 0.0) {
+        N = -N;
+    }
     float3 to_light = camera.light_pos - input.world_position;
     float dist_to_light = length(to_light);
     float3 L = to_light / dist_to_light;
@@ -231,8 +255,12 @@ float4 fragMain(MeshOutput input) : SV_Target
             float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
             float hit_wire = smoothstep(0.0, WIRE_WIDTH, hit_edge);
 
+            // Compute world-space position of the reflected hit for neon colour lookup.
+            float3 hit_pos = reflect_origin + reflect_dir * reflect_query.CommittedRayT();
+            float3 hit_tube_colour = neonEmissiveColour(hit_pos);
+
             // Evaluate material at the reflected hit point.
-            float3 hit_emissive = lerp(TUBE_EMISSIVE_COLOUR * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
+            float3 hit_emissive = lerp(hit_tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
             float3 hit_base = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, hit_wire);
 
             // The reflected colour is primarily the emissive neon tubes.

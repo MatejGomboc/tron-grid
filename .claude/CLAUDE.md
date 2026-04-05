@@ -174,11 +174,13 @@ cmake --build build/linux-x11-gcc --config Debug
 
 ## Current Status
 
-Procedural Tron terrain with barycentric wireframe rendering via mesh shaders
-(task + mesh + fragment), RT hard shadows via inline ray query
-(`VK_KHR_ray_query`, BLAS/TLAS, point light with inverse square falloff),
-per-object frustum culling, meshlet pipeline. Entity/component scene with
-SoA arrays. Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
+Procedural Tron terrain with PBR obsidian floor (Cook-Torrance BRDF: GGX NDF,
+Smith-GGX visibility, Schlick Fresnel) and dual-colour neon tube edges (cyan
+primary + orange accent on major grid lines). HDR framebuffer
+(`R16G16B16A16_SFLOAT`), RT hard shadows and single-bounce reflections via
+inline ray query (`VK_KHR_ray_query`, BLAS/TLAS). Mesh shaders (task + mesh +
+fragment), per-object frustum culling, meshlet pipeline. Entity/component scene
+with SoA arrays. Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror.
 See `docs/VISION.md` § Phased Roadmap for the full 10-phase plan.
 
 ## Off Limits
