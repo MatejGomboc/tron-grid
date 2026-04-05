@@ -342,14 +342,14 @@ subtle digital noise complete the Tron Legacy look.
 
 ### Acceptance Criteria
 
-- [ ] Compute post-process pipeline replaces the clamping blit
-- [ ] ACES Filmic tonemapping with correct sRGB gamma encoding
-- [ ] Orange neon appears as proper orange (not yellow — hue preserved)
-- [ ] Bloom extraction with brightness threshold
-- [ ] Bloom downsample mip chain (Karis average for first level)
+- [x] Compute post-process pipeline replaces the clamping blit
+- [x] ACES Filmic tonemapping with correct sRGB gamma encoding
+- [x] Orange neon appears as proper orange (not yellow — hue preserved)
+- [x] Bloom extraction with brightness threshold
+- [x] Bloom downsample mip chain (Karis average for first level)
 - [ ] Bloom upsample chain with additive blending
 - [ ] Bloom composite with tunable strength
-- [ ] Bloom texture recreated on swapchain resize
+- [x] Bloom texture recreated on swapchain resize
 - [ ] Neon tubes and light orb have visible soft glow halos
 - [ ] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
 - [ ] AA resources recreated on swapchain resize
@@ -357,9 +357,9 @@ subtle digital noise complete the Tron Legacy look.
 - [ ] Per-material PBR via material SSBO
 - [ ] Cinematic post-process (colour grade, chromatic aberration, vignette)
 - [ ] No new Vulkan extensions needed (compute + MSAA are core 1.0)
-- [ ] Proper synchronisation barriers for all compute passes
-- [ ] Proper doxygen, STYLE.md compliant, British spelling
-- [ ] All existing + new tests pass on all CI presets
+- [x] Proper synchronisation barriers for all compute passes
+- [x] Proper doxygen, STYLE.md compliant, British spelling
+- [x] All existing + new tests pass on all CI presets
 - [ ] **Phase 7 complete — visual polish**
 
 ---
@@ -525,6 +525,21 @@ scaling for weaker hardware.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-05 — Phase 7 Etapes 29-31: compute post-process + ACES tonemapping + bloom extraction
+
+Fullscreen compute post-process pipeline (Etape 29, PR #77) replaces the
+clamping blit with a compute shader writing directly to swapchain storage
+images (B8G8R8A8_UNORM). ACES fitted RRT+ODT tonemapping with AP1
+hue-preserving colour space transforms (Etape 30, PR #78) restores correct
+neon colours — orange stays orange instead of clamping to yellow. Exact
+IEC 61966-2-1 sRGB encoding replaces the pow(x, 1/2.2) approximation.
+Bloom extraction (Etape 31, PR #79) with Karis average (firefly suppression)
+and 6-level mip chain downsample via 2×2 box filter. Per-mip ImageViews and
+per-step barriers. Bloom texture recreated on swapchain resize. Codebase-wide
+modernisation: all Vulkan struct count+pointer assignments replaced with
+vulkan-hpp setter methods, all compound conditionals parenthesised. 79 PRs
+merged.
 
 ### 2026-04-05 — Phase 6 complete: PBR obsidian floor with neon tube reflections
 

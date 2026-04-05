@@ -96,6 +96,11 @@ void Swapchain::recreate(uint32_t width, uint32_t height)
 
 void Swapchain::build(uint32_t width, uint32_t height)
 {
+    // Guard against zero-extent (minimised window) — Vulkan requires imageExtent > 0.
+    if ((width == 0) || (height == 0)) {
+        return;
+    }
+
     const vk::raii::PhysicalDevice& physical_device{m_device->physicalDevice()};
 
     // Query surface capabilities
@@ -116,13 +121,21 @@ void Swapchain::build(uint32_t width, uint32_t height)
 
     // Image count: min + 1 for triple buffering headroom
     uint32_t image_count{capabilities.minImageCount + 1};
-    if (capabilities.maxImageCount > 0 && image_count > capabilities.maxImageCount) {
+    if ((capabilities.maxImageCount > 0) && (image_count > capabilities.maxImageCount)) {
         image_count = capabilities.maxImageCount;
     }
 
     // The post-process compute shader writes directly to swapchain images.
     if (!(capabilities.supportedUsageFlags & vk::ImageUsageFlagBits::eStorage)) {
         m_logger->logFatal("Swapchain does not support storage image usage.");
+        std::abort();
+        return;
+    }
+
+    // Verify the chosen format supports storage image writes (sRGB formats typically do not).
+    vk::FormatProperties format_props{physical_device.getFormatProperties(m_format.format)};
+    if (!(format_props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eStorageImage)) {
+        m_logger->logFatal("Swapchain format does not support storage image writes.");
         std::abort();
         return;
     }
@@ -143,8 +156,7 @@ void Swapchain::build(uint32_t width, uint32_t height)
 
     if (graphics_family != present_family) {
         create_info.imageSharingMode = vk::SharingMode::eConcurrent;
-        create_info.queueFamilyIndexCount = 2;
-        create_info.pQueueFamilyIndices = family_indices.data();
+        create_info.setQueueFamilyIndices(family_indices);
     } else {
         create_info.imageSharingMode = vk::SharingMode::eExclusive;
     }

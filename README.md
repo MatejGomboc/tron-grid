@@ -16,12 +16,12 @@ sensory) are written in-house with no third-party libraries.
 
 PBR obsidian floor with dual-colour neon tube edges (cyan + orange accent),
 Cook-Torrance BRDF, HDR framebuffer with compute post-process pass (ACES
-tonemapping with AP1 hue preservation, exact sRGB encoding), RT hard shadows
-and single-bounce reflections via inline ray
-query (`VK_KHR_ray_query`). Mesh shader rendering (task + mesh + fragment),
-procedural Tron terrain, per-object frustum culling, meshlet-based geometry,
-entity/component scene. Code quality: Clang-Tidy, spirv-val,
-`-Werror`/`/WX`, ASan/UBSan/TSan, GPU validation.
+fitted RRT+ODT tonemapping with AP1 hue preservation, exact sRGB encoding),
+bloom extraction with Karis average and mip chain downsample, RT hard shadows
+and single-bounce reflections via inline ray query (`VK_KHR_ray_query`). Mesh
+shader rendering (task + mesh + fragment), procedural Tron terrain, per-object
+frustum culling, meshlet-based geometry, entity/component scene. Code quality:
+Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU validation.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 
@@ -73,12 +73,11 @@ TronGrid's business. The AI interface specification will be documented in a futu
 ### Required Vulkan Extensions
 
 ```text
+VK_KHR_swapchain                // Presentation
 VK_EXT_mesh_shader              // Task + Mesh shaders
 VK_KHR_acceleration_structure   // RT acceleration structures
-VK_KHR_ray_tracing_pipeline     // RT pipeline
+VK_KHR_ray_query                // Inline ray queries (shadows, reflections)
 VK_KHR_deferred_host_operations // Async AS builds
-VK_KHR_buffer_device_address    // GPU pointers for bindless
-VK_EXT_descriptor_indexing      // Bindless resources
 ```
 
 ## Building

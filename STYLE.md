@@ -118,13 +118,23 @@ if (++frame_counter % 60 == 0) { ... }
 if (a & mask != 0) { ... }
 ```
 
-Simple boolean chains with comparisons are fine without extra parentheses — the precedence
-of `==`, `!=`, `<`, `>` relative to `&&` and `||` is universally understood:
+In compound conditions, parenthesise each sub-expression so it is visually clear
+how operations belong together:
 
 ```cpp
-// Fine — no extra parentheses needed
+// Correct — each sub-expression parenthesised
+if ((width == 0) || (height == 0)) { ... }
+if ((!indices.isComplete()) || (!hasRequiredExtensions(device))) { ... }
+
+// Wrong — relies on reader knowing precedence
 if (width == 0 || height == 0) { ... }
-if (!indices.isComplete() || !hasRequiredExtensions(device)) { ... }
+```
+
+Single boolean variables do not need extra parentheses — the intent is already obvious:
+
+```cpp
+// Fine — single booleans
+if (vertex_overflow || triangle_overflow) { ... }
 ```
 
 ### Constants
@@ -152,15 +162,19 @@ std::find_if(devices.begin(), devices.end(), predicate);
 Prefer `std::string_view` for read-only string parameters and comparisons — avoids
 unnecessary heap allocations.
 
-Use C++20 designated initialisers for aggregate/struct initialisation where applicable:
+Use vulkan-hpp setter methods instead of C-style count+pointer or `pFoo` field assignment:
 
 ```cpp
-vk::InstanceCreateInfo info{
-    .flags = {},
-    .pApplicationInfo = &app_info,
-    .enabledLayerCount = static_cast<uint32_t>(layers.size()),
-    .ppEnabledLayerNames = layers.data(),
-};
+// Correct — vulkan-hpp setters handle count+pointer automatically
+create_info.setPApplicationInfo(&app_info);
+create_info.setPEnabledLayerNames(layers);
+create_info.setPEnabledExtensionNames(extensions);
+layout_info.setBindings(bindings);
+dep.setImageMemoryBarriers(barriers);
+
+// Wrong — manual count + pointer (C style)
+create_info.enabledLayerCount = static_cast<uint32_t>(layers.size());
+create_info.ppEnabledLayerNames = layers.data();
 ```
 
 ### Include Order
@@ -559,4 +573,4 @@ MSVC debug builds. Reports C++ heap leaks on exit.
 
 ---
 
-*Last updated: 2026-03-22*
+*Last updated: 2026-04-05*
