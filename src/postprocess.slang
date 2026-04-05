@@ -67,6 +67,7 @@ float3 acesTonemap(float3 colour)
 //! Converts a single linear-light channel to sRGB (exact IEC 61966-2-1 transfer function).
 float linearToSrgb(float channel)
 {
+    channel = max(channel, 0.0);
     if (channel <= SRGB_LINEAR_THRESHOLD)
     {
         return channel * SRGB_LINEAR_SCALE;
@@ -99,6 +100,7 @@ void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
     colour.r = linearToSrgb(colour.r);
     colour.g = linearToSrgb(colour.g);
     colour.b = linearToSrgb(colour.b);
+    colour.a = 1.0;
 
     swapchain_output[thread_id.xy] = colour;
 }

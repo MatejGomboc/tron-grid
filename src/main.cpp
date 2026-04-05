@@ -235,7 +235,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     depth_to_render.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
     depth_to_render.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
     depth_to_render.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
-    depth_to_render.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+    depth_to_render.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eDepthStencilAttachmentRead;
     depth_to_render.oldLayout = vk::ImageLayout::eUndefined;
     depth_to_render.newLayout = vk::ImageLayout::eDepthAttachmentOptimal;
     depth_to_render.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
@@ -1017,6 +1017,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         try {
             present_result = device.presentQueue().presentKHR(present_info);
         } catch (const vk::OutOfDateKHRError&) {
+            // waitIdle drains in-flight GPU work before destroying swapchain resources.
+            device.get().waitIdle();
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
@@ -1026,6 +1028,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         if (present_result == vk::Result::eSuboptimalKHR || swapchain_suboptimal) {
+            // waitIdle drains in-flight GPU work before destroying swapchain resources.
+            device.get().waitIdle();
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();

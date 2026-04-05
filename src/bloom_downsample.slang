@@ -59,12 +59,21 @@ void bloomExtractMain(uint3 thread_id : SV_DispatchThreadID)
         return;
     }
 
-    // Read a 2×2 block from the full-resolution HDR image.
+    // Read a 2×2 block from the full-resolution HDR image (clamped to valid bounds).
+    uint src_w;
+    uint src_h;
+    hdr_input.GetDimensions(src_w, src_h);
+
     uint2 base = thread_id.xy * 2;
-    float3 s00 = hdr_input[base + uint2(0, 0)].rgb;
-    float3 s10 = hdr_input[base + uint2(1, 0)].rgb;
-    float3 s01 = hdr_input[base + uint2(0, 1)].rgb;
-    float3 s11 = hdr_input[base + uint2(1, 1)].rgb;
+    uint2 c00 = min(base + uint2(0, 0), uint2(src_w - 1, src_h - 1));
+    uint2 c10 = min(base + uint2(1, 0), uint2(src_w - 1, src_h - 1));
+    uint2 c01 = min(base + uint2(0, 1), uint2(src_w - 1, src_h - 1));
+    uint2 c11 = min(base + uint2(1, 1), uint2(src_w - 1, src_h - 1));
+
+    float3 s00 = max(hdr_input[c00].rgb, float3(0.0, 0.0, 0.0));
+    float3 s10 = max(hdr_input[c10].rgb, float3(0.0, 0.0, 0.0));
+    float3 s01 = max(hdr_input[c01].rgb, float3(0.0, 0.0, 0.0));
+    float3 s11 = max(hdr_input[c11].rgb, float3(0.0, 0.0, 0.0));
 
     // Threshold — zero out texels below the brightness threshold.
     s00 *= step(push.threshold, luminance(s00));
@@ -81,7 +90,7 @@ void bloomExtractMain(uint3 thread_id : SV_DispatchThreadID)
     float w11 = 1.0 / (1.0 + luminance(s11));
     float w_sum = w00 + w10 + w01 + w11;
 
-    float3 result = (s00 * w00 + s10 * w10 + s01 * w01 + s11 * w11) / w_sum;
+    float3 result = (s00 * w00 + s10 * w10 + s01 * w01 + s11 * w11) / max(w_sum, 1e-7);
 
     bloom_dst[thread_id.xy] = float4(result, 1.0);
 }
@@ -100,12 +109,21 @@ void bloomDownsampleMain(uint3 thread_id : SV_DispatchThreadID)
         return;
     }
 
-    // Read a 2×2 block from the source mip.
+    // Read a 2×2 block from the source mip (clamped to valid bounds).
+    uint src_w;
+    uint src_h;
+    bloom_src.GetDimensions(src_w, src_h);
+
     uint2 base = thread_id.xy * 2;
-    float3 s00 = bloom_src[base + uint2(0, 0)].rgb;
-    float3 s10 = bloom_src[base + uint2(1, 0)].rgb;
-    float3 s01 = bloom_src[base + uint2(0, 1)].rgb;
-    float3 s11 = bloom_src[base + uint2(1, 1)].rgb;
+    uint2 c00 = min(base + uint2(0, 0), uint2(src_w - 1, src_h - 1));
+    uint2 c10 = min(base + uint2(1, 0), uint2(src_w - 1, src_h - 1));
+    uint2 c01 = min(base + uint2(0, 1), uint2(src_w - 1, src_h - 1));
+    uint2 c11 = min(base + uint2(1, 1), uint2(src_w - 1, src_h - 1));
+
+    float3 s00 = bloom_src[c00].rgb;
+    float3 s10 = bloom_src[c10].rgb;
+    float3 s01 = bloom_src[c01].rgb;
+    float3 s11 = bloom_src[c11].rgb;
 
     // Simple box filter — average of 4 texels.
     float3 result = (s00 + s10 + s01 + s11) * 0.25;
