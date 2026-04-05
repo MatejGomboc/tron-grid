@@ -92,7 +92,7 @@ static const float OBSIDIAN_ROUGHNESS = 0.06; // Polished obsidian — sharp but
 // Neon tube edges — bright emissive light strips embedded in the floor.
 // Dual-colour palette: cyan primary grid with orange accents on major grid lines.
 static const float3 CYAN_EMISSIVE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon — primary grid colour.
-static const float3 ORANGE_EMISSIVE_COLOUR = float3(1.0, 0.53, 0.0); // Orange neon — accent on major grid lines.
+static const float3 ORANGE_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Orange neon — accent on major grid lines. Low green survives HDR clamping.
 static const float TUBE_EMISSIVE_STRENGTH = 15.0; // HDR intensity — well above 1.0.
 static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
 

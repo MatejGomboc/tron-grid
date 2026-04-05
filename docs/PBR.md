@@ -253,7 +253,7 @@ colours appear in the floor grid.
 | Colour | Linear RGB | Role |
 |--------|-----------|------|
 | Cyan | (0.0, 0.8, 1.0) | Primary grid — most cells |
-| Orange | (1.0, 0.53, 0.0) | Accent — major grid lines (every 8th row/column) |
+| Orange | (1.0, 0.03, 0.0) | Accent — major grid lines (every 8th row/column). Low green survives HDR clamping pre-tonemapping. |
 
 ### Pattern Logic
 
