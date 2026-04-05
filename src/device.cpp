@@ -228,8 +228,8 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     device_info.pNext = &features2;
     device_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
     device_info.pQueueCreateInfos = queue_create_infos.data();
-    device_info.enabledExtensionCount = static_cast<uint32_t>(std::size(REQUIRED_DEVICE_EXTENSIONS));
-    device_info.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS;
+    device_info.enabledExtensionCount = static_cast<uint32_t>(REQUIRED_DEVICE_EXTENSIONS.size());
+    device_info.ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS.data();
 
     m_device = vk::raii::Device(m_physical_device, device_info);
 

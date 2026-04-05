@@ -112,6 +112,7 @@ add_custom_command(
     VERBATIM
 )
 
+# Compile shaders — ALL target ensures they build even when the executable is up to date.
 add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/triangle.spv
     ${SHADER_OUTPUT_DIR}/cull.spv
@@ -120,20 +121,21 @@ add_custom_target(shaders ALL DEPENDS
 )
 add_dependencies(${PROJECT_NAME} shaders)
 
-# Copy compiled shaders next to the executable
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+# Copy compiled shaders next to the executable.
+# Uses an ALL custom target with explicit dependency on the shaders target
+# so the copy always runs after shader compilation — unlike POST_BUILD
+# which only triggers when the executable itself is relinked.
+# copy_if_different makes this a no-op when files are unchanged.
+add_custom_target(copy_shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/triangle.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/triangle.spv
+        ${SHADER_OUTPUT_DIR}/triangle.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/triangle.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/cull.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/cull.spv
+        ${SHADER_OUTPUT_DIR}/cull.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/cull.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/task.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/task.spv
+        ${SHADER_OUTPUT_DIR}/task.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/task.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${SHADER_OUTPUT_DIR}/mesh.spv
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/mesh.spv
+        ${SHADER_OUTPUT_DIR}/mesh.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/mesh.spv
     COMMENT "Copying shaders to output directory"
     VERBATIM
 )
+add_dependencies(copy_shaders shaders)
