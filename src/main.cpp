@@ -169,8 +169,7 @@ static void recordBloomDownsample(const vk::raii::CommandBuffer& cmd, vk::Image 
         mip_barrier.subresourceRange.levelCount = 1;
 
         vk::DependencyInfo dep{};
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &mip_barrier;
+        dep.setImageMemoryBarriers(mip_barrier);
         cmd.pipelineBarrier2(dep);
 
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, bloom_layout, 0, {bloom_sets[i]}, {});
@@ -350,8 +349,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
 
     std::array<vk::ImageMemoryBarrier2, 3> to_compute_barriers{hdr_to_general, swap_to_general, bloom_to_general};
     vk::DependencyInfo dep_to_compute{};
-    dep_to_compute.imageMemoryBarrierCount = static_cast<uint32_t>(to_compute_barriers.size());
-    dep_to_compute.pImageMemoryBarriers = to_compute_barriers.data();
+    dep_to_compute.setImageMemoryBarriers(to_compute_barriers);
     cmd.pipelineBarrier2(dep_to_compute);
 
     // ── Bloom extraction + downsample chain ──
@@ -377,8 +375,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     bloom_after.subresourceRange.layerCount = 1;
 
     vk::DependencyInfo dep_bloom_done{};
-    dep_bloom_done.imageMemoryBarrierCount = 1;
-    dep_bloom_done.pImageMemoryBarriers = &bloom_after;
+    dep_bloom_done.setImageMemoryBarriers(bloom_after);
     cmd.pipelineBarrier2(dep_bloom_done);
 
     // ── Tonemap: HDR → swapchain ──
@@ -655,8 +652,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     bloom_bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
 
     vk::DescriptorSetLayoutCreateInfo bloom_layout_info{};
-    bloom_layout_info.bindingCount = static_cast<uint32_t>(bloom_bindings.size());
-    bloom_layout_info.pBindings = bloom_bindings.data();
+    bloom_layout_info.setBindings(bloom_bindings);
     vk::raii::DescriptorSetLayout bloom_descriptor_set_layout{device.get(), bloom_layout_info};
 
     vk::PushConstantRange bloom_push_range{};
@@ -665,16 +661,13 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     bloom_push_range.size = sizeof(float);
 
     vk::PipelineLayoutCreateInfo bloom_pipeline_layout_info{};
-    bloom_pipeline_layout_info.setLayoutCount = 1;
-    bloom_pipeline_layout_info.pSetLayouts = &*bloom_descriptor_set_layout;
-    bloom_pipeline_layout_info.pushConstantRangeCount = 1;
-    bloom_pipeline_layout_info.pPushConstantRanges = &bloom_push_range;
+    bloom_pipeline_layout_info.setSetLayouts(*bloom_descriptor_set_layout);
+    bloom_pipeline_layout_info.setPushConstantRanges(bloom_push_range);
     vk::raii::PipelineLayout bloom_pipeline_layout{device.get(), bloom_pipeline_layout_info};
 
     // Bloom extraction pipeline.
     vk::ShaderModuleCreateInfo bloom_extract_module_info{};
-    bloom_extract_module_info.codeSize = bloom_extract_spirv.size() * sizeof(uint32_t);
-    bloom_extract_module_info.pCode = bloom_extract_spirv.data();
+    bloom_extract_module_info.setCode(bloom_extract_spirv);
     vk::raii::ShaderModule bloom_extract_module{device.get(), bloom_extract_module_info};
 
     vk::PipelineShaderStageCreateInfo bloom_extract_stage{};
@@ -689,8 +682,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     // Bloom downsample pipeline.
     vk::ShaderModuleCreateInfo bloom_down_module_info{};
-    bloom_down_module_info.codeSize = bloom_down_spirv.size() * sizeof(uint32_t);
-    bloom_down_module_info.pCode = bloom_down_spirv.data();
+    bloom_down_module_info.setCode(bloom_down_spirv);
     vk::raii::ShaderModule bloom_down_module{device.get(), bloom_down_module_info};
 
     vk::PipelineShaderStageCreateInfo bloom_down_stage{};
@@ -715,15 +707,13 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     vk::DescriptorPoolCreateInfo bloom_pool_info{};
     bloom_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
     bloom_pool_info.maxSets = bloom_total_sets;
-    bloom_pool_info.poolSizeCount = static_cast<uint32_t>(bloom_pool_sizes.size());
-    bloom_pool_info.pPoolSizes = bloom_pool_sizes.data();
+    bloom_pool_info.setPoolSizes(bloom_pool_sizes);
     vk::raii::DescriptorPool bloom_descriptor_pool{device.get(), bloom_pool_info};
 
     std::vector<vk::DescriptorSetLayout> bloom_layouts(bloom_total_sets, *bloom_descriptor_set_layout);
     vk::DescriptorSetAllocateInfo bloom_alloc_info{};
     bloom_alloc_info.descriptorPool = *bloom_descriptor_pool;
-    bloom_alloc_info.descriptorSetCount = bloom_total_sets;
-    bloom_alloc_info.pSetLayouts = bloom_layouts.data();
+    bloom_alloc_info.setSetLayouts(bloom_layouts);
     std::vector<vk::raii::DescriptorSet> bloom_descriptor_sets{device.get().allocateDescriptorSets(bloom_alloc_info)};
 
     // Updates bloom descriptor set bindings for the given frame.
@@ -741,8 +731,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             writes[0].dstBinding = 0;
             writes[0].dstArrayElement = 0;
             writes[0].descriptorType = vk::DescriptorType::eStorageImage;
-            writes[0].descriptorCount = 1;
-            writes[0].pImageInfo = &infos[0];
+            writes[0].setImageInfo(infos[0]);
 
             // Binding 1: bloom source mip (step 0 doesn't use this, but must bind something valid).
             vk::ImageView src_view{(i > 0) ? *bloom_mip_views[i - 1] : *bloom_mip_views[0]};
@@ -752,8 +741,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             writes[1].dstBinding = 1;
             writes[1].dstArrayElement = 0;
             writes[1].descriptorType = vk::DescriptorType::eStorageImage;
-            writes[1].descriptorCount = 1;
-            writes[1].pImageInfo = &infos[1];
+            writes[1].setImageInfo(infos[1]);
 
             // Binding 2: bloom destination mip.
             infos[2].imageView = *bloom_mip_views[i];
@@ -762,8 +750,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             writes[2].dstBinding = 2;
             writes[2].dstArrayElement = 0;
             writes[2].descriptorType = vk::DescriptorType::eStorageImage;
-            writes[2].descriptorCount = 1;
-            writes[2].pImageInfo = &infos[2];
+            writes[2].setImageInfo(infos[2]);
 
             device.get().updateDescriptorSets(writes, {});
         }
