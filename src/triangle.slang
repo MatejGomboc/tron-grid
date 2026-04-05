@@ -12,13 +12,15 @@
     GNU General Public License for more details.
 */
 
-// Camera uniform buffer — matches C++ CameraUBO struct.
+// WARNING: This is a legacy shader kept for reference only. These struct
+// definitions are STALE and do not match the current C++ CameraUBO/ObjectData
+// layouts. Do not reactivate without updating to match pipeline.hpp.
+
 struct CameraData {
     float4x4 view;
     float4x4 projection;
 };
 
-// Per-object data — matches C++ ObjectData struct.
 struct ObjectData {
     float4x4 model;
 };

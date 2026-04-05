@@ -12,6 +12,10 @@
     GNU General Public License for more details.
 */
 
+// WARNING: This is a legacy shader kept for reference only. These struct
+// definitions may be STALE and should not be reactivated without verifying
+// they match the current C++ layouts in pipeline.hpp.
+
 // Per-object bounding sphere — matches C++ ObjectBounds struct.
 struct ObjectBounds {
     float3 centre;

@@ -135,7 +135,8 @@ float V_SmithGGXCorrelated(float NdotV, float NdotL, float roughness)
     float a2 = roughness * roughness;
     float GGXV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
     float GGXL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
-    return 0.5 / (GGXV + GGXL);
+    // Clamp denominator to prevent float16 overflow (inf) at extreme grazing angles.
+    return 0.5 / max(GGXV + GGXL, 1e-4);
 }
 
 // Schlick Fresnel approximation.

@@ -244,6 +244,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     vk::StructureChain<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR> props_chain{
         m_physical_device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()};
     const vk::PhysicalDeviceAccelerationStructurePropertiesKHR& as_props{props_chain.get<vk::PhysicalDeviceAccelerationStructurePropertiesKHR>()};
-    m_logger.logInfo("RT: acceleration structure scratch alignment = " + std::to_string(as_props.minAccelerationStructureScratchOffsetAlignment)
+    m_as_scratch_alignment = as_props.minAccelerationStructureScratchOffsetAlignment;
+    m_logger.logInfo("RT: acceleration structure scratch alignment = " + std::to_string(m_as_scratch_alignment)
         + ", max instances = " + std::to_string(as_props.maxInstanceCount) + ".");
 }

@@ -80,6 +80,12 @@ public:
         return m_device_name;
     }
 
+    //! Minimum scratch buffer alignment for acceleration structure builds.
+    [[nodiscard]] uint32_t asScratchAlignment() const
+    {
+        return m_as_scratch_alignment;
+    }
+
 private:
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
     vk::raii::PhysicalDevice m_physical_device{nullptr}; //!< Selected physical device.
@@ -89,4 +95,5 @@ private:
     uint32_t m_graphics_family_index{UINT32_MAX}; //!< Graphics queue family index (sentinel until assigned).
     uint32_t m_present_family_index{UINT32_MAX}; //!< Present queue family index (sentinel until assigned).
     std::string m_device_name; //!< Human-readable GPU name.
+    uint32_t m_as_scratch_alignment{128}; //!< AS scratch buffer alignment (queried at device creation).
 };

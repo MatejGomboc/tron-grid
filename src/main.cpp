@@ -80,27 +80,27 @@ constexpr vk::Format HDR_FORMAT = vk::Format::eR16G16B16A16Sfloat;
 constexpr float CAMERA_SPEED = 5.0f;
 
 //! Camera mouse sensitivity (radians per pixel).
-constexpr float MOUSE_SENSITIVITY = 0.003f;
+constexpr float MOUSE_SENSITIVITY{0.003f};
 
 //! Platform-specific key codes for WASD, Space, Shift, and right mouse button.
 #ifdef _WIN32
-constexpr uint32_t KEY_W = 0x57;
-constexpr uint32_t KEY_A = 0x41;
-constexpr uint32_t KEY_S = 0x53;
-constexpr uint32_t KEY_D = 0x44;
-constexpr uint32_t KEY_SPACE = 0x20;
-constexpr uint32_t KEY_SHIFT = 0x10;
-constexpr uint32_t KEY_ESC = 27;
-constexpr uint32_t MOUSE_RIGHT = 1;
+constexpr uint32_t KEY_W{0x57};
+constexpr uint32_t KEY_A{0x41};
+constexpr uint32_t KEY_S{0x53};
+constexpr uint32_t KEY_D{0x44};
+constexpr uint32_t KEY_SPACE{0x20};
+constexpr uint32_t KEY_SHIFT{0x10};
+constexpr uint32_t KEY_ESC{27};
+constexpr uint32_t MOUSE_RIGHT{1};
 #else
-constexpr uint32_t KEY_W = 25;
-constexpr uint32_t KEY_A = 38;
-constexpr uint32_t KEY_S = 39;
-constexpr uint32_t KEY_D = 40;
-constexpr uint32_t KEY_SPACE = 65;
-constexpr uint32_t KEY_SHIFT = 50;
-constexpr uint32_t KEY_ESC = 9;
-constexpr uint32_t MOUSE_RIGHT = 2;
+constexpr uint32_t KEY_W{25};
+constexpr uint32_t KEY_A{38};
+constexpr uint32_t KEY_S{39};
+constexpr uint32_t KEY_D{40};
+constexpr uint32_t KEY_SPACE{65};
+constexpr uint32_t KEY_SHIFT{50};
+constexpr uint32_t KEY_ESC{9};
+constexpr uint32_t MOUSE_RIGHT{1};
 #endif
 
 /*!
@@ -901,13 +901,15 @@ int main()
 
         // Build BLAS — scratch buffer scoped so it's freed after build completes.
         {
-            AllocatedBuffer scratch_buffer{allocator.createBuffer(build_sizes.buildScratchSize,
+            uint32_t scratch_align{device.asScratchAlignment()};
+            AllocatedBuffer scratch_buffer{allocator.createBuffer(build_sizes.buildScratchSize + scratch_align,
                 static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
                 VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
             vk::BufferDeviceAddressInfo scratch_addr_info{};
             scratch_addr_info.buffer = scratch_buffer.buffer();
-            build_info.scratchData.deviceAddress = device.get().getBufferAddress(scratch_addr_info);
+            vk::DeviceAddress scratch_addr{device.get().getBufferAddress(scratch_addr_info)};
+            build_info.scratchData.deviceAddress = (scratch_addr + scratch_align - 1) & ~(static_cast<vk::DeviceAddress>(scratch_align) - 1);
 
             vk::CommandBufferAllocateInfo build_alloc{};
             build_alloc.commandPool = *command_pool;
@@ -1029,13 +1031,15 @@ int main()
 
         sphere_build_info.dstAccelerationStructure = *sphere_blas;
 
-        AllocatedBuffer sphere_scratch{allocator.createBuffer(sphere_build_sizes.buildScratchSize,
+        AllocatedBuffer sphere_scratch{allocator.createBuffer(sphere_build_sizes.buildScratchSize + device.asScratchAlignment(),
             static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
             VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         vk::BufferDeviceAddressInfo sphere_scratch_addr_info{};
         sphere_scratch_addr_info.buffer = sphere_scratch.buffer();
-        sphere_build_info.scratchData.deviceAddress = device.get().getBufferAddress(sphere_scratch_addr_info);
+        vk::DeviceAddress sphere_scratch_addr{device.get().getBufferAddress(sphere_scratch_addr_info)};
+        vk::DeviceAddress align_mask{static_cast<vk::DeviceAddress>(device.asScratchAlignment()) - 1};
+        sphere_build_info.scratchData.deviceAddress = (sphere_scratch_addr + align_mask) & ~align_mask;
 
         {
             vk::CommandBufferAllocateInfo cmd_alloc{};
@@ -1204,13 +1208,15 @@ int main()
 
         // Build TLAS — scratch buffer scoped so it's freed after build completes.
         {
-            AllocatedBuffer tlas_scratch{allocator.createBuffer(tlas_build_sizes.buildScratchSize,
+            uint32_t tlas_scratch_align{device.asScratchAlignment()};
+            AllocatedBuffer tlas_scratch{allocator.createBuffer(tlas_build_sizes.buildScratchSize + tlas_scratch_align,
                 static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
                 VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
             vk::BufferDeviceAddressInfo tlas_scratch_addr_info{};
             tlas_scratch_addr_info.buffer = tlas_scratch.buffer();
-            tlas_build_info.scratchData.deviceAddress = device.get().getBufferAddress(tlas_scratch_addr_info);
+            vk::DeviceAddress tlas_scratch_addr{device.get().getBufferAddress(tlas_scratch_addr_info)};
+            tlas_build_info.scratchData.deviceAddress = (tlas_scratch_addr + tlas_scratch_align - 1) & ~(static_cast<vk::DeviceAddress>(tlas_scratch_align) - 1);
 
             vk::CommandBufferAllocateInfo build_alloc{};
             build_alloc.commandPool = *command_pool;
