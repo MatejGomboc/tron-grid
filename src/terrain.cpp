@@ -159,7 +159,7 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
             max_dist = dist;
         }
     }
-    result.bounding_radius = max_dist;
 
+    result.bounding_radius = max_dist;
     return result;
 }

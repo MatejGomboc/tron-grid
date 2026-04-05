@@ -41,10 +41,12 @@ std::string executableDirectory()
     if (path_len == 0 || path_len >= MAX_PATH) {
         return {};
     }
+
     int len{WideCharToMultiByte(CP_UTF8, 0, wide_path, -1, nullptr, 0, nullptr, nullptr)};
     if (len <= 0) {
         return {};
     }
+
     std::string narrow(static_cast<std::string::size_type>(len - 1), '\0');
     WideCharToMultiByte(CP_UTF8, 0, wide_path, -1, narrow.data(), len, nullptr, nullptr);
     std::string::size_type pos{narrow.find_last_of("\\/")};
