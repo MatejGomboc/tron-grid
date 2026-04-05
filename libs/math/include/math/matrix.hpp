@@ -16,8 +16,8 @@
 
 #include "math/vector.hpp"
 #include <array>
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
 
 namespace MathLib
 {
