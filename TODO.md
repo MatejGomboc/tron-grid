@@ -252,6 +252,64 @@ to FXAA.
 **After this step:** neon grid lines are smooth and clean, no jagged
 stair-stepping. The Tron aesthetic is polished.
 
+### Etape 34 — Procedural Skybox
+
+The concept art shows a dark void sky with scattered stars, faint
+nebula wisps, and shooting star streaks. Currently the background is
+the clear colour (dark grey) — the sky should feel like infinite
+digital space.
+
+**Approach:**
+
+- Write a fullscreen fragment shader (`skybox.slang`) that runs as a
+  separate pass before the scene render (or after, for fragments not
+  covered by geometry — using the depth buffer to skip covered pixels).
+- The shader takes the inverse view-projection matrix to reconstruct
+  the world-space ray direction from the fragment's screen position.
+- **Stars:** Hash the ray direction (quantised to a grid on the unit
+  sphere) to produce pseudo-random star positions. Brightness varies
+  with a second hash. Faint twinkle via a time-based sine modulation.
+- **Nebula:** Low-frequency layered noise on the ray direction to
+  create subtle dark blue/purple wisps against the black void.
+- **Shooting stars:** Optional — animated streaks using a time-based
+  parametric line test against the ray direction.
+- No geometry needed — the skybox is purely procedural in the
+  fragment shader, rendering to the HDR image.
+
+**After this step:** the sky is no longer a flat colour — it's an
+infinite digital void with stars, matching the concept art.
+
+### Etape 35 — Per-Material PBR (Material SSBO)
+
+Replace the hardcoded material constants in the fragment shader with
+a per-object material system. Each entity gets its own PBR parameters
+from a material SSBO.
+
+**Approach:**
+
+- Define a `Material` struct (C++ and Slang):
+
+  ```text
+  base_colour (float3)     — albedo / diffuse colour
+  emissive (float3)        — self-illumination colour
+  emissive_strength (float) — HDR emissive multiplier
+  roughness (float)        — perceptual roughness [0, 1]
+  metallic (float)         — metalness [0, 1]
+  ior (float)              — index of refraction (for Fresnel F0)
+  opacity (float)          — 1.0 = opaque, <1.0 = translucent (Phase 8)
+  ```
+
+- Create a material SSBO and bind it at a new descriptor binding.
+- `ObjectData` gains a `material_index` field pointing into the SSBO.
+- The fragment shader reads the material for the current object and
+  uses it instead of hardcoded constants. The neon tube vs obsidian
+  blend logic stays (it's per-fragment, not per-object), but the
+  material properties it blends between come from the SSBO.
+- The light orb's emissive colour and strength are now data-driven.
+
+**After this step:** materials are data, not code. New objects with
+different visual properties can be added without shader changes.
+
 ### Acceptance Criteria
 
 - [ ] Compute post-process pipeline replaces the clamping blit
@@ -263,13 +321,111 @@ stair-stepping. The Tron aesthetic is polished.
 - [ ] Bloom composite with tunable strength
 - [ ] Bloom texture recreated on swapchain resize
 - [ ] Neon tubes and light orb have visible soft glow halos
-- [ ] Anti-aliased neon grid lines (MSAA 4× or FXAA)
+- [ ] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
 - [ ] AA resources recreated on swapchain resize
+- [ ] Procedural skybox (stars, nebula, dark void)
+- [ ] Per-material PBR via material SSBO (base colour, emissive, roughness, metallic, IOR)
 - [ ] No new Vulkan extensions needed (compute + MSAA are core 1.0)
 - [ ] Proper synchronisation barriers for all compute passes
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
-- [ ] **Phase 7 complete — bloom, tonemapping, anti-aliasing**
+- [ ] **Phase 7 complete — visual polish (bloom, tonemap, AA, skybox, materials)**
+
+---
+
+## Phase 8 — Full Ray Tracing + Advanced Rendering
+
+**Goal:** Replace the point light abstraction with physically correct
+emissive geometry lighting. Neon tubes and the orb ARE the lights —
+shadow and reflection rays sample their emissive values directly. Add
+multi-bounce global illumination, transparency, and refraction.
+
+### Etape 36 — Emissive Geometry as Light Sources
+
+Remove the artificial point light. Instead, shadow rays that hit
+emissive geometry (neon tubes, orb) contribute their emissive value
+as incoming radiance. The fragment shader's direct lighting loop
+becomes: for each light-emitting surface, trace a ray toward it,
+evaluate visibility, accumulate radiance weighted by the BRDF.
+
+**Approach:**
+
+- Sample random points on emissive geometry (importance sampling).
+- Trace shadow rays toward those sample points.
+- On hit: evaluate the emissive material at the hit point.
+- Weight by the BRDF, solid angle, and visibility.
+- Multiple samples per pixel (stratified) for noise reduction.
+
+### Etape 37 — Multi-Bounce Global Illumination
+
+Extend reflection rays to trace secondary bounces. Light that bounces
+off the obsidian floor onto nearby surfaces creates subtle indirect
+illumination — the hallmark of photorealistic rendering.
+
+**Approach:**
+
+- After the primary reflection ray hits a surface, trace a secondary
+  ray from the hit point in the reflected direction.
+- Evaluate the material at each bounce and accumulate colour.
+- Limit to 2-3 bounces for performance.
+- Russian roulette termination for unbiased path tracing.
+
+### Etape 38 — Transparency + Refraction
+
+Add support for translucent materials (glass, energy barriers, holographic
+displays). Refraction rays bend through surfaces based on the material's
+index of refraction.
+
+**Approach:**
+
+- Materials with `opacity < 1.0` trace refraction rays via Snell's law.
+- Total internal reflection handled at critical angles.
+- Order-independent transparency (OIT) or sorted alpha blending for
+  correct compositing of overlapping translucent surfaces.
+- Refraction uses the same inline ray query (`VK_KHR_ray_query`) —
+  no new extensions needed.
+
+### Acceptance Criteria
+
+- [ ] No point light abstraction — all lighting from emissive geometry
+- [ ] Shadow rays sample emissive surfaces directly
+- [ ] Multi-bounce reflections (2-3 bounces)
+- [ ] Russian roulette path termination
+- [ ] Transparent materials with refraction (Snell's law, IOR)
+- [ ] Order-independent transparency or sorted alpha
+- [ ] Per-material opacity in material SSBO
+- [ ] **Phase 8 complete — full RT rendering**
+
+---
+
+## Phase 9 — Optimisation
+
+**Goal:** Hit 4K @ 60+ FPS rock-solid on RTX 4090. Adaptive quality
+scaling for weaker hardware.
+
+### Planned Features
+
+- **Nanite-like adaptive LOD** — GPU-driven mesh streaming with
+  automatic level-of-detail selection. Dense meshlets near the camera,
+  coarse meshlets in the distance. Software rasterisation for sub-pixel
+  triangles. Seamless LOD transitions without popping.
+- **Temporal accumulation** — reuse data from previous frames to
+  denoise RT output (temporal anti-aliasing, temporal reprojection).
+- **Async compute** — overlap post-processing compute with the next
+  frame's mesh shader pass on separate compute queues.
+- **GPU profiling** — timestamp queries for per-pass timing, automatic
+  bottleneck detection, adaptive quality scaling.
+- **Memory budget** — VMA budget tracking, streaming eviction policy,
+  residency management for large scenes.
+
+### Acceptance Criteria
+
+- [ ] 4K @ 60+ FPS sustained on RTX 4090
+- [ ] Adaptive LOD with seamless transitions
+- [ ] Temporal denoising for RT output
+- [ ] Async compute overlap
+- [ ] GPU profiling with per-pass timestamps
+- [ ] **Phase 9 complete — optimisation**
 
 ---
 
