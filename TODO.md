@@ -371,7 +371,7 @@ emissive geometry lighting. Neon tubes and the orb ARE the lights —
 shadow and reflection rays sample their emissive values directly. Add
 multi-bounce global illumination, transparency, and refraction.
 
-### Etape 36 — Emissive Geometry as Light Sources
+### Etape 37 — Emissive Geometry as Light Sources
 
 Remove the artificial point light. Instead, shadow rays that hit
 emissive geometry (neon tubes, orb) contribute their emissive value
@@ -387,7 +387,7 @@ evaluate visibility, accumulate radiance weighted by the BRDF.
 - Weight by the BRDF, solid angle, and visibility.
 - Multiple samples per pixel (stratified) for noise reduction.
 
-### Etape 37 — Multi-Bounce Global Illumination
+### Etape 38 — Multi-Bounce Global Illumination
 
 Extend reflection rays to trace secondary bounces. Light that bounces
 off the obsidian floor onto nearby surfaces creates subtle indirect
@@ -401,7 +401,7 @@ illumination — the hallmark of photorealistic rendering.
 - Limit to 2-3 bounces for performance.
 - Russian roulette termination for unbiased path tracing.
 
-### Etape 38 — Transparency + Refraction
+### Etape 39 — Transparency + Refraction
 
 Add support for translucent materials (glass, energy barriers, holographic
 displays). Refraction rays bend through surfaces based on the material's
@@ -416,7 +416,7 @@ index of refraction.
 - Refraction uses the same inline ray query (`VK_KHR_ray_query`) —
   no new extensions needed.
 
-### Etape 39 — Volumetric Fog + Light Shafts
+### Etape 40 — Volumetric Fog + Light Shafts
 
 Neon light scattering through atmospheric haze — the #1 mood tool in
 cyberpunk rendering (Cyberpunk 2077 uses volumetric fog extensively).
@@ -434,7 +434,7 @@ sprang from within the world."
 - The fog colour picks up the emissive colour of nearby neon tubes
   (cyan shafts from cyan lines, orange from orange lines).
 
-### Etape 40 — Light Trails
+### Etape 41 — Light Trails
 
 Moving objects leave persistent glowing streaks — the signature Tron
 visual. Core identity for light cycles, data couriers, and any
@@ -450,7 +450,7 @@ moving programme.
   bloomed). Trail colour matches the entity's identity colour.
 - Trails fade over time (age-based alpha/emissive decay).
 
-### Etape 41 — Derez Particle System
+### Etape 42 — Derez Particle System
 
 Entities dissolve into geometric particles when destroyed — the Tron
 "derez" effect. Digital Domain used procedural explosion algorithms
