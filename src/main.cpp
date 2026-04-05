@@ -1065,8 +1065,7 @@ int main()
             0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
         {
-            AllocatedBuffer sphere_idx_staging{allocator.createBuffer(sphere_index_buffer_size,
-                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+            AllocatedBuffer sphere_idx_staging{allocator.createBuffer(sphere_index_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
                 VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
             std::memcpy(sphere_idx_staging.allocationInfo().pMappedData, sphere_indices.data(), sphere_index_buffer_size);
 
