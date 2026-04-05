@@ -368,7 +368,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     hdr_view_info.subresourceRange.layerCount = 1;
     vk::raii::ImageView hdr_view(device.get(), hdr_view_info);
 
-    //! Rebuilds the depth buffer and HDR colour buffer to match the current swapchain extent.
+    // Rebuilds the depth buffer and HDR colour buffer to match the current swapchain extent.
     auto rebuildDepthBuffer = [&]() {
         depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
@@ -544,9 +544,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         bool swapchain_suboptimal{acquire_result == vk::Result::eSuboptimalKHR};
 
-        // Only reset fence after we know we will submit work
-        device.get().resetFences({*in_flight_fences[current_frame]});
-
         // Update camera UBO and extract frustum planes
         MathLib::Frustum frustum{};
         {
@@ -554,6 +551,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             if (extent_height == 0) {
                 continue;
             }
+
+            // Only reset fence after we know we will submit work — resetting
+            // then hitting `continue` above would leave the fence unsignalled,
+            // causing waitForFences to deadlock on the next iteration.
+            device.get().resetFences({*in_flight_fences[current_frame]});
             float aspect{static_cast<float>(swapchain.extent().width) / static_cast<float>(extent_height)};
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
@@ -1102,8 +1104,8 @@ int main()
         sphere_blas_addr_info.accelerationStructure = *sphere_blas;
         vk::DeviceAddress sphere_blas_address{device.get().getAccelerationStructureAddressKHR(sphere_blas_addr_info)};
 
-        // BLAS reference per entity — terrain uses terrain BLAS, orb uses sphere BLAS.
-        std::vector<vk::DeviceAddress> blas_addresses{terrain_blas_address, sphere_blas_address};
+        // BLAS reference per mesh ID — mesh 0 = terrain, mesh 1 = sphere.
+        std::vector<vk::DeviceAddress> blas_per_mesh{terrain_blas_address, sphere_blas_address};
 
         // Build instance data — one per scene entity.
         std::vector<VkAccelerationStructureInstanceKHR> as_instances;
@@ -1119,13 +1121,15 @@ int main()
                 }
             }
 
+            uint32_t mesh_id{scene.meshIDs()[i].id};
+
             VkAccelerationStructureInstanceKHR as_inst{};
             as_inst.transform = transform;
             as_inst.instanceCustomIndex = i;
             as_inst.mask = 0xFF;
             as_inst.instanceShaderBindingTableRecordOffset = 0;
             as_inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-            as_inst.accelerationStructureReference = blas_addresses[i];
+            as_inst.accelerationStructureReference = blas_per_mesh[mesh_id];
             as_instances.push_back(as_inst);
         }
 
@@ -1266,11 +1270,12 @@ int main()
         std::vector<ObjectData> object_data;
         object_data.reserve(total_objects);
         for (uint32_t i{0}; i < total_objects; ++i) {
+            uint32_t mesh_id{scene.meshIDs()[i].id};
             ObjectData obj{};
             obj.model = scene.transforms()[i].modelMatrix();
-            obj.meshlet_offset = mesh_infos[i].meshlet_offset;
-            obj.meshlet_count = mesh_infos[i].meshlet_count;
-            obj.pad0 = mesh_infos[i].material_type;
+            obj.meshlet_offset = mesh_infos[mesh_id].meshlet_offset;
+            obj.meshlet_count = mesh_infos[mesh_id].meshlet_count;
+            obj.material_type = mesh_infos[mesh_id].material_type;
             object_data.push_back(obj);
         }
 

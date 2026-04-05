@@ -32,7 +32,7 @@ struct Meshlet {
     uint32_t vertex_offset{0}; //!< Offset into the meshlet vertex index buffer.
     uint32_t vertex_count{0}; //!< Number of unique vertices (max 64).
     uint32_t triangle_offset{0}; //!< Offset into the meshlet triangle index buffer.
-    uint32_t triangle_count{0}; //!< Number of triangles (max 124).
+    uint32_t triangle_count{0}; //!< Number of triangles (max 84).
 };
 
 //! Bounding sphere for per-meshlet frustum culling (local space).

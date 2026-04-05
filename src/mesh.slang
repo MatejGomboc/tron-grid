@@ -260,6 +260,9 @@ float4 fragMain(MeshOutput input) : SV_Target
         {
             // Evaluate wireframe edge detection at the reflected hit point.
             // hit_bary = (u, v), with w = 1 - u - v.
+            // NOTE: these are raw hardware barycentrics — the diagonal suppression
+            // applied in the mesh shader output is not available here, so reflected
+            // wireframe may show quad diagonals that the direct view suppresses.
             float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
             float bary_w = 1.0 - hit_bary.x - hit_bary.y;
             float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
@@ -369,7 +372,7 @@ void meshMain(
                 output.position = mul(mvp, float4(positions[v], 1.0));
                 output.barycentric = BARY[v] + diagonal_mask;
                 output.world_position = world_pos.xyz;
-                output.world_normal = normals[v];
+                output.world_normal = mul((float3x3)model, normals[v]);
                 output.material_type = mat_type;
                 out_vertices[vert_base + v] = output;
             }

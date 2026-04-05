@@ -20,6 +20,10 @@
 struct CameraData {
     float4x4 view;
     float4x4 projection;
+    float3 light_pos; // Point light world-space position.
+    float light_intensity; // Point light intensity (pre-multiplier before inverse square falloff).
+    float3 camera_pos; // Camera world-space position (for view vector in PBR).
+    float camera_pad;
 };
 
 // Must match C++ ObjectData struct layout (including padding).
@@ -27,7 +31,7 @@ struct ObjectData {
     float4x4 model;
     uint meshlet_offset;
     uint meshlet_count;
-    uint pad0;
+    uint material_type; // 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
     uint pad1;
 };
 
