@@ -54,7 +54,7 @@ Etapes 25-28 (PR #74), orange accent + light orb + 5 code audits (PR #75)
 
 ---
 
-## Phase 7 — Post-Processing (Bloom + Tonemapping)
+## Phase 7 — Visual Polish (Bloom, Tonemapping, AA, Skybox, Per-Material PBR)
 
 **Goal:** Make the neon tubes and emissive orb *glow* with soft halos that
 bleed into surrounding pixels, and replace the HDR clamping blit with
@@ -94,8 +94,8 @@ tonemapping), proving the compute pipeline works.
 
 - Write a Slang compute shader (`postprocess.slang`) that reads from
   the HDR image and writes to the swapchain image. Entry point
-  `postprocessMain`, workgroup size 8×8. Uses `imageLoad()`/`imageStore()`
-  with `gl_GlobalInvocationID.xy` as pixel coordinates.
+  `postprocessMain`, workgroup size 8×8. Uses texture load/store
+  with `SV_DispatchThreadID.xy` as pixel coordinates.
 - Descriptor set layout: 1 storage image (HDR input, `rgba16f`,
   `readonly`) + 1 storage image (swapchain output, `rgba8`, `writeonly`).
 - Create a `VkComputePipeline` with `VK_PIPELINE_BIND_POINT_COMPUTE`.
@@ -204,24 +204,24 @@ breaks the clean geometric aesthetic. Anti-aliasing smooths the edges.
 
 **Candidates:**
 
-- **MSAA 4×** — hardware multi-sample anti-aliasing. Resolve the HDR
-  colour attachment from a 4× MSAA image to the single-sample HDR image
-  before the post-process pass. Requires creating the HDR image with
-  `VK_SAMPLE_COUNT_4_BIT` and a separate single-sample resolve target.
+- **MSAA (GPU max)** — hardware multi-sample anti-aliasing. Resolve the
+  HDR colour attachment from a multisampled image to the single-sample HDR
+  image before the post-process pass. Requires creating the HDR image with
+  the queried max sample count and a separate single-sample resolve target.
   Best quality for geometric edges (exactly what wireframe neon needs).
-  Cost: 4× fragment shading + resolve bandwidth.
+  Cost: N× fragment shading + resolve bandwidth.
 - **FXAA** — fast approximate anti-aliasing as a post-process compute
   pass after tonemapping. Cheaper than MSAA but blurs textures. Since
   we have no textures (pure procedural wireframe + emissive), FXAA
   would work well and is simpler to implement (single compute pass on
   the final sRGB image).
 
-**Recommendation:** Start with MSAA 4× for the best wireframe edge
-quality. The neon tubes are thin sub-pixel lines — MSAA handles these
-much better than post-process AA. If performance is an issue, fall back
-to FXAA.
+**Recommendation:** Start with MSAA at the GPU's maximum supported
+sample count for the best wireframe edge quality. The neon tubes are
+thin sub-pixel lines — MSAA handles these much better than post-process
+AA. If performance is an issue, fall back to FXAA.
 
-**Approach (MSAA 4×):**
+**Approach (MSAA, GPU max):**
 
 - Query `VkPhysicalDeviceLimits::framebufferColorSampleCounts &
   framebufferDepthSampleCounts` and select the highest supported sample
@@ -230,14 +230,14 @@ to FXAA.
   count in `Device` (e.g., `m_max_msaa_samples`). Log it at startup.
   On weaker GPUs, the same code path automatically falls back to
   whatever the hardware supports — no manual override needed.
-- Create the HDR colour image with `VK_SAMPLE_COUNT_4_BIT` and
+- Create the HDR colour image with the selected sample count and
   `VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | COLOR_ATTACHMENT_BIT`.
   Multisampled images must have exactly 1 mip level.
 - Create a single-sample HDR resolve target (the existing HDR image
   becomes this). The MSAA image is a new, separate resource.
-- The depth buffer also needs `VK_SAMPLE_COUNT_4_BIT` to match.
+- The depth buffer also needs the same sample count to match.
 - The mesh shader pipeline's `VkPipelineMultisampleStateCreateInfo`
-  must set `rasterizationSamples = VK_SAMPLE_COUNT_4_BIT`.
+  must set `rasterizationSamples` to the selected sample count.
 - Dynamic rendering: set the MSAA image as the colour attachment and
   the single-sample HDR image as the resolve attachment (`resolveMode =
   VK_RESOLVE_MODE_AVERAGE_BIT`). The resolve happens automatically at
