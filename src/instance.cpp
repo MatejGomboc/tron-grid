@@ -155,7 +155,7 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*m_instance);
 
     // Step 7: Create persistent debug messenger
-    if (enable_validation && !layers.empty()) {
+    if (enable_validation && (!layers.empty())) {
         m_debug_messenger = vk::raii::DebugUtilsMessengerEXT(m_instance, debug_create_info);
     }
 }
