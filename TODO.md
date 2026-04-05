@@ -252,32 +252,38 @@ to FXAA.
 **After this step:** neon grid lines are smooth and clean, no jagged
 stair-stepping. The Tron aesthetic is polished.
 
-### Etape 34 — Procedural Skybox
+### Etape 34 — Procedural Cyberpunk Skybox
 
-The concept art shows a dark void sky with scattered stars, faint
-nebula wisps, and shooting star streaks. Currently the background is
-the clear colour (dark grey) — the sky should feel like infinite
-digital space.
+The sky should feel like a digital atmosphere — not outer space with
+stars, but faintly glowing greenish-cyan clouds drifting through
+infinite darkness. Think data fog, digital aurora, cyberpunk haze.
+The clouds are dim enough to not compete with the neon grid but
+bright enough to break the flat black void and add depth.
 
 **Approach:**
 
 - Write a fullscreen fragment shader (`skybox.slang`) that runs as a
-  separate pass before the scene render (or after, for fragments not
-  covered by geometry — using the depth buffer to skip covered pixels).
+  separate pass after the scene render, using the depth buffer to skip
+  fragments covered by geometry (depth test, no depth write).
 - The shader takes the inverse view-projection matrix to reconstruct
   the world-space ray direction from the fragment's screen position.
-- **Stars:** Hash the ray direction (quantised to a grid on the unit
-  sphere) to produce pseudo-random star positions. Brightness varies
-  with a second hash. Faint twinkle via a time-based sine modulation.
-- **Nebula:** Low-frequency layered noise on the ray direction to
-  create subtle dark blue/purple wisps against the black void.
-- **Shooting stars:** Optional — animated streaks using a time-based
-  parametric line test against the ray direction.
+- **Cloud layer:** Layered value noise (3-4 octaves) on the ray
+  direction to create slow-rolling volumetric cloud shapes. Colour:
+  dark greenish-cyan tint `(0.0, 0.08, 0.06)` with brighter wisps
+  at `(0.0, 0.15, 0.12)`. The clouds are faint — mostly darkness
+  with subtle luminous patches.
+- **Depth gradient:** Clouds near the horizon are denser and brighter;
+  clouds overhead are sparser. Use `1.0 - abs(ray_dir.y)` as a
+  density multiplier to concentrate the haze at the horizon line
+  where it frames the terrain silhouette.
+- **Animation:** Slowly scroll the noise coordinates over time for
+  drifting cloud motion. Very slow — the clouds should feel like a
+  distant atmospheric phenomenon, not weather.
 - No geometry needed — the skybox is purely procedural in the
   fragment shader, rendering to the HDR image.
 
-**After this step:** the sky is no longer a flat colour — it's an
-infinite digital void with stars, matching the concept art.
+**After this step:** the sky is a dark digital atmosphere with faintly
+glowing cyan-green cloud wisps — cyberpunk, not space opera.
 
 ### Etape 35 — Per-Material PBR (Material SSBO)
 
