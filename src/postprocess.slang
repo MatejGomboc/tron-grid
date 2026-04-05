@@ -24,14 +24,21 @@ RWTexture2D<float4> hdr_input;
 [[vk::image_format("unknown")]]
 RWTexture2D<float4> swapchain_output;
 
+// IEC 61966-2-1 sRGB transfer function constants.
+static const float SRGB_LINEAR_THRESHOLD = 0.0031308;
+static const float SRGB_LINEAR_SCALE = 12.92;
+static const float SRGB_POWER_SCALE = 1.055;
+static const float SRGB_POWER_EXPONENT = 1.0 / 2.4;
+static const float SRGB_POWER_OFFSET = 0.055;
+
 //! Converts a single linear-light channel to sRGB (exact IEC 61966-2-1 transfer function).
-float linearToSrgb(float linear)
+float linearToSrgb(float channel)
 {
-    if (linear <= 0.0031308)
+    if (channel <= SRGB_LINEAR_THRESHOLD)
     {
-        return linear * 12.92;
+        return channel * SRGB_LINEAR_SCALE;
     }
-    return 1.055 * pow(linear, 1.0 / 2.4) - 0.055;
+    return SRGB_POWER_SCALE * pow(channel, SRGB_POWER_EXPONENT) - SRGB_POWER_OFFSET;
 }
 
 [shader("compute")]

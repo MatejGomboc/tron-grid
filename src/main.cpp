@@ -82,6 +82,9 @@ constexpr float CAMERA_SPEED = 5.0f;
 //! Camera mouse sensitivity (radians per pixel).
 constexpr float MOUSE_SENSITIVITY{0.003f};
 
+//! Post-process compute shader workgroup size (must match postprocess.slang numthreads).
+constexpr uint32_t PP_WORKGROUP_SIZE{8};
+
 //! Platform-specific key codes for WASD, Space, Shift, and right mouse button.
 #ifdef _WIN32
 constexpr uint32_t KEY_W{0x57};
@@ -258,8 +261,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_layout, 0, {pp_descriptor_set}, {});
 
-    uint32_t group_x{(extent.width + 7) / 8};
-    uint32_t group_y{(extent.height + 7) / 8};
+    uint32_t group_x{(extent.width + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
+    uint32_t group_y{(extent.height + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
     cmd.dispatch(group_x, group_y, 1);
 
     // Transition swapchain: GENERAL → PRESENT_SRC_KHR.
