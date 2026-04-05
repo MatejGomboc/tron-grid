@@ -133,6 +133,8 @@ static void recordBloomDownsample(const vk::raii::CommandBuffer& cmd, vk::Image 
 {
     vk::ImageSubresourceRange colour_range{};
     colour_range.aspectMask = vk::ImageAspectFlagBits::eColor;
+    colour_range.baseMipLevel = 0;
+    colour_range.levelCount = 1;
     colour_range.baseArrayLayer = 0;
     colour_range.layerCount = 1;
 
@@ -790,6 +792,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     uint32_t current_frame{0};
 
+    // Pre-allocated scratch vector for bloom descriptor sets (avoids per-frame heap allocation).
+    std::vector<vk::DescriptorSet> bloom_sets_for_frame;
+    bloom_sets_for_frame.reserve(BLOOM_MAX_MIPS);
+
     while (true) {
         // Block until the main thread sends an event
         {
@@ -966,9 +972,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         updatePostProcessDescriptors(current_frame, *hdr_view, *swapchain_storage_views[image_index]);
         updateBloomDescriptors(current_frame);
 
-        // Collect bloom descriptor sets for this frame into a non-owning vector for recordFrame.
-        std::vector<vk::DescriptorSet> bloom_sets_for_frame;
-        bloom_sets_for_frame.reserve(bloom_mip_count);
+        // Collect bloom descriptor sets for this frame (reuses pre-allocated vector).
+        bloom_sets_for_frame.clear();
         for (uint32_t m{0}; m < bloom_mip_count; ++m) {
             bloom_sets_for_frame.push_back(*bloom_descriptor_sets[current_frame * BLOOM_MAX_MIPS + m]);
         }
