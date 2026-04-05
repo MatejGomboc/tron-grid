@@ -19,7 +19,7 @@
 #include <cstring>
 
 //! Looks up or creates an X11 atom by name.
-static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
+[[nodiscard]] static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
 {
     xcb_intern_atom_cookie_t cookie{xcb_intern_atom(conn, 0, strlen(name), name)};
     xcb_intern_atom_reply_t* reply{xcb_intern_atom_reply(conn, cookie, nullptr)};

@@ -44,7 +44,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageS
 }
 
 //! Checks whether a named layer exists in the available list.
-static bool isLayerAvailable(const std::vector<vk::LayerProperties>& available, const char* name)
+[[nodiscard]] static bool isLayerAvailable(const std::vector<vk::LayerProperties>& available, const char* name)
 {
     return std::ranges::any_of(available, [name](const vk::LayerProperties& layer) {
         return std::string_view(layer.layerName.data()) == name;
@@ -52,7 +52,7 @@ static bool isLayerAvailable(const std::vector<vk::LayerProperties>& available, 
 }
 
 //! Checks whether a named extension exists in the available list.
-static bool isExtensionAvailable(const std::vector<vk::ExtensionProperties>& available, const char* name)
+[[nodiscard]] static bool isExtensionAvailable(const std::vector<vk::ExtensionProperties>& available, const char* name)
 {
     return std::ranges::any_of(available, [name](const vk::ExtensionProperties& ext) {
         return std::string_view(ext.extensionName.data()) == name;

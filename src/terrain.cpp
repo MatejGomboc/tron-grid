@@ -16,7 +16,7 @@
 #include <cmath>
 
 //! Simple hash-based value noise (deterministic, no external dependencies).
-static float valueNoise(float x, float z, uint32_t seed)
+[[nodiscard]] static float valueNoise(float x, float z, uint32_t seed)
 {
     // Hash the integer coordinates.
     int32_t ix{static_cast<int32_t>(std::floor(x))};
@@ -51,7 +51,7 @@ static float valueNoise(float x, float z, uint32_t seed)
 }
 
 //! Layered noise (octaves) for terrain detail.
-static float layeredNoise(float x, float z, uint32_t octaves, float frequency, uint32_t seed)
+[[nodiscard]] static float layeredNoise(float x, float z, uint32_t octaves, float frequency, uint32_t seed)
 {
     float value{0.0f};
     float amplitude{1.0f};

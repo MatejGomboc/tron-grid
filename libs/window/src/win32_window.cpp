@@ -35,7 +35,7 @@ namespace WindowLib
             wc.lpfnWndProc = wndProcStatic;
             wc.hInstance = m_hinstance;
             wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-            wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+            wc.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
             wc.lpszClassName = CLASS_NAME;
 
             if (!RegisterClassExW(&wc)) {

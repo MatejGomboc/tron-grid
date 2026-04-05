@@ -45,7 +45,7 @@ struct QueueFamilyIndices {
 };
 
 //! Finds graphics and present queue family indices for the given device and surface.
-static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
+[[nodiscard]] static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     QueueFamilyIndices indices;
     std::vector<vk::QueueFamilyProperties> families{device.getQueueFamilyProperties()};
@@ -72,7 +72,7 @@ static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& devi
 }
 
 //! Checks whether the device supports all required extensions.
-static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
+[[nodiscard]] static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 {
     std::vector<vk::ExtensionProperties> available{device.enumerateDeviceExtensionProperties()};
 
@@ -89,7 +89,7 @@ static bool hasRequiredExtensions(const vk::raii::PhysicalDevice& device)
 }
 
 //! Scores a physical device for suitability; returns -1 if unsuitable.
-static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
+[[nodiscard]] static int rateDevice(const vk::raii::PhysicalDevice& device, VkSurfaceKHR surface)
 {
     vk::PhysicalDeviceProperties properties{device.getProperties()};
     QueueFamilyIndices indices{findQueueFamilies(device, surface)};

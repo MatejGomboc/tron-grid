@@ -1114,8 +1114,8 @@ int main()
 
             // VkTransformMatrixKHR is 3×4 row-major (transposed from our column-major Mat4).
             VkTransformMatrixKHR transform{};
-            for (int row{0}; row < 3; ++row) {
-                for (int col{0}; col < 4; ++col) {
+            for (uint32_t row{0}; row < 3; ++row) {
+                for (uint32_t col{0}; col < 4; ++col) {
                     transform.matrix[row][col] = model.m[col][row];
                 }
             }
@@ -1259,9 +1259,9 @@ int main()
         // Per-object data — meshlet offsets and material type.
         // material_type: 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
         struct MeshInfo {
-            uint32_t meshlet_offset;
-            uint32_t meshlet_count;
-            uint32_t material_type;
+            uint32_t meshlet_offset{0};
+            uint32_t meshlet_count{0};
+            uint32_t material_type{0};
         };
         std::vector<MeshInfo> mesh_infos{
             {terrain_meshlet_offset, terrain_meshlet_count, 0},
