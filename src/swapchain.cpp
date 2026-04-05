@@ -15,6 +15,7 @@
 #include "swapchain.hpp"
 #include "device.hpp"
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdlib>
 #include <limits>
@@ -128,12 +129,12 @@ void Swapchain::build(uint32_t width, uint32_t height)
 
     uint32_t graphics_family{m_device->graphicsFamilyIndex()};
     uint32_t present_family{m_device->presentFamilyIndex()};
-    uint32_t family_indices[] = {graphics_family, present_family};
+    std::array<uint32_t, 2> family_indices{graphics_family, present_family};
 
     if (graphics_family != present_family) {
         create_info.imageSharingMode = vk::SharingMode::eConcurrent;
         create_info.queueFamilyIndexCount = 2;
-        create_info.pQueueFamilyIndices = family_indices;
+        create_info.pQueueFamilyIndices = family_indices.data();
     } else {
         create_info.imageSharingMode = vk::SharingMode::eExclusive;
     }

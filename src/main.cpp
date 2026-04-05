@@ -114,18 +114,6 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
 
-    // Cross-frame synchronisation for depth image.
-    vk::MemoryBarrier2 cross_frame{};
-    cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
-    cross_frame.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-    cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
-    cross_frame.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-
-    vk::DependencyInfo cross_frame_dep{};
-    cross_frame_dep.memoryBarrierCount = 1;
-    cross_frame_dep.pMemoryBarriers = &cross_frame;
-    cmd.pipelineBarrier2(cross_frame_dep);
-
     // ── Transition HDR + depth to render targets ──
 
     vk::ImageSubresourceRange colour_range{};
@@ -534,6 +522,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             acquire_result = acquire.result;
             image_index = acquire.value;
         } catch (const vk::OutOfDateKHRError&) {
+            // The semaphore may be in an undefined state after OutOfDateKHR.
+            // waitIdle drains all GPU work and resets semaphore signal state.
+            device.get().waitIdle();
             if (swapchain.extent().width > 0 && swapchain.extent().height > 0) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
                 rebuildPresentSemaphores();
@@ -549,6 +540,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         {
             uint32_t extent_height{swapchain.extent().height};
             if (extent_height == 0) {
+                // The acquire succeeded and signalled image_available_semaphores.
+                // We must drain the semaphore before reusing it — waitIdle ensures
+                // all pending GPU work (including the acquire signal) completes.
+                device.get().waitIdle();
                 continue;
             }
 
@@ -597,11 +592,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         // Present
         vk::PresentInfoKHR present_info{};
-        vk::SwapchainKHR swapchains[] = {*swapchain.get()};
+        std::array<vk::SwapchainKHR, 1> swapchains{*swapchain.get()};
         present_info.waitSemaphoreCount = 1;
         present_info.pWaitSemaphores = &*render_finished_semaphores[image_index];
         present_info.swapchainCount = 1;
-        present_info.pSwapchains = swapchains;
+        present_info.pSwapchains = swapchains.data();
         present_info.pImageIndices = &image_index;
 
         vk::Result present_result{vk::Result::eSuccess};
@@ -1256,7 +1251,7 @@ int main()
         logger.logInfo("TLAS built: " + std::to_string(total_objects) + " instances, " + std::to_string(tlas_build_sizes.accelerationStructureSize) + " bytes.");
 
         // Per-object data — meshlet offsets and material type.
-        // pad0 = material type: 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
+        // material_type: 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
         struct MeshInfo {
             uint32_t meshlet_offset;
             uint32_t meshlet_count;

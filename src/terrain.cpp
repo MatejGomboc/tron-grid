@@ -32,7 +32,8 @@ static float valueNoise(float x, float z, uint32_t seed)
 
     // Hash function — produces pseudo-random values from integer coordinates.
     auto hash = [seed](int32_t px, int32_t pz) -> float {
-        uint32_t h{static_cast<uint32_t>(px * 374761393 + pz * 668265263 + seed * 1274126177)};
+        // Use unsigned arithmetic to avoid signed integer overflow UB.
+        uint32_t h{static_cast<uint32_t>(px) * 374761393u + static_cast<uint32_t>(pz) * 668265263u + seed * 1274126177u};
         h = (h ^ (h >> 13)) * 1103515245;
         h = h ^ (h >> 16);
         return static_cast<float>(h & 0x7FFFFFFF) / static_cast<float>(0x7FFFFFFF);

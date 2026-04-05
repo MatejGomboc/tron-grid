@@ -49,7 +49,7 @@ static QueueFamilyIndices findQueueFamilies(const vk::raii::PhysicalDevice& devi
     QueueFamilyIndices indices;
     std::vector<vk::QueueFamilyProperties> families{device.getQueueFamilyProperties()};
 
-    for (uint32_t i = 0; i < static_cast<uint32_t>(families.size()); ++i) {
+    for (uint32_t i{0}; i < static_cast<uint32_t>(families.size()); ++i) {
         // Graphics support
         if (families[i].queueFlags & vk::QueueFlagBits::eGraphics) {
             indices.graphics = i;
@@ -167,7 +167,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     std::vector<vk::DeviceQueueCreateInfo> queue_create_infos;
 
     // Deduplicate queue family indices
-    std::set<uint32_t> unique_families = {m_graphics_family_index, m_present_family_index};
+    std::set<uint32_t> unique_families{m_graphics_family_index, m_present_family_index};
     for (uint32_t family : unique_families) {
         vk::DeviceQueueCreateInfo queue_info{};
         queue_info.queueFamilyIndex = family;
