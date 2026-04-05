@@ -183,6 +183,44 @@ tonemapping.
 **After this step:** neon lines glow with soft halos, the light orb
 radiates warmth, and the scene matches the concept art aesthetic.
 
+### Etape 33 — Anti-Aliasing (MSAA or FXAA)
+
+The neon grid lines suffer from aliasing — jagged stair-stepping that
+breaks the clean geometric aesthetic. Anti-aliasing smooths the edges.
+
+**Candidates:**
+
+- **MSAA 4×** — hardware multi-sample anti-aliasing. Resolve the HDR
+  colour attachment from a 4× MSAA image to the single-sample HDR image
+  before the post-process pass. Requires creating the HDR image with
+  `VK_SAMPLE_COUNT_4_BIT` and a separate single-sample resolve target.
+  Best quality for geometric edges (exactly what wireframe neon needs).
+  Cost: 4× fragment shading + resolve bandwidth.
+- **FXAA** — fast approximate anti-aliasing as a post-process compute
+  pass after tonemapping. Cheaper than MSAA but blurs textures. Since
+  we have no textures (pure procedural wireframe + emissive), FXAA
+  would work well and is simpler to implement (single compute pass on
+  the final sRGB image).
+
+**Recommendation:** Start with MSAA 4× for the best wireframe edge
+quality. The neon tubes are thin sub-pixel lines — MSAA handles these
+much better than post-process AA. If performance is an issue, fall back
+to FXAA.
+
+**Approach (MSAA 4×):**
+
+- Create the HDR colour image with `VK_SAMPLE_COUNT_4_BIT`.
+- Create a single-sample HDR resolve target at the same resolution.
+- The mesh shader pass renders to the 4× MSAA HDR image.
+- After rendering, resolve the MSAA image to the single-sample image
+  via `vkCmdResolveImage2` or as a dynamic rendering resolve attachment.
+- The post-process (bloom + tonemap) reads from the resolved
+  single-sample image as before.
+- The depth buffer also needs `VK_SAMPLE_COUNT_4_BIT` to match.
+
+**After this step:** neon grid lines are smooth and clean, no jagged
+stair-stepping. The Tron aesthetic is polished.
+
 ### Acceptance Criteria
 
 - [ ] Compute post-process pipeline replaces the clamping blit
@@ -194,11 +232,13 @@ radiates warmth, and the scene matches the concept art aesthetic.
 - [ ] Bloom composite with tunable strength
 - [ ] Bloom texture recreated on swapchain resize
 - [ ] Neon tubes and light orb have visible soft glow halos
-- [ ] No new Vulkan extensions needed (compute is core 1.0)
+- [ ] Anti-aliased neon grid lines (MSAA 4× or FXAA)
+- [ ] AA resources recreated on swapchain resize
+- [ ] No new Vulkan extensions needed (compute + MSAA are core 1.0)
 - [ ] Proper synchronisation barriers for all compute passes
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
-- [ ] **Phase 7 complete — bloom + tonemapping post-processing**
+- [ ] **Phase 7 complete — bloom, tonemapping, anti-aliasing**
 
 ---
 
