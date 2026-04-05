@@ -316,6 +316,30 @@ from a material SSBO.
 **After this step:** materials are data, not code. New objects with
 different visual properties can be added without shader changes.
 
+### Etape 36 — Cinematic Post-Process Effects
+
+Add film-like post-processing to sell the "inside a digital world"
+aesthetic. Inspired by Tron Legacy's colour grading: warm colours
+almost completely removed in favour of cool monochromatic tints.
+
+**Effects (all in the post-process compute shader):**
+
+- **Cool colour grade** — shift the tonemapped image toward cool
+  cyan-blue tints, suppress warm colours. A simple colour matrix
+  multiply or per-channel curve. Configurable intensity.
+- **Chromatic aberration** — subtle RGB fringe at screen edges.
+  Sample the image at slightly offset UVs per channel. Very cheap,
+  very cyberpunk.
+- **Vignette** — darken screen corners to draw the eye inward and
+  frame the neon grid. A radial falloff from screen centre.
+- **Scan lines / CRT noise** — faint horizontal line pattern and
+  subtle noise overlay. Sells the "digital display" aesthetic.
+  Optional / toggleable for taste.
+
+**After this step:** the image looks like it was filmed inside the
+Grid, not rendered by a computer. Cool tints, edge distortion, and
+subtle digital noise complete the Tron Legacy look.
+
 ### Acceptance Criteria
 
 - [ ] Compute post-process pipeline replaces the clamping blit
@@ -329,13 +353,14 @@ different visual properties can be added without shader changes.
 - [ ] Neon tubes and light orb have visible soft glow halos
 - [ ] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
 - [ ] AA resources recreated on swapchain resize
-- [ ] Procedural skybox (stars, nebula, dark void)
-- [ ] Per-material PBR via material SSBO (base colour, emissive, roughness, metallic, IOR)
+- [ ] Procedural cyberpunk skybox (cyan-green data fog clouds)
+- [ ] Per-material PBR via material SSBO
+- [ ] Cinematic post-process (colour grade, chromatic aberration, vignette)
 - [ ] No new Vulkan extensions needed (compute + MSAA are core 1.0)
 - [ ] Proper synchronisation barriers for all compute passes
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
-- [ ] **Phase 7 complete — visual polish (bloom, tonemap, AA, skybox, materials)**
+- [ ] **Phase 7 complete — visual polish**
 
 ---
 
@@ -391,6 +416,58 @@ index of refraction.
 - Refraction uses the same inline ray query (`VK_KHR_ray_query`) —
   no new extensions needed.
 
+### Etape 39 — Volumetric Fog + Light Shafts
+
+Neon light scattering through atmospheric haze — the #1 mood tool in
+cyberpunk rendering (Cyberpunk 2077 uses volumetric fog extensively).
+Inspired by Tron Legacy where scenes were lit from below and "light
+sprang from within the world."
+
+**Approach:**
+
+- Compute shader raymarches through a 3D volume texture (froxel grid)
+  to accumulate in-scattered light from emissive surfaces.
+- The fog density is low (faint haze) but concentrates near the ground
+  where the neon tubes emit — creating visible light shafts rising from
+  the grid lines.
+- Temporal reprojection reuses previous frame data to reduce noise.
+- The fog colour picks up the emissive colour of nearby neon tubes
+  (cyan shafts from cyan lines, orange from orange lines).
+
+### Etape 40 — Light Trails
+
+Moving objects leave persistent glowing streaks — the signature Tron
+visual. Core identity for light cycles, data couriers, and any
+moving programme.
+
+**Approach:**
+
+- A trail buffer (SSBO) stores a ring buffer of past positions per
+  entity. Each frame, the current position is appended.
+- A compute or mesh shader reads the trail buffer and generates thin
+  ribbon geometry connecting past positions.
+- The ribbon uses the same emissive material as neon tubes (HDR,
+  bloomed). Trail colour matches the entity's identity colour.
+- Trails fade over time (age-based alpha/emissive decay).
+
+### Etape 41 — Derez Particle System
+
+Entities dissolve into geometric particles when destroyed — the Tron
+"derez" effect. Digital Domain used procedural explosion algorithms
+(the "Egyptian algorithm") to generate travelling linework for derez
+sequences.
+
+**Approach:**
+
+- GPU compute particle system — particles are stored in an SSBO,
+  updated by a compute shader each frame (position, velocity, lifetime).
+- On derez trigger: the entity's mesh vertices become particle spawn
+  positions. Each particle inherits the vertex's emissive colour.
+- Particles fly outward with randomised velocity, shrink, and fade.
+- Rendered as point sprites or tiny billboard quads via mesh shader.
+- The particle system is general-purpose — also used for energy sparks,
+  data stream effects, and environmental ambience.
+
 ### Acceptance Criteria
 
 - [ ] No point light abstraction — all lighting from emissive geometry
@@ -400,7 +477,10 @@ index of refraction.
 - [ ] Transparent materials with refraction (Snell's law, IOR)
 - [ ] Order-independent transparency or sorted alpha
 - [ ] Per-material opacity in material SSBO
-- [ ] **Phase 8 complete — full RT rendering**
+- [ ] Volumetric fog with neon light shafts
+- [ ] Light trails for moving entities (ring buffer + ribbon geometry)
+- [ ] Derez particle system (GPU compute, mesh shader rendered)
+- [ ] **Phase 8 complete — full RT + Tron effects**
 
 ---
 
