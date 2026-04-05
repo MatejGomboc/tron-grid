@@ -372,6 +372,14 @@ Less desaturation but no toe (blacks stay linear).
 ### Tonemapping and HDR
 
 - [Narkowicz 2016 — ACES Filmic Tone Mapping Curve](https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/)
+- [Hill / MJP — ACES Fitted RRT+ODT (BakingLab)](https://github.com/TheRealMJP/BakingLab/blob/master/BakingLab/ACES.hlsl)
+- [Google Filament — Tone Mapping (hue shift discussion)](https://google.github.io/filament/Filament.html#toneMapping)
+- [Patry 2016 — HDR Colour Grading and Display in Frostbite (SIGGRAPH)](https://www.ea.com/frostbite/news/high-dynamic-range-color-grading-and-display-in-frostbite)
+- [Hoffman 2017 — A Practical Approach to Colour in Games (SIGGRAPH PBR course)](https://blog.selfshadow.com/publications/s2017-shading-course/)
+- [Hable 2010 — Filmic Tonemapping Operators (Uncharted 2)](http://filmicworlds.com/blog/filmic-tonemapping-operators/)
+- [Sobotka — AgX Display Rendering Transform](https://github.com/sobotka/AgX)
+- [Wrensch — Minimal AgX Implementation (Iolite)](https://iolite-engine.com/blog_posts/minimal_agx_implementation)
+- [Stachowiak — Tony McMapface (hue-preserving 3D LUT)](https://github.com/h3r2tic/tony-mc-mapface)
 - [64 — Tone Mapping (comprehensive comparison)](https://64.github.io/tonemapping/)
 - [c0de517e — Tonemapping on HDR Displays](http://c0de517e.blogspot.com/2017/02/tonemapping-on-hdr-displays-aces-to.html)
 
