@@ -224,8 +224,12 @@ to FXAA.
 **Approach (MSAA 4×):**
 
 - Query `VkPhysicalDeviceLimits::framebufferColorSampleCounts &
-  framebufferDepthSampleCounts` to confirm 4× support. Fall back to
-  2× or 1× if not available.
+  framebufferDepthSampleCounts` and select the highest supported sample
+  count (64×, 32×, 16×, 8×, 4×, 2×). Use the GPU's maximum capability
+  by default — the RTX 4090 supports 8× and higher. Store the selected
+  count in `Device` (e.g., `m_max_msaa_samples`). Log it at startup.
+  On weaker GPUs, the same code path automatically falls back to
+  whatever the hardware supports — no manual override needed.
 - Create the HDR colour image with `VK_SAMPLE_COUNT_4_BIT` and
   `VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | COLOR_ATTACHMENT_BIT`.
   Multisampled images must have exactly 1 mip level.
