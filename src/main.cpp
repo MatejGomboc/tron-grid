@@ -558,7 +558,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
-            ubo.light_pos = MathLib::Vec3{0.0f, 50.0f, 0.0f};
+            ubo.light_pos = MathLib::Vec3{0.0f, 17.0f, 0.0f};
             ubo.light_intensity = 150.0f;
             ubo.camera_pos = camera.position();
             pipeline.updateCameraUBO(current_frame, ubo);
@@ -714,7 +714,7 @@ int main()
         // ── Light orb sphere ──
 
         constexpr float LIGHT_ORB_RADIUS{3.0f};
-        MathLib::Vec3 light_pos{0.0f, 50.0f, 0.0f};
+        MathLib::Vec3 light_pos{0.0f, 17.0f, 0.0f};
 
         std::vector<MathLib::Vec3> sphere_raw_positions;
         std::vector<uint32_t> sphere_raw_indices;
