@@ -151,6 +151,26 @@ sprang from within the world."
 - The fog colour picks up the emissive colour of nearby neon tubes
   (cyan shafts from cyan lines, orange from orange lines).
 
+### Etape 41 — Adaptive LOD + Temporal Denoising
+
+Nanite-inspired GPU-driven level-of-detail system and temporal
+accumulation for noise-free RT output at 4K @ 60+ FPS.
+
+**Approach:**
+
+- **Adaptive LOD** — GPU-driven meshlet streaming with automatic
+  level-of-detail selection based on screen-space error. Dense meshlets
+  near the camera, coarse meshlets in the distance. Seamless LOD
+  transitions without popping (morphing or dithered crossfade).
+- **Temporal accumulation** — reuse data from previous frames to
+  denoise RT output (temporal anti-aliasing, temporal reprojection).
+  Motion vectors for correct reprojection during camera movement.
+- **GPU profiling** — timestamp queries for per-pass timing, automatic
+  bottleneck detection. Target: 4K @ 60+ FPS sustained on RTX 4090.
+
+**After this step:** the world renders at maximum quality with
+noise-free ray tracing and automatic detail scaling.
+
 ### Acceptance Criteria
 
 - [ ] No point light abstraction — all lighting from emissive geometry
@@ -161,6 +181,10 @@ sprang from within the world."
 - [ ] Order-independent transparency or sorted alpha
 - [ ] Per-material opacity in material SSBO
 - [ ] Volumetric fog with neon light shafts
+- [ ] Adaptive LOD with seamless transitions
+- [ ] Temporal denoising for RT output
+- [ ] GPU profiling with per-pass timestamps
+- [ ] 4K @ 60+ FPS sustained on RTX 4090
 - [ ] Proper synchronisation barriers for all new passes
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
@@ -185,21 +209,15 @@ modules. Prepare the codebase for avatar integration in Phase 10.
 - **Resource manager** — centralises GPU resource creation, staging
   uploads, and lifetime management. Replaces ad-hoc buffer/image creation
   scattered across renderThread.
-- **GPU profiling** — timestamp queries for per-pass timing, automatic
-  bottleneck detection, adaptive quality scaling.
 - **Async compute** — overlap post-processing compute with the next
   frame's mesh shader pass on separate compute queues.
-- **Temporal accumulation** — reuse data from previous frames to
-  denoise RT output (temporal anti-aliasing, temporal reprojection).
 
 ### Acceptance Criteria
 
 - [ ] Engine class with clear module boundaries
 - [ ] Render pipeline extracted from renderThread
 - [ ] Resource manager for GPU buffers and images
-- [ ] GPU profiling with per-pass timestamps
 - [ ] Async compute overlap
-- [ ] 4K @ 60+ FPS sustained on RTX 4090
 - [ ] **Phase 9 complete — engine architecture**
 
 ---
@@ -236,8 +254,6 @@ See `docs/VISION.md` § Future: Multiplayer for the long-term goal.
 
 ## Backlog
 
-- **Nanite-like adaptive LOD** — GPU-driven mesh streaming, automatic
-  level-of-detail, software rasterisation for sub-pixel triangles.
 - **Memory budget** — VMA budget tracking, streaming eviction policy,
   residency management for large scenes.
 - **Multiplayer** — extract world state to authoritative server, network

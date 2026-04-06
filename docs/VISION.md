@@ -262,8 +262,8 @@ The canonical task checklist lives in `TODO.md`.
 | 5 | Acceleration structures | Hard shadows |
 | 6 | Physically-based RT | Full RT lighting |
 | 7 | Visual polish | Bloom, tonemapping, AA, skybox, per-material PBR |
-| 8 | Full RT + advanced rendering | Emissive light sources, multi-bounce GI, transparency, refraction |
-| 9 | Engine architecture | Extract modules from main.cpp, Engine class, GPU profiling, async compute |
+| 8 | Full RT + advanced rendering | Emissive lighting, multi-bounce GI, transparency, refraction, volumetric fog, adaptive LOD |
+| 9 | Engine architecture | Extract modules from main.cpp, Engine class, async compute |
 | 10 | AI avatar integration | Bot DLL/SO plugins, avatar entities, light trails, derez particles |
 | 11 | Multiplayer | Authoritative server, MMO networking |
 
