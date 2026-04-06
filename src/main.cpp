@@ -1981,12 +1981,37 @@ int main()
 
         logger.logInfo("TLAS built: " + std::to_string(total_objects) + " instances, " + std::to_string(tlas_build_sizes.accelerationStructureSize) + " bytes.");
 
-        // Per-object data — meshlet offsets and material type.
-        // material_type: 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
+        // Material definitions — per-object PBR properties in the material SSBO.
+        std::vector<Material> material_data{
+            {
+                // Material 0: obsidian terrain.
+                {0.005f, 0.005f, 0.01f}, // base_colour — deep black with cool tint.
+                0.06f, // roughness — polished obsidian.
+                {}, // emissive — none.
+                0.0f, // emissive_strength.
+                0.0f, // metallic.
+                1.5f, // ior.
+                1.0f, // opacity.
+                0.0f, // pad.
+            },
+            {
+                // Material 1: emissive orb.
+                {}, // base_colour — not used (pure emissive).
+                1.0f, // roughness.
+                {1.0f, 0.03f, 0.0f}, // emissive — orange.
+                20.0f, // emissive_strength.
+                0.0f, // metallic.
+                1.5f, // ior.
+                1.0f, // opacity.
+                0.0f, // pad.
+            },
+        };
+
+        // Per-object data — meshlet offsets and material index.
         struct MeshInfo {
             uint32_t meshlet_offset{0};
             uint32_t meshlet_count{0};
-            uint32_t material_type{0};
+            uint32_t material_index{0};
         };
         std::vector<MeshInfo> mesh_infos{
             {terrain_meshlet_offset, terrain_meshlet_count, 0},
@@ -2001,7 +2026,7 @@ int main()
             obj.model = scene.transforms()[i].modelMatrix();
             obj.meshlet_offset = mesh_infos[mesh_id].meshlet_offset;
             obj.meshlet_count = mesh_infos[mesh_id].meshlet_count;
-            obj.material_type = mesh_infos[mesh_id].material_type;
+            obj.material_index = mesh_infos[mesh_id].material_index;
             object_data.push_back(obj);
         }
 
@@ -2041,6 +2066,43 @@ int main()
         }
 
         logger.logInfo("Object SSBO uploaded (" + std::to_string(total_objects) + " objects, " + std::to_string(ssbo_size) + " bytes).");
+
+        // Material SSBO — per-object PBR properties.
+        VkDeviceSize material_ssbo_size{static_cast<VkDeviceSize>(material_data.size() * sizeof(Material))};
+        AllocatedBuffer material_ssbo{allocator.createBuffer(material_ssbo_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer mat_staging{allocator.createBuffer(material_ssbo_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            VmaAllocationInfo mat_staging_info{mat_staging.allocationInfo()};
+            std::memcpy(mat_staging_info.pMappedData, material_data.data(), material_ssbo_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy mat_region{};
+            mat_region.size = material_ssbo_size;
+            copy_cmd.copyBuffer(mat_staging.buffer(), material_ssbo.buffer(), {mat_region});
+
+            copy_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Material SSBO uploaded (" + std::to_string(material_data.size()) + " materials, " + std::to_string(material_ssbo_size) + " bytes).");
 
         // Object bounds SSBO — build from scene bounds
         std::vector<ObjectBounds> object_bounds;
@@ -2139,6 +2201,7 @@ int main()
             pipeline.bindSSBOs(i, object_ssbo.buffer(), ssbo_size, bounds_ssbo.buffer(), bounds_size, meshlet_desc_ssbo.buffer(), meshlet_desc_size,
                 vertex_buffer.buffer(), vertex_buffer_size, meshlet_vert_idx_ssbo.buffer(), meshlet_vert_idx_size, meshlet_tri_idx_ssbo.buffer(), meshlet_tri_idx_size);
             pipeline.bindTLAS(i, *tlas);
+            pipeline.bindMaterialSSBO(i, material_ssbo.buffer(), material_ssbo_size);
         }
 
         // Render event signal — main thread emits, render thread consumes

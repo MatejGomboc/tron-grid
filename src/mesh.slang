@@ -31,8 +31,20 @@ struct ObjectData {
     float4x4 model;
     uint meshlet_offset;
     uint meshlet_count;
-    uint material_type; // 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
+    uint material_index; // Index into the material SSBO.
     uint pad1;
+};
+
+// Must match C++ Material struct layout (48 bytes, 16-byte aligned).
+struct MaterialData {
+    float3 base_colour;
+    float roughness;
+    float3 emissive;
+    float emissive_strength;
+    float metallic;
+    float ior;
+    float opacity;
+    float pad;
 };
 
 struct MeshletDesc {
@@ -61,7 +73,7 @@ struct MeshOutput {
     float3 barycentric : TEXCOORD0; // Barycentric coordinates for wireframe edge detection.
     float3 world_position : TEXCOORD1; // World-space position for shadow ray origin.
     nointerpolation float3 world_normal : TEXCOORD2; // World-space face normal (flat shading).
-    nointerpolation uint material_type : TEXCOORD3; // 0 = terrain, 1 = emissive orb.
+    nointerpolation uint material_index : TEXCOORD3; // Index into the material SSBO.
 };
 
 [[vk::binding(0, 0)]]
@@ -85,25 +97,17 @@ StructuredBuffer<uint8_t> meshlet_triangle_indices;
 [[vk::binding(7, 0)]]
 RaytracingAccelerationStructure scene_tlas;
 
-// ── Material constants ──
+[[vk::binding(8, 0)]]
+StructuredBuffer<MaterialData> materials;
 
-// Obsidian floor — polished volcanic glass, deep black, glossy sheen.
-static const float3 OBSIDIAN_COLOUR = float3(0.005, 0.005, 0.01); // Deep black with subtle cool tint.
-static const float OBSIDIAN_ROUGHNESS = 0.06; // Polished obsidian — sharp but slightly softened reflections.
+// ── Neon tube constants (per-fragment wireframe pattern, not per-object material) ──
 
-// Neon tube edges — bright emissive light strips embedded in the floor.
 // Dual-colour palette: cyan primary grid with orange accents on major grid lines.
 static const float3 CYAN_EMISSIVE_COLOUR = float3(0.0, 0.8, 1.0); // Cyan neon — primary grid colour.
-static const float3 ORANGE_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Orange neon — accent on major grid lines. Low green survives HDR clamping.
+static const float3 ORANGE_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Orange neon — accent on major grid lines.
 static const float TUBE_EMISSIVE_STRENGTH = 15.0; // HDR intensity — well above 1.0.
 static const float TUBE_ROUGHNESS = 1.0; // No specular — pure emissive glow.
-
-// Major grid line spacing — every Nth grid cell gets orange neon tubes.
-static const float MAJOR_GRID_SPACING = 8.0;
-
-// Light orb — solid emissive orange ball floating above the grid.
-static const float3 ORB_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Same orange as neon accent.
-static const float ORB_EMISSIVE_STRENGTH = 20.0; // Bright emissive — visible from the ground.
+static const float MAJOR_GRID_SPACING = 8.0; // Every Nth grid cell gets orange neon tubes.
 
 // Wireframe edge detection — screen-space derivative-based antialiasing.
 // WIRE_THICKNESS is the solid core width in pixels; WIRE_FALLOFF is the soft
@@ -116,7 +120,7 @@ static const float REFLECTED_WIRE_WIDTH = 0.02; // Fixed barycentric-space thres
 // PBR constants.
 static const float PI = 3.14159265359;
 static const float MIN_ROUGHNESS = 0.089; // Prevents NDF singularity and float16 denormals.
-static const float3 F0_DIELECTRIC = float3(0.04, 0.04, 0.04); // Obsidian F0 (IOR ~1.5).
+static const float3 F0_DIELECTRIC = float3(0.04, 0.04, 0.04); // Default dielectric F0 (IOR ~1.5).
 static const float AMBIENT = 0.03; // Faint ambient — obsidian is nearly invisible without direct light.
 
 // Ray tracing constants.
@@ -166,9 +170,12 @@ float3 neonEmissiveColour(float3 world_pos)
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
 {
-    // Emissive orb — solid glowing orange ball, no wireframe or PBR.
-    if (input.material_type == 1) {
-        return float4(ORB_EMISSIVE_COLOUR * ORB_EMISSIVE_STRENGTH, 1.0);
+    // Load material from the SSBO.
+    MaterialData mat = materials[input.material_index];
+
+    // Pure emissive objects (orb) — no wireframe or PBR, just emit light.
+    if (mat.emissive_strength > 0.0) {
+        return float4(mat.emissive * mat.emissive_strength, 1.0);
     }
 
     // Antialiased edge detection — screen-space derivatives give consistent pixel-width
@@ -180,9 +187,9 @@ float4 fragMain(MeshOutput input) : SV_Target
     // Determine neon tube colour — cyan or orange based on grid position.
     float3 tube_colour = neonEmissiveColour(input.world_position);
 
-    // Blend material properties between neon tube and obsidian.
-    float3 base_colour = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, wire);
-    float perceptual_roughness = lerp(TUBE_ROUGHNESS, OBSIDIAN_ROUGHNESS, wire);
+    // Blend material properties between neon tube and surface material from SSBO.
+    float3 base_colour = lerp(float3(0.0, 0.0, 0.0), mat.base_colour, wire);
+    float perceptual_roughness = lerp(TUBE_ROUGHNESS, mat.roughness, wire);
     float roughness = max(perceptual_roughness * perceptual_roughness, MIN_ROUGHNESS);
     float3 emissive = lerp(tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
 
@@ -286,7 +293,9 @@ float4 fragMain(MeshOutput input) : SV_Target
 
             // Evaluate material at the reflected hit point.
             float3 hit_emissive = lerp(hit_tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
-            float3 hit_base = lerp(float3(0.0, 0.0, 0.0), OBSIDIAN_COLOUR, hit_wire);
+            // Reflected hits use the current object's material for the surface colour.
+            // This is approximate — ideally we would look up the hit object's material.
+            float3 hit_base = lerp(float3(0.0, 0.0, 0.0), mat.base_colour, hit_wire);
 
             // The reflected colour is primarily the emissive neon tubes.
             // Obsidian faces reflect as near-black (which is correct — dark stone).
@@ -326,7 +335,7 @@ void meshMain(
     // Load the object transform and material type.
     float4x4 model = objects[task_payload.object_index].model;
     float4x4 mvp = mul(camera.projection, mul(camera.view, model));
-    uint mat_type = objects[task_payload.object_index].material_type;
+    uint mat_idx = objects[task_payload.object_index].material_index;
 
     // Barycentric coordinate lookup — vertex 0, 1, 2 of each triangle.
     static const float3 BARY[3] = {
@@ -385,7 +394,7 @@ void meshMain(
                 output.barycentric = BARY[v] + diagonal_mask;
                 output.world_position = world_pos.xyz;
                 output.world_normal = mul((float3x3)model, normals[v]);
-                output.material_type = mat_type;
+                output.material_index = mat_idx;
                 out_vertices[vert_base + v] = output;
             }
 

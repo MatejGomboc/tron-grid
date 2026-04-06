@@ -32,7 +32,7 @@ struct ObjectData {
     float4x4 model;
     uint meshlet_offset;
     uint meshlet_count;
-    uint material_type; // 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
+    uint material_index; // Index into the material SSBO.
     uint pad1;
 };
 
