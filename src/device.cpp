@@ -106,7 +106,8 @@ struct QueueFamilyIndices {
 
     // Must support required features.
     vk::PhysicalDeviceFeatures features{device.getFeatures()};
-    if ((!features.multiDrawIndirect) || (!features.shaderStorageBufferArrayDynamicIndexing) || (!features.shaderStorageImageWriteWithoutFormat)) {
+    if ((!features.multiDrawIndirect) || (!features.shaderStorageBufferArrayDynamicIndexing) || (!features.shaderStorageImageWriteWithoutFormat)
+        || (!features.sampleRateShading)) {
         return -1;
     }
 
@@ -236,6 +237,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     features2.features.multiDrawIndirect = vk::True;
     features2.features.shaderStorageBufferArrayDynamicIndexing = vk::True;
     features2.features.shaderStorageImageWriteWithoutFormat = vk::True;
+    features2.features.sampleRateShading = vk::True;
     features2.setPNext(&vulkan12_features);
 
     vk::DeviceCreateInfo device_info{};
@@ -260,4 +262,23 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     m_as_scratch_alignment = as_props.minAccelerationStructureScratchOffsetAlignment;
     m_logger.logInfo("RT: acceleration structure scratch alignment = " + std::to_string(m_as_scratch_alignment)
         + ", max instances = " + std::to_string(as_props.maxInstanceCount) + ".");
+
+    // Step 8: Query maximum MSAA sample count
+    vk::SampleCountFlags combined_counts{properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts};
+
+    if (combined_counts & vk::SampleCountFlagBits::e64) {
+        m_max_msaa_samples = vk::SampleCountFlagBits::e64;
+    } else if (combined_counts & vk::SampleCountFlagBits::e32) {
+        m_max_msaa_samples = vk::SampleCountFlagBits::e32;
+    } else if (combined_counts & vk::SampleCountFlagBits::e16) {
+        m_max_msaa_samples = vk::SampleCountFlagBits::e16;
+    } else if (combined_counts & vk::SampleCountFlagBits::e8) {
+        m_max_msaa_samples = vk::SampleCountFlagBits::e8;
+    } else if (combined_counts & vk::SampleCountFlagBits::e4) {
+        m_max_msaa_samples = vk::SampleCountFlagBits::e4;
+    } else if (combined_counts & vk::SampleCountFlagBits::e2) {
+        m_max_msaa_samples = vk::SampleCountFlagBits::e2;
+    }
+
+    m_logger.logInfo("MSAA: max supported sample count = " + std::to_string(static_cast<uint32_t>(m_max_msaa_samples)) + ".");
 }

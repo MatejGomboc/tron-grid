@@ -86,7 +86,7 @@ std::vector<uint32_t> loadSpirv(const std::string& path, LoggingLib::Logger& log
     return buffer;
 }
 
-Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format depth_format, const std::vector<uint32_t>& task_spirv,
+Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format depth_format, vk::SampleCountFlagBits sample_count, const std::vector<uint32_t>& task_spirv,
     const std::vector<uint32_t>& mesh_frag_spirv, uint32_t frames_in_flight, LoggingLib::Logger& logger) :
     m_device(&device),
     m_logger(logger)
@@ -140,8 +140,9 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     depth_stencil.stencilTestEnable = vk::False;
 
     vk::PipelineMultisampleStateCreateInfo multisample{};
-    multisample.rasterizationSamples = vk::SampleCountFlagBits::e1;
-    multisample.sampleShadingEnable = vk::False;
+    multisample.rasterizationSamples = sample_count;
+    multisample.sampleShadingEnable = vk::True;
+    multisample.minSampleShading = 1.0f;
 
     vk::PipelineColorBlendAttachmentState colour_blend_attachment{};
     colour_blend_attachment.blendEnable = vk::False;

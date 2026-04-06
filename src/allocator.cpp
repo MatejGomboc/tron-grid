@@ -77,7 +77,8 @@ AllocatedBuffer Allocator::createBuffer(VkDeviceSize size, VkBufferUsageFlags bu
     return AllocatedBuffer(m_allocator, buffer, allocation);
 }
 
-AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, uint32_t mip_levels) const
+AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VkSampleCountFlagBits sample_count,
+    uint32_t mip_levels) const
 {
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -86,7 +87,7 @@ AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat 
     image_info.extent = {width, height, 1};
     image_info.mipLevels = mip_levels;
     image_info.arrayLayers = 1;
-    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.samples = sample_count;
     image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     image_info.usage = usage;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -94,6 +95,11 @@ AllocatedImage Allocator::createImage(uint32_t width, uint32_t height, VkFormat 
 
     VmaAllocationCreateInfo alloc_create_info{};
     alloc_create_info.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+
+    // Transient attachments benefit from lazily-allocated memory (tile-based GPUs).
+    if (usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT) {
+        alloc_create_info.preferredFlags = VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
+    }
 
     VkImage image{VK_NULL_HANDLE};
     VmaAllocation allocation{VK_NULL_HANDLE};

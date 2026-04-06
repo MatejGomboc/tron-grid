@@ -104,8 +104,13 @@ static const float MAJOR_GRID_SPACING = 8.0;
 static const float3 ORB_EMISSIVE_COLOUR = float3(1.0, 0.03, 0.0); // Same orange as neon accent.
 static const float ORB_EMISSIVE_STRENGTH = 20.0; // Bright emissive — visible from the ground.
 
-// Edge detection.
-static const float WIRE_WIDTH = 0.005; // Edge thickness in barycentric space.
+// Wireframe edge detection — screen-space derivative-based antialiasing.
+// WIRE_THICKNESS is the solid core width in pixels; WIRE_FALLOFF is the soft
+// antialiased edge width in pixels. Together they produce consistent wire width
+// regardless of triangle size or camera distance (Wunkolo 2022).
+static const float WIRE_THICKNESS = 0.1;
+static const float WIRE_FALLOFF = 0.2;
+static const float REFLECTED_WIRE_WIDTH = 0.02; // Fixed barycentric-space threshold for RT reflections.
 
 // PBR constants.
 static const float PI = 3.14159265359;
@@ -165,9 +170,11 @@ float4 fragMain(MeshOutput input) : SV_Target
         return float4(ORB_EMISSIVE_COLOUR * ORB_EMISSIVE_STRENGTH, 1.0);
     }
 
-    // Edge detection — wire=0 at edges (neon tube), wire=1 on faces (obsidian).
-    float edge = min(input.barycentric.x, min(input.barycentric.y, input.barycentric.z));
-    float wire = smoothstep(0.0, WIRE_WIDTH, edge);
+    // Antialiased edge detection — screen-space derivatives give consistent pixel-width
+    // wireframe regardless of triangle size. smoothstep produces a soft falloff at edges.
+    float3 d_bary = fwidth(input.barycentric);
+    float3 remap = smoothstep(d_bary * WIRE_THICKNESS, d_bary * (WIRE_THICKNESS + WIRE_FALLOFF), input.barycentric);
+    float wire = min(remap.x, min(remap.y, remap.z));
 
     // Determine neon tube colour — cyan or orange based on grid position.
     float3 tube_colour = neonEmissiveColour(input.world_position);
@@ -267,7 +274,10 @@ float4 fragMain(MeshOutput input) : SV_Target
             float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
             float bary_w = 1.0 - hit_bary.x - hit_bary.y;
             float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
-            float hit_wire = smoothstep(0.0, WIRE_WIDTH, hit_edge);
+            // Fixed barycentric-space threshold for reflections — fwidth is unavailable
+            // in ray query code. The reflected wireframe is small and blurred by the
+            // reflection, so a fixed threshold is acceptable here.
+            float hit_wire = smoothstep(0.0, REFLECTED_WIRE_WIDTH, hit_edge);
 
             // Compute world-space position of the reflected hit for neon colour lookup.
             float3 hit_pos = reflect_origin + reflect_dir * reflect_query.CommittedRayT();

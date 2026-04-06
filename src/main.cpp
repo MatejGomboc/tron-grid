@@ -94,7 +94,7 @@ constexpr uint32_t BLOOM_MAX_MIPS{6};
 constexpr float BLOOM_THRESHOLD{1.0f};
 
 //! Bloom composite strength — scales the additive bloom contribution before tonemapping.
-constexpr float BLOOM_STRENGTH{0.4f};
+constexpr float BLOOM_STRENGTH{0.25f};
 
 //! Computes the number of mip levels for the bloom texture (base = half swapchain resolution).
 [[nodiscard]] static uint32_t bloomMipCount(vk::Extent2D extent)
@@ -263,11 +263,12 @@ static void recordBloomUpsample(const vk::raii::CommandBuffer& cmd, vk::Image bl
     run between the scene render and the tonemap pass. The post-process shader
     composites bloom with the HDR image before tonemapping.
 */
-static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image, vk::ImageView hdr_view, vk::ImageView depth_view, vk::Image depth_image,
-    vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects,
-    vk::Pipeline pp_pipeline, vk::PipelineLayout pp_layout, vk::DescriptorSet pp_descriptor_set, vk::Image bloom_image, uint32_t bloom_mip_count, uint32_t bloom_base_w,
-    uint32_t bloom_base_h, vk::Pipeline bloom_extract_pipeline, vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline,
-    vk::PipelineLayout bloom_layout, const std::vector<vk::DescriptorSet>& bloom_sets, const std::vector<vk::DescriptorSet>& bloom_upsample_sets)
+static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image, vk::ImageView msaa_view, vk::Image hdr_image, vk::ImageView hdr_view,
+    vk::ImageView depth_view, vk::Image depth_image, vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set,
+    const MathLib::Frustum& frustum, uint32_t total_objects, vk::Pipeline pp_pipeline, vk::PipelineLayout pp_layout, vk::DescriptorSet pp_descriptor_set,
+    vk::Image bloom_image, uint32_t bloom_mip_count, uint32_t bloom_base_w, uint32_t bloom_base_h, vk::Pipeline bloom_extract_pipeline,
+    vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline, vk::PipelineLayout bloom_layout, const std::vector<vk::DescriptorSet>& bloom_sets,
+    const std::vector<vk::DescriptorSet>& bloom_upsample_sets)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -289,11 +290,12 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     depth_range.baseArrayLayer = 0;
     depth_range.layerCount = 1;
 
-    // Transition HDR image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL.
-    // srcStage = eComputeShader to wait for the previous frame's post-process read.
+    // Transition HDR image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (discard prior content).
+    // srcStage includes eColorAttachmentOutput because MSAA resolve writes to HDR during endRendering,
+    // and eComputeShader because the previous frame's post-process reads HDR in GENERAL layout.
     vk::ImageMemoryBarrier2 hdr_to_render{};
-    hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+    hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_render.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     hdr_to_render.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_render.oldLayout = vk::ImageLayout::eUndefined;
@@ -302,6 +304,20 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     hdr_to_render.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
     hdr_to_render.image = hdr_image;
     hdr_to_render.subresourceRange = colour_range;
+
+    // Transition MSAA colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (transient, always discard).
+    // srcStage covers the previous frame's render which wrote to the MSAA image.
+    vk::ImageMemoryBarrier2 msaa_to_render{};
+    msaa_to_render.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    msaa_to_render.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+    msaa_to_render.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+    msaa_to_render.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+    msaa_to_render.oldLayout = vk::ImageLayout::eUndefined;
+    msaa_to_render.newLayout = vk::ImageLayout::eColorAttachmentOptimal;
+    msaa_to_render.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    msaa_to_render.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    msaa_to_render.image = msaa_image;
+    msaa_to_render.subresourceRange = colour_range;
 
     // Transition depth: UNDEFINED → DEPTH_ATTACHMENT_OPTIMAL.
     vk::ImageMemoryBarrier2 depth_to_render{};
@@ -316,7 +332,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     depth_to_render.image = depth_image;
     depth_to_render.subresourceRange = depth_range;
 
-    std::array<vk::ImageMemoryBarrier2, 2> to_render_barriers{hdr_to_render, depth_to_render};
+    std::array<vk::ImageMemoryBarrier2, 3> to_render_barriers{msaa_to_render, hdr_to_render, depth_to_render};
     vk::DependencyInfo dep_to_render{};
     dep_to_render.setImageMemoryBarriers(to_render_barriers);
     cmd.pipelineBarrier2(dep_to_render);
@@ -324,11 +340,14 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     // ── Render scene to HDR image ──
 
     vk::RenderingAttachmentInfo colour_attachment{};
-    colour_attachment.imageView = hdr_view;
+    colour_attachment.imageView = msaa_view;
     colour_attachment.imageLayout = vk::ImageLayout::eColorAttachmentOptimal;
     colour_attachment.loadOp = vk::AttachmentLoadOp::eClear;
-    colour_attachment.storeOp = vk::AttachmentStoreOp::eStore;
+    colour_attachment.storeOp = vk::AttachmentStoreOp::eDontCare;
     colour_attachment.clearValue.color = vk::ClearColorValue{std::array{0.01f, 0.01f, 0.02f, 1.0f}};
+    colour_attachment.resolveMode = vk::ResolveModeFlagBits::eAverage;
+    colour_attachment.resolveImageView = hdr_view;
+    colour_attachment.resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal;
 
     vk::RenderingAttachmentInfo depth_attachment{};
     depth_attachment.imageView = depth_view;
@@ -516,9 +535,26 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     };
     rebuildPresentSemaphores();
 
-    // Depth buffer — same dimensions as swapchain, recreated on resize
-    AllocatedImage depth_image{
-        allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)};
+    // MSAA colour buffer — multisampled, transient (only the resolved result is kept).
+    VkSampleCountFlagBits msaa_samples{static_cast<VkSampleCountFlagBits>(device.maxMsaaSamples())};
+
+    AllocatedImage msaa_image{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+        VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, msaa_samples)};
+
+    vk::ImageViewCreateInfo msaa_view_info{};
+    msaa_view_info.image = msaa_image.image();
+    msaa_view_info.viewType = vk::ImageViewType::e2D;
+    msaa_view_info.format = HDR_FORMAT;
+    msaa_view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    msaa_view_info.subresourceRange.baseMipLevel = 0;
+    msaa_view_info.subresourceRange.levelCount = 1;
+    msaa_view_info.subresourceRange.baseArrayLayer = 0;
+    msaa_view_info.subresourceRange.layerCount = 1;
+    vk::raii::ImageView msaa_view(device.get(), msaa_view_info);
+
+    // Depth buffer — multisampled to match MSAA colour, recreated on resize.
+    AllocatedImage depth_image{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, msaa_samples)};
 
     vk::ImageViewCreateInfo depth_view_info{};
     depth_view_info.image = depth_image.image();
@@ -531,7 +567,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     depth_view_info.subresourceRange.layerCount = 1;
     vk::raii::ImageView depth_view(device.get(), depth_view_info);
 
-    // HDR colour buffer — same dimensions as swapchain, recreated on resize.
+    // HDR colour buffer — single-sample resolve target, recreated on resize.
     // STORAGE_BIT allows the post-process compute shader to read the HDR image.
     AllocatedImage hdr_image{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT)};
@@ -572,7 +608,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     uint32_t bloom_base_w{std::max(swapchain.extent().width / 2, 1u)};
     uint32_t bloom_base_h{std::max(swapchain.extent().height / 2, 1u)};
 
-    AllocatedImage bloom_image{allocator.createImage(bloom_base_w, bloom_base_h, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT, bloom_mip_count)};
+    AllocatedImage bloom_image{
+        allocator.createImage(bloom_base_w, bloom_base_h, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT, VK_SAMPLE_COUNT_1_BIT, bloom_mip_count)};
 
     // Per-mip views for compute shader access.
     std::vector<vk::raii::ImageView> bloom_mip_views;
@@ -594,10 +631,15 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     };
     rebuildBloomMipViews();
 
-    // Rebuilds depth, HDR, bloom, and swapchain storage views to match the current swapchain extent.
+    // Rebuilds MSAA, depth, HDR, bloom, and swapchain storage views to match the current swapchain extent.
     auto rebuildFrameBuffers = [&]() {
+        msaa_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+            VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, msaa_samples);
+        msaa_view_info.image = msaa_image.image();
+        msaa_view = vk::raii::ImageView(device.get(), msaa_view_info);
+
         depth_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(DEPTH_FORMAT),
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, msaa_samples);
         depth_view_info.image = depth_image.image();
         depth_view = vk::raii::ImageView(device.get(), depth_view_info);
 
@@ -609,7 +651,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         bloom_mip_count = bloomMipCount(swapchain.extent());
         bloom_base_w = std::max(swapchain.extent().width / 2, 1u);
         bloom_base_h = std::max(swapchain.extent().height / 2, 1u);
-        bloom_image = allocator.createImage(bloom_base_w, bloom_base_h, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT, bloom_mip_count);
+        bloom_image = allocator.createImage(bloom_base_w, bloom_base_h, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT, VK_SAMPLE_COUNT_1_BIT,
+            bloom_mip_count);
         rebuildBloomMipViews();
 
         rebuildSwapchainStorageViews();
@@ -1124,10 +1167,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             bloom_upsample_sets_for_frame.push_back(*bloom_upsample_descriptor_sets[current_frame * BLOOM_MAX_MIPS + m]);
         }
 
-        recordFrame(cmd, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index], swapchain.extent(), pipeline,
-            pipeline.descriptorSet(current_frame), frustum, total_objects, *pp_pipeline, *pp_pipeline_layout, *pp_descriptor_sets[current_frame], bloom_image.image(),
-            bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline, *bloom_downsample_pipeline, *bloom_upsample_pipeline, *bloom_pipeline_layout,
-            bloom_sets_for_frame, bloom_upsample_sets_for_frame);
+        recordFrame(cmd, msaa_image.image(), *msaa_view, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index],
+            swapchain.extent(), pipeline, pipeline.descriptorSet(current_frame), frustum, total_objects, *pp_pipeline, *pp_pipeline_layout,
+            *pp_descriptor_sets[current_frame], bloom_image.image(), bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline, *bloom_downsample_pipeline,
+            *bloom_upsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame, bloom_upsample_sets_for_frame);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -1235,7 +1278,7 @@ int main()
 
         // Mesh shader pipeline (task + mesh + fragment). mesh.spv is a combined Slang
         // module containing both meshMain and fragMain entry points.
-        Pipeline pipeline(device, HDR_FORMAT, DEPTH_FORMAT, task_spirv, mesh_spirv, MAX_FRAMES_IN_FLIGHT, logger);
+        Pipeline pipeline(device, HDR_FORMAT, DEPTH_FORMAT, device.maxMsaaSamples(), task_spirv, mesh_spirv, MAX_FRAMES_IN_FLIGHT, logger);
 
         // Command pool + per-frame command buffers
         vk::CommandPoolCreateInfo pool_info{};
