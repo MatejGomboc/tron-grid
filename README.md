@@ -18,7 +18,8 @@ PBR obsidian floor with dual-colour neon tube edges (cyan + orange accent),
 Cook-Torrance BRDF, HDR framebuffer with compute post-process pass (ACES
 fitted RRT+ODT tonemapping with AP1 hue preservation, exact sRGB encoding),
 bloom with soft glow halos (extraction, mip chain downsample, tent-filter
-upsample, HDR composite), RT hard shadows
+upsample, HDR composite), 8× MSAA with sample-rate shading and screen-space
+antialiased wireframe, RT hard shadows
 and single-bounce reflections via inline ray query (`VK_KHR_ray_query`). Mesh
 shader rendering (task + mesh + fragment), procedural Tron terrain, per-object
 frustum culling, meshlet-based geometry, entity/component scene. Code quality:

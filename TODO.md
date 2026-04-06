@@ -351,12 +351,12 @@ subtle digital noise complete the Tron Legacy look.
 - [x] Bloom composite with tunable strength
 - [x] Bloom texture recreated on swapchain resize
 - [x] Neon tubes and light orb have visible soft glow halos
-- [ ] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
-- [ ] AA resources recreated on swapchain resize
+- [x] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
+- [x] AA resources recreated on swapchain resize
 - [ ] Procedural cyberpunk skybox (cyan-green data fog clouds)
 - [ ] Per-material PBR via material SSBO
 - [ ] Cinematic post-process (colour grade, chromatic aberration, vignette)
-- [ ] No new Vulkan extensions needed (compute + MSAA are core 1.0)
+- [x] No new Vulkan extensions needed (compute + MSAA are core 1.0)
 - [x] Proper synchronisation barriers for all compute passes
 - [x] Proper doxygen, STYLE.md compliant, British spelling
 - [x] All existing + new tests pass on all CI presets
@@ -550,6 +550,18 @@ bloom with HDR image before ACES tonemapping via push constant bloom_strength
 the Tron aesthetic is complete. Per-mip dual barriers (source + destination)
 for correct read-after-write synchronisation during additive upsample blend.
 80 PRs merged.
+
+### 2026-04-06 — Phase 7 Etape 33: MSAA 8× + antialiased wireframe
+
+Hardware MSAA at GPU max sample count (8× on RTX 4090, automatic fallback
+on weaker GPUs). Full sample-rate shading (minSampleShading = 1.0) evaluates
+the fragment shader at every MSAA sample — critical for shader-computed
+wireframe edges. Screen-space derivative wireframe antialiasing (fwidth-based
+smoothstep per Wunkolo 2022) replaces fixed barycentric threshold — gives
+consistent pixel-width neon lines regardless of triangle size or camera
+distance. Transient MSAA + depth images with lazily-allocated memory hint.
+Dynamic rendering resolve (eAverage) into single-sample HDR. Cross-frame
+MSAA barrier synchronisation. Bloom strength tuned to 0.25. 81 PRs merged.
 
 ### 2026-04-05 — Phase 6 complete: PBR obsidian floor with neon tube reflections
 
