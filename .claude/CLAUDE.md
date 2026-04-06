@@ -187,7 +187,9 @@ tent-filter upsample, HDR composite with tunable strength). 8× MSAA with
 full sample-rate shading, screen-space derivative wireframe antialiasing
 (fwidth-based smoothstep), automatic GPU capability fallback. Procedural
 cyberpunk skybox (value noise data fog clouds, horizon gradient, animated
-drift). Per-material PBR via material SSBO (binding 8, data-driven). RT hard
+drift). Per-material PBR via material SSBO (binding 8, data-driven). Cinematic
+post-process (chromatic aberration, cool colour grade, vignette, scan lines).
+RT hard
 shadows and single-bounce reflections via inline ray query (`VK_KHR_ray_query`,
 BLAS/TLAS). Mesh shaders (task + mesh + fragment), per-object frustum culling,
 meshlet pipeline. Entity/component scene with SoA arrays. Code quality:

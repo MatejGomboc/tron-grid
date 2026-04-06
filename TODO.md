@@ -355,12 +355,12 @@ subtle digital noise complete the Tron Legacy look.
 - [x] AA resources recreated on swapchain resize
 - [x] Procedural cyberpunk skybox (cyan-green data fog clouds)
 - [x] Per-material PBR via material SSBO
-- [ ] Cinematic post-process (colour grade, chromatic aberration, vignette)
+- [x] Cinematic post-process (colour grade, chromatic aberration, vignette)
 - [x] No new Vulkan extensions needed (compute + MSAA are core 1.0)
 - [x] Proper synchronisation barriers for all compute passes
 - [x] Proper doxygen, STYLE.md compliant, British spelling
 - [x] All existing + new tests pass on all CI presets
-- [ ] **Phase 7 complete — visual polish**
+- [x] **Phase 7 complete — visual polish**
 
 ---
 
@@ -550,6 +550,18 @@ bloom with HDR image before ACES tonemapping via push constant bloom_strength
 the Tron aesthetic is complete. Per-mip dual barriers (source + destination)
 for correct read-after-write synchronisation during additive upsample blend.
 80 PRs merged.
+
+### 2026-04-06 — Phase 7 complete: visual polish
+
+Phase 7 complete (Etapes 29-36, PRs #77-#84). Cinematic post-process effects
+(Etape 36, PR #84): chromatic aberration (RGB fringe at screen edges), cool
+colour grade (cyan-blue Tron Legacy tint), vignette (corner darkening), scan
+lines (faint horizontal pattern). All shader-only changes in postprocess.slang.
+Phase 7 delivers: compute post-process, ACES tonemapping with AP1 hue
+preservation, bloom (extract + downsample + upsample + composite), 8× MSAA
+with full sample-rate shading, fwidth wireframe AA, procedural cyberpunk
+skybox, per-material PBR via material SSBO, and cinematic post-process.
+84 PRs merged.
 
 ### 2026-04-06 — Phase 7 Etape 35: per-material PBR via material SSBO
 
