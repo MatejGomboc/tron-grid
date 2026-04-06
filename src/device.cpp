@@ -238,6 +238,7 @@ Device::Device(const Instance& instance, VkSurfaceKHR surface, LoggingLib::Logge
     features2.features.shaderStorageBufferArrayDynamicIndexing = vk::True;
     features2.features.shaderStorageImageWriteWithoutFormat = vk::True;
     features2.features.sampleRateShading = vk::True;
+    features2.features.fragmentStoresAndAtomics = vk::True;
     features2.setPNext(&vulkan12_features);
 
     vk::DeviceCreateInfo device_info{};

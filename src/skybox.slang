@@ -27,8 +27,8 @@ struct CameraData {
     uint frame_count;
     uint emissive_count;
     float total_emissive_power;
-    float ubo_pad0;
-    float ubo_pad1;
+    uint screen_width;
+    uint screen_height;
 };
 
 [[vk::binding(0, 0)]]

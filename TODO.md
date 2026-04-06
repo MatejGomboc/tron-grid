@@ -644,6 +644,19 @@ features that separate a tech demo from a published game.
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
 
+### 2026-04-06 — Phase 8 Etape 37b: ReSTIR DI temporal reuse
+
+ReSTIR temporal reuse (Etape 37b) accumulates light samples across frames via
+per-pixel reservoirs. Reservoir struct (48 bytes: y_pos, y_emissive, y_normal,
+w_sum, M, W) stored in ping-pong SSBOs (bindings 10/11, 4K-capable allocation).
+Fragment shader generates a candidate sample, reprojects to the previous frame
+via `prev_clip_pos` (interpolated from mesh shader), reads the previous
+reservoir, merges via RIS-weighted selection with M clamped to 20. Final shading
+uses the reservoir's selected sample with shadow ray visibility. Screen
+dimensions added to CameraUBO (replacing padding). `fragmentStoresAndAtomics`
+enabled in device features for reservoir writes. Zero validation errors, zero
+warnings, all tests pass. 88 PRs merged.
+
 ### 2026-04-06 — Phase 8 Etape 37a: emissive geometry sampling + motion vectors
 
 Replaced the fake point light with physically correct direct lighting from

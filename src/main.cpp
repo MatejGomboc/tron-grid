@@ -1316,6 +1316,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             ubo.frame_count = frame_counter;
             ubo.emissive_count = emissive_count;
             ubo.total_emissive_power = total_emissive_power;
+            ubo.screen_width = swapchain.extent().width;
+            ubo.screen_height = swapchain.extent().height;
             pipeline.updateCameraUBO(current_frame, ubo);
             prev_view_projection = current_vp;
             ++frame_counter;
@@ -2699,13 +2701,34 @@ int main()
 
         logger.logInfo("Emissive SSBO uploaded (" + std::to_string(emissive_ssbo_size) + " bytes).");
 
-        // Bind all descriptor sets — SSBOs + TLAS are static, UBOs are per-frame
+        // ── Reservoir ping-pong buffers for ReSTIR temporal reuse ──
+
+        // Size based on initial swapchain extent — will be over-allocated for smaller resizes.
+        constexpr uint32_t RESERVOIR_MAX_WIDTH{3840};
+        constexpr uint32_t RESERVOIR_MAX_HEIGHT{2160};
+        VkDeviceSize reservoir_buffer_size{static_cast<VkDeviceSize>(RESERVOIR_MAX_WIDTH) * RESERVOIR_MAX_HEIGHT * sizeof(Reservoir)};
+
+        AllocatedBuffer reservoir_a{allocator.createBuffer(reservoir_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        AllocatedBuffer reservoir_b{allocator.createBuffer(reservoir_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        logger.logInfo("Reservoir buffers allocated: 2 × " + std::to_string(reservoir_buffer_size) + " bytes (" + std::to_string(RESERVOIR_MAX_WIDTH) + "×"
+            + std::to_string(RESERVOIR_MAX_HEIGHT) + " pixels).");
+
+        // Bind all descriptor sets — SSBOs + TLAS are static, UBOs are per-frame.
+        // Reservoir ping-pong: frame 0 writes A / reads B, frame 1 writes B / reads A.
         for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             pipeline.bindSSBOs(i, object_ssbo.buffer(), ssbo_size, bounds_ssbo.buffer(), bounds_size, meshlet_desc_ssbo.buffer(), meshlet_desc_size,
                 vertex_buffer.buffer(), vertex_buffer_size, meshlet_vert_idx_ssbo.buffer(), meshlet_vert_idx_size, meshlet_tri_idx_ssbo.buffer(), meshlet_tri_idx_size);
             pipeline.bindTLAS(i, *tlas);
             pipeline.bindMaterialSSBO(i, material_ssbo.buffer(), material_ssbo_size);
             pipeline.bindEmissiveSSBO(i, emissive_ssbo.buffer(), emissive_ssbo_size);
+
+            VkBuffer write_buf{(i == 0) ? reservoir_a.buffer() : reservoir_b.buffer()};
+            VkBuffer read_buf{(i == 0) ? reservoir_b.buffer() : reservoir_a.buffer()};
+            pipeline.bindReservoirBuffers(i, write_buf, reservoir_buffer_size, read_buf, reservoir_buffer_size);
         }
 
         // Render event signal — main thread emits, render thread consumes
