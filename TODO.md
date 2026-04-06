@@ -82,106 +82,123 @@ parenthesised conditionals, Mat4::inversed(), CameraUBO inv_view_projection.
 
 ## Phase 8 — Full Ray Tracing + Advanced Rendering
 
-**Goal:** Replace the point light abstraction with physically correct
-emissive geometry lighting. Neon tubes and the orb ARE the lights —
-shadow and reflection rays sample their emissive values directly. Add
-multi-bounce global illumination, transparency, refraction, and
-volumetric fog with neon light shafts.
+**Goal:** Render the non-living Tron Grid world at Unreal Engine quality.
+Replace the point light abstraction with physically correct emissive
+geometry lighting using ReSTIR. Add multi-bounce GI, transparency,
+volumetric fog, adaptive LOD, and temporal denoising.
 
-### Etape 37 — Emissive Geometry as Light Sources
+### Etape 37 — Emissive Geometry as Light Sources (ReSTIR DI)
 
-Remove the artificial point light. Instead, shadow rays that hit
-emissive geometry (neon tubes, orb) contribute their emissive value
-as incoming radiance. The fragment shader's direct lighting loop
-becomes: for each light-emitting surface, trace a ray toward it,
-evaluate visibility, accumulate radiance weighted by the BRDF.
-
-**Approach:**
-
-- Sample random points on emissive geometry (importance sampling).
-- Trace shadow rays toward those sample points.
-- On hit: evaluate the emissive material at the hit point.
-- Weight by the BRDF, solid angle, and visibility.
-- Multiple samples per pixel (stratified) for noise reduction.
-
-### Etape 38 — Multi-Bounce Global Illumination
-
-Extend reflection rays to trace secondary bounces. Light that bounces
-off the obsidian floor onto nearby surfaces creates subtle indirect
-illumination — the hallmark of photorealistic rendering.
+Remove the artificial point light. Neon tubes and the orb ARE the lights
+— shadow rays that hit emissive geometry contribute their emissive value
+as incoming radiance. Use ReSTIR DI (Reservoir-based Spatiotemporal
+Importance Resampling for Direct Illumination) to efficiently sample
+many emissive surfaces with just 1-2 rays per pixel.
 
 **Approach:**
 
-- After the primary reflection ray hits a surface, trace a secondary
-  ray from the hit point in the reflected direction.
-- Evaluate the material at each bounce and accumulate colour.
-- Limit to 2-3 bounces for performance.
-- Russian roulette termination for unbiased path tracing.
+- **ReSTIR DI** (NVIDIA 2020) — reservoir-based sampling in 3 passes:
+  initialisation (RIS candidate sampling), temporal reuse (merge prior
+  frame's reservoir), spatial reuse (merge neighbouring pixels).
+- Shadow rays toward emissive geometry sample points.
+- BRDF-weighted radiance accumulation with visibility checks.
+- Motion vectors generated during the geometry pass for temporal reuse.
+
+**After this step:** all lighting comes from actual emissive surfaces
+— no fake point light. The scene has physically correct direct lighting.
+
+### Etape 38 — Multi-Bounce Global Illumination (ReSTIR GI)
+
+Extend to multi-bounce indirect illumination. Light bouncing off the
+obsidian floor onto surfaces creates subtle colour bleeding — the
+hallmark of photorealistic rendering.
+
+**Approach:**
+
+- **ReSTIR GI** (NVIDIA 2021) — path resampling for indirect lighting.
+  Reuses paths across space and time for noise-free GI with few samples.
+- **World-space irradiance cache** (inspired by UE5 Lumen's surface
+  cache) — amortise GI computation across frames by caching lighting
+  on surfaces. Update incrementally, not every frame.
+- 2-3 bounce limit with Russian roulette termination.
+- Indirect specular (glossy reflections) via the same path tracing.
+
+**After this step:** the obsidian floor glows faintly from neon tube
+light, colour bleeds between surfaces, the world has photorealistic
+indirect illumination.
 
 ### Etape 39 — Transparency + Refraction
 
-Add support for translucent materials (glass, energy barriers, holographic
-displays). Refraction rays bend through surfaces based on the material's
-index of refraction.
+Add translucent materials: glass, energy barriers, holographic displays.
+Refraction rays bend through surfaces based on index of refraction.
 
 **Approach:**
 
-- Materials with `opacity < 1.0` trace refraction rays via Snell's law.
-- Total internal reflection handled at critical angles.
-- Order-independent transparency (OIT) or sorted alpha blending for
-  correct compositing of overlapping translucent surfaces.
-- Refraction uses the same inline ray query (`VK_KHR_ray_query`) —
-  no new extensions needed.
+- **Weighted Blended OIT** (McGuire & Bavoil 2013) for rasterised
+  transparency — fast, simple, works with standard rasterisation.
+- **Ray-traced refraction** via Snell's law using inline ray query
+  for high-quality glass and holographic surfaces.
+- Total internal reflection at critical angles.
+- Per-material `opacity` field already in Material SSBO.
+- No new Vulkan extensions needed.
+
+**After this step:** energy barriers shimmer with refraction, holographic
+displays distort the scene behind them.
 
 ### Etape 40 — Volumetric Fog + Light Shafts
 
 Neon light scattering through atmospheric haze — the #1 mood tool in
-cyberpunk rendering (Cyberpunk 2077 uses volumetric fog extensively).
-Inspired by Tron Legacy where scenes were lit from below and "light
-sprang from within the world."
+cyberpunk rendering (Frostbite/DICE technique).
 
 **Approach:**
 
-- Compute shader raymarches through a 3D volume texture (froxel grid)
-  to accumulate in-scattered light from emissive surfaces.
-- The fog density is low (faint haze) but concentrates near the ground
-  where the neon tubes emit — creating visible light shafts rising from
-  the grid lines.
-- Temporal reprojection reuses previous frame data to reduce noise.
-- The fog colour picks up the emissive colour of nearby neon tubes
-  (cyan shafts from cyan lines, orange from orange lines).
+- **Froxel-based** (frustum-aligned voxels) volumetric fog — the AAA
+  standard used by Frostbite, UE4/5, and Unity HDRP.
+- Compute shader injects light and density into a 3D froxel grid.
+- Raymarch through the grid per pixel to accumulate in-scattered light.
+- Fog density concentrates near the ground where neon tubes emit —
+  creating visible coloured light shafts (cyan from cyan lines, orange
+  from orange lines).
+- **Temporal reprojection** reuses previous frame data to reduce noise.
+
+**After this step:** faint neon-coloured fog rises from the grid lines,
+light shafts pierce the darkness — the world breathes.
 
 ### Etape 41 — Adaptive LOD + Temporal Denoising
 
-Nanite-inspired GPU-driven level-of-detail system and temporal
-accumulation for noise-free RT output at 4K @ 60+ FPS.
+Nanite-inspired GPU-driven level-of-detail and temporal accumulation
+for noise-free RT at 4K @ 60+ FPS.
 
 **Approach:**
 
-- **Adaptive LOD** — GPU-driven meshlet streaming with automatic
-  level-of-detail selection based on screen-space error. Dense meshlets
-  near the camera, coarse meshlets in the distance. Seamless LOD
-  transitions without popping (morphing or dithered crossfade).
-- **Temporal accumulation** — reuse data from previous frames to
-  denoise RT output (temporal anti-aliasing, temporal reprojection).
-  Motion vectors for correct reprojection during camera movement.
+- **Adaptive meshlet LOD** — hierarchical meshlet DAG with GPU-driven
+  selection based on screen-space error (Nanite technique). Dense
+  meshlets near camera, coarse in the distance. Seamless transitions
+  via morphing or dithered crossfade.
+- **Temporal accumulation** — reuse prior frames to denoise RT output.
+  Motion vectors (from Etape 37) enable correct reprojection during
+  camera movement. Exponential moving average with rejection for
+  disoccluded pixels.
 - **GPU profiling** — timestamp queries for per-pass timing, automatic
   bottleneck detection. Target: 4K @ 60+ FPS sustained on RTX 4090.
 
-**After this step:** the world renders at maximum quality with
-noise-free ray tracing and automatic detail scaling.
+**After this step:** the world renders at maximum quality with noise-free
+ray tracing and automatic detail scaling. Unreal Engine-quality output.
 
 ### Acceptance Criteria
 
 - [ ] No point light abstraction — all lighting from emissive geometry
-- [ ] Shadow rays sample emissive surfaces directly
-- [ ] Multi-bounce reflections (2-3 bounces)
+- [ ] ReSTIR DI for direct lighting from emissive surfaces
+- [ ] ReSTIR GI for multi-bounce indirect illumination
+- [ ] World-space irradiance cache
 - [ ] Russian roulette path termination
+- [ ] Motion vectors for temporal reuse
 - [ ] Transparent materials with refraction (Snell's law, IOR)
-- [ ] Order-independent transparency or sorted alpha
+- [ ] Weighted Blended OIT or equivalent
 - [ ] Per-material opacity in material SSBO
-- [ ] Volumetric fog with neon light shafts
-- [ ] Adaptive LOD with seamless transitions
+- [ ] Froxel-based volumetric fog with neon light shafts
+- [ ] Temporal reprojection for fog noise reduction
+- [ ] Adaptive meshlet LOD with seamless transitions
 - [ ] Temporal denoising for RT output
 - [ ] GPU profiling with per-pass timestamps
 - [ ] 4K @ 60+ FPS sustained on RTX 4090
@@ -192,63 +209,112 @@ noise-free ray tracing and automatic detail scaling.
 
 ---
 
-## Phase 9 — Engine Architecture Refactor
+## Phase 9 — Engine Architecture + Integrated Subsystems
 
-**Goal:** Extract the monolithic main.cpp into a proper engine structure.
-Separate rendering, resource management, and scene logic into reusable
-modules. Prepare the codebase for avatar integration in Phase 10.
+**Goal:** Extract the monolithic main.cpp into a proper engine structure
+with tightly integrated physics, spatial audio, and environment sensory
+subsystems. All subsystems share the same Vulkan device, GPU buffers,
+BLAS/TLAS, and compute queues for maximum efficiency — no third-party
+libraries (per VISION.md design principles).
 
 ### Planned Features
 
 - **Engine class** — top-level coordinator that owns the Vulkan instance,
   device, swapchain, and render loop. Replaces the 2000+ line renderThread
   function with a structured pipeline.
-- **Render pipeline module** — encapsulates the multi-pass rendering
-  sequence (scene → skybox → bloom → tonemap → present) with explicit
-  pass registration and automatic barrier management.
+- **Rendergraph** — DAG-based render pass scheduling with automatic
+  barrier insertion, resource lifetime tracking, and pass reordering.
+  Replaces hand-coded barriers scattered across recordFrame().
 - **Resource manager** — centralises GPU resource creation, staging
   uploads, and lifetime management. Replaces ad-hoc buffer/image creation
   scattered across renderThread.
 - **Async compute** — overlap post-processing compute with the next
   frame's mesh shader pass on separate compute queues.
+- **Scene graph** — hierarchical entity/component system with transform
+  parenting, spatial partitioning (BVH), and efficient iteration.
+- **Rigid body physics** — collision detection (GJK/EPA), broadphase
+  reusing the rendering BVH/BLAS, constraint solver, gravity.
+  GPU-accelerated collision queries via the same compute queues.
+- **Spatial audio** — HRTF-based 3D positional audio, ray-traced
+  occlusion and reverb reusing the same BLAS/TLAS as rendering.
+  Audio output to speakers (human mode) or bot interface (bot mode).
+- **Environment sensory** — energy signature gradients (smell), surface
+  contact feedback (touch), ambient field (temperature), damage (pain).
+  Computed on the GPU using the same spatial data structures.
+  All routed through the bot interface for AI perception.
 
 ### Acceptance Criteria
 
 - [ ] Engine class with clear module boundaries
-- [ ] Render pipeline extracted from renderThread
+- [ ] Rendergraph with automatic barrier management
 - [ ] Resource manager for GPU buffers and images
 - [ ] Async compute overlap
-- [ ] **Phase 9 complete — engine architecture**
+- [ ] Scene graph with spatial partitioning (shared BVH)
+- [ ] Rigid body physics reusing rendering acceleration structures
+- [ ] Spatial audio with ray-traced occlusion (shared BLAS/TLAS)
+- [ ] Environment sensory system (smell, touch, temperature, pain)
+- [ ] **Phase 9 complete — engine architecture + integrated subsystems**
 
 ---
 
 ## Phase 10 — AI Avatar Integration
 
-**Goal:** Load AI brains as DLL/SO plugins. Avatars navigate the world,
-perceive through rendered images, and interact with the environment.
-See `docs/VISION.md` § Future: Multiplayer for the long-term goal.
+**Goal:** Load AI brains as DLL/SO plugins. Avatars navigate the world
+using the physics engine, perceive through the rendering + audio +
+sensory subsystems, and interact with the environment.
+See `docs/VISION.md` § AI Embodiment for the full specification.
 
 ### Planned Features
 
 - **Avatar entity** — new entity type with position, orientation,
-  velocity, identity colour. Rendered as a geometric Tron-style body.
+  velocity, identity colour. Rendered as organic curves with soft glow
+  (visually distinct from the geometric world, per VISION.md).
 - **AI brain plugin interface** — C-linkage DLL/SO API for perception
-  (rendered image + depth), action (movement commands), and lifecycle.
+  (rendered image + depth + audio + sensory), action (movement commands),
+  and lifecycle. Documented in `AI_INTERFACE.md`.
 - **Light trails** — moving entities leave persistent glowing streaks
   (ring buffer SSBO, ribbon geometry, emissive HDR + bloom, age fade).
 - **Derez particle system** — entities dissolve into geometric particles
   (GPU compute, mesh shader point sprites, randomised velocity + fade).
-- **Sensory system** — offscreen render-to-texture for bot perception,
+- **Offscreen rendering** — render-to-texture for bot perception,
   shared memory IPC for brain communication.
 
 ### Acceptance Criteria
 
-- [ ] Avatar entity rendered in the world
+- [ ] Avatar entity rendered in the world (organic curves, soft glow)
 - [ ] DLL/SO brain plugin loads and receives perception frames
 - [ ] Light trails for moving entities
 - [ ] Derez particle system
 - [ ] Offscreen rendering for bot perception
-- [ ] **Phase 10 complete — AI avatar integration**
+- [ ] Shared memory bot interface operational
+- [ ] **Phase 11 complete — AI avatar integration**
+
+---
+
+## Phase 12 — Multiplayer
+
+**Goal:** Extract world state to a separate authoritative server.
+Multiple human and AI players share a persistent world. See
+`docs/VISION.md` § Future: Multiplayer for the architecture.
+
+### Planned Features
+
+- **Authoritative server** — separate process/repository that owns
+  the canonical world state. TronGrid client sends inputs, receives
+  state updates.
+- **Network replication** — client-server protocol with prediction
+  and reconciliation. Multiple AI brains with different DLLs appear
+  as ordinary players.
+- **Persistent world** — world state survives server restarts.
+  Programmes, data structures, and energy fields persist.
+
+### Acceptance Criteria
+
+- [ ] Authoritative server with canonical world state
+- [ ] Client-server network protocol
+- [ ] Prediction and reconciliation
+- [ ] Multiple concurrent players (human + AI)
+- [ ] **Phase 12 complete — multiplayer**
 
 ---
 
