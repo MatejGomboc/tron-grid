@@ -85,7 +85,8 @@ parenthesised conditionals, Mat4::inversed(), CameraUBO inv_view_projection.
 **Goal:** Replace the point light abstraction with physically correct
 emissive geometry lighting. Neon tubes and the orb ARE the lights —
 shadow and reflection rays sample their emissive values directly. Add
-multi-bounce global illumination, transparency, and refraction.
+multi-bounce global illumination, transparency, refraction, and
+volumetric fog with neon light shafts.
 
 ### Etape 37 — Emissive Geometry as Light Sources
 
@@ -150,40 +151,6 @@ sprang from within the world."
 - The fog colour picks up the emissive colour of nearby neon tubes
   (cyan shafts from cyan lines, orange from orange lines).
 
-### Etape 41 — Light Trails
-
-Moving objects leave persistent glowing streaks — the signature Tron
-visual. Core identity for light cycles, data couriers, and any
-moving programme.
-
-**Approach:**
-
-- A trail buffer (SSBO) stores a ring buffer of past positions per
-  entity. Each frame, the current position is appended.
-- A compute or mesh shader reads the trail buffer and generates thin
-  ribbon geometry connecting past positions.
-- The ribbon uses the same emissive material as neon tubes (HDR,
-  bloomed). Trail colour matches the entity's identity colour.
-- Trails fade over time (age-based alpha/emissive decay).
-
-### Etape 42 — Derez Particle System
-
-Entities dissolve into geometric particles when destroyed — the Tron
-"derez" effect. Digital Domain used procedural explosion algorithms
-(the "Egyptian algorithm") to generate travelling linework for derez
-sequences.
-
-**Approach:**
-
-- GPU compute particle system — particles are stored in an SSBO,
-  updated by a compute shader each frame (position, velocity, lifetime).
-- On derez trigger: the entity's mesh vertices become particle spawn
-  positions. Each particle inherits the vertex's emissive colour.
-- Particles fly outward with randomised velocity, shrink, and fade.
-- Rendered as point sprites or tiny billboard quads via mesh shader.
-- The particle system is general-purpose — also used for energy sparks,
-  data stream effects, and environmental ambience.
-
 ### Acceptance Criteria
 
 - [ ] No point light abstraction — all lighting from emissive geometry
@@ -194,9 +161,10 @@ sequences.
 - [ ] Order-independent transparency or sorted alpha
 - [ ] Per-material opacity in material SSBO
 - [ ] Volumetric fog with neon light shafts
-- [ ] Light trails for moving entities (ring buffer + ribbon geometry)
-- [ ] Derez particle system (GPU compute, mesh shader rendered)
-- [ ] **Phase 8 complete — full RT + Tron effects**
+- [ ] Proper synchronisation barriers for all new passes
+- [ ] Proper doxygen, STYLE.md compliant, British spelling
+- [ ] All existing + new tests pass on all CI presets
+- [ ] **Phase 8 complete — full RT + advanced rendering**
 
 ---
 
@@ -233,7 +201,13 @@ scaling for weaker hardware.
 
 ## Backlog
 
-<!-- Ideas, improvements, and tasks for later phases. -->
+- **Light trails** — moving entities leave persistent glowing streaks
+  (ring buffer SSBO of past positions, ribbon geometry via mesh shader,
+  emissive HDR + bloom, age-based fade). Requires avatar/entity system.
+- **Derez particle system** — entities dissolve into geometric particles
+  (GPU compute SSBO, mesh shader point sprites, randomised velocity +
+  fade). General-purpose particle system for energy sparks and ambience.
+  Requires avatar/entity system.
 
 ---
 
