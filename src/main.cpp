@@ -268,7 +268,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     const MathLib::Frustum& frustum, uint32_t total_objects, vk::Pipeline pp_pipeline, vk::PipelineLayout pp_layout, vk::DescriptorSet pp_descriptor_set,
     vk::Image bloom_image, uint32_t bloom_mip_count, uint32_t bloom_base_w, uint32_t bloom_base_h, vk::Pipeline bloom_extract_pipeline,
     vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline, vk::PipelineLayout bloom_layout, const std::vector<vk::DescriptorSet>& bloom_sets,
-    const std::vector<vk::DescriptorSet>& bloom_upsample_sets)
+    const std::vector<vk::DescriptorSet>& bloom_upsample_sets, vk::Pipeline skybox_pipeline, vk::PipelineLayout skybox_layout, vk::DescriptorSet skybox_descriptor_set,
+    float time)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -389,6 +390,13 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     cmd.pushConstants<TaskPushConstants>(*pipeline.layout(), vk::ShaderStageFlagBits::eTaskEXT, 0, push);
 
     cmd.drawMeshTasksEXT(total_objects, 1, 1);
+
+    // ── Skybox: procedural sky behind the terrain (same render pass) ──
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, skybox_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, skybox_layout, 0, {skybox_descriptor_set}, {});
+    cmd.pushConstants<float>(skybox_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, time);
+    cmd.draw(3, 1, 0, 0);
 
     cmd.endRendering();
 
@@ -951,6 +959,115 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
     };
 
+    // ── Skybox graphics pipeline ──
+
+    std::vector<uint32_t> skybox_spirv{loadSpirv(exe_dir_rt + "skybox.spv", logger)};
+
+    vk::ShaderModuleCreateInfo skybox_module_info{};
+    skybox_module_info.setCode(skybox_spirv);
+    vk::raii::ShaderModule skybox_module{device.get(), skybox_module_info};
+
+    std::array<vk::PipelineShaderStageCreateInfo, 2> skybox_stages{};
+    skybox_stages[0].stage = vk::ShaderStageFlagBits::eVertex;
+    skybox_stages[0].module = *skybox_module;
+    skybox_stages[0].setPName("skyVertMain");
+    skybox_stages[1].stage = vk::ShaderStageFlagBits::eFragment;
+    skybox_stages[1].module = *skybox_module;
+    skybox_stages[1].setPName("skyFragMain");
+
+    vk::PipelineVertexInputStateCreateInfo skybox_vertex_input{};
+    vk::PipelineInputAssemblyStateCreateInfo skybox_input_assembly{};
+    skybox_input_assembly.topology = vk::PrimitiveTopology::eTriangleList;
+
+    std::array<vk::DynamicState, 2> skybox_dynamic_states{vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+    vk::PipelineDynamicStateCreateInfo skybox_dynamic_state{};
+    skybox_dynamic_state.setDynamicStates(skybox_dynamic_states);
+
+    vk::PipelineViewportStateCreateInfo skybox_viewport_state{};
+    skybox_viewport_state.viewportCount = 1;
+    skybox_viewport_state.scissorCount = 1;
+
+    vk::PipelineRasterizationStateCreateInfo skybox_rasterisation{};
+    skybox_rasterisation.polygonMode = vk::PolygonMode::eFill;
+    skybox_rasterisation.cullMode = vk::CullModeFlagBits::eNone;
+    skybox_rasterisation.frontFace = vk::FrontFace::eCounterClockwise;
+    skybox_rasterisation.lineWidth = 1.0f;
+
+    vk::PipelineDepthStencilStateCreateInfo skybox_depth_stencil{};
+    skybox_depth_stencil.depthTestEnable = vk::True;
+    skybox_depth_stencil.depthWriteEnable = vk::False;
+    skybox_depth_stencil.depthCompareOp = vk::CompareOp::eLessOrEqual;
+
+    vk::PipelineMultisampleStateCreateInfo skybox_multisample{};
+    skybox_multisample.rasterizationSamples = device.maxMsaaSamples();
+    skybox_multisample.sampleShadingEnable = vk::False;
+
+    vk::PipelineColorBlendAttachmentState skybox_blend_attachment{};
+    skybox_blend_attachment.blendEnable = vk::False;
+    skybox_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
+        | vk::ColorComponentFlagBits::eA;
+    vk::PipelineColorBlendStateCreateInfo skybox_colour_blend{};
+    skybox_colour_blend.setAttachments(skybox_blend_attachment);
+
+    // Skybox descriptor set layout: 1 UBO for camera data.
+    vk::DescriptorSetLayoutBinding skybox_ubo_binding{};
+    skybox_ubo_binding.binding = 0;
+    skybox_ubo_binding.descriptorType = vk::DescriptorType::eUniformBuffer;
+    skybox_ubo_binding.descriptorCount = 1;
+    skybox_ubo_binding.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+
+    vk::DescriptorSetLayoutCreateInfo skybox_layout_info{};
+    skybox_layout_info.setBindings(skybox_ubo_binding);
+    vk::raii::DescriptorSetLayout skybox_descriptor_set_layout{device.get(), skybox_layout_info};
+
+    vk::PushConstantRange skybox_push_range{};
+    skybox_push_range.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+    skybox_push_range.offset = 0;
+    skybox_push_range.size = sizeof(float);
+
+    vk::PipelineLayoutCreateInfo skybox_pipeline_layout_info{};
+    skybox_pipeline_layout_info.setSetLayouts(*skybox_descriptor_set_layout);
+    skybox_pipeline_layout_info.setPushConstantRanges(skybox_push_range);
+    vk::raii::PipelineLayout skybox_pipeline_layout{device.get(), skybox_pipeline_layout_info};
+
+    vk::PipelineRenderingCreateInfo skybox_rendering_info{};
+    skybox_rendering_info.setColorAttachmentFormats(HDR_FORMAT);
+    skybox_rendering_info.depthAttachmentFormat = DEPTH_FORMAT;
+
+    vk::GraphicsPipelineCreateInfo skybox_pipeline_info{};
+    skybox_pipeline_info.setPNext(&skybox_rendering_info);
+    skybox_pipeline_info.setStages(skybox_stages);
+    skybox_pipeline_info.setPVertexInputState(&skybox_vertex_input);
+    skybox_pipeline_info.setPInputAssemblyState(&skybox_input_assembly);
+    skybox_pipeline_info.setPViewportState(&skybox_viewport_state);
+    skybox_pipeline_info.setPRasterizationState(&skybox_rasterisation);
+    skybox_pipeline_info.setPMultisampleState(&skybox_multisample);
+    skybox_pipeline_info.setPDepthStencilState(&skybox_depth_stencil);
+    skybox_pipeline_info.setPColorBlendState(&skybox_colour_blend);
+    skybox_pipeline_info.setPDynamicState(&skybox_dynamic_state);
+    skybox_pipeline_info.layout = *skybox_pipeline_layout;
+
+    vk::raii::Pipeline skybox_pipeline{device.get(), nullptr, skybox_pipeline_info};
+
+    logger.logInfo("Skybox graphics pipeline created.");
+
+    // Skybox descriptor pool and sets (1 UBO per frame).
+    std::array<vk::DescriptorPoolSize, 1> skybox_pool_sizes{};
+    skybox_pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
+    skybox_pool_sizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+
+    vk::DescriptorPoolCreateInfo skybox_pool_info{};
+    skybox_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    skybox_pool_info.maxSets = MAX_FRAMES_IN_FLIGHT;
+    skybox_pool_info.setPoolSizes(skybox_pool_sizes);
+    vk::raii::DescriptorPool skybox_descriptor_pool{device.get(), skybox_pool_info};
+
+    std::vector<vk::DescriptorSetLayout> skybox_layouts(MAX_FRAMES_IN_FLIGHT, *skybox_descriptor_set_layout);
+    vk::DescriptorSetAllocateInfo skybox_alloc_info{};
+    skybox_alloc_info.descriptorPool = *skybox_descriptor_pool;
+    skybox_alloc_info.setSetLayouts(skybox_layouts);
+    std::vector<vk::raii::DescriptorSet> skybox_descriptor_sets{device.get().allocateDescriptorSets(skybox_alloc_info)};
+
     // Per-frame camera UBOs (persistently mapped)
     std::vector<AllocatedBuffer> ubo_buffers;
     for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
@@ -959,6 +1076,19 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         pipeline.bindUBO(i, ubo.buffer());
         VmaAllocationInfo ubo_info{ubo.allocationInfo()};
         pipeline.setUBOMappedPtr(i, ubo_info.pMappedData);
+        // Bind the same UBO to the skybox descriptor set.
+        vk::DescriptorBufferInfo skybox_ubo_info{};
+        skybox_ubo_info.buffer = ubo.buffer();
+        skybox_ubo_info.offset = 0;
+        skybox_ubo_info.range = sizeof(CameraUBO);
+        vk::WriteDescriptorSet skybox_ubo_write{};
+        skybox_ubo_write.dstSet = *skybox_descriptor_sets[i];
+        skybox_ubo_write.dstBinding = 0;
+        skybox_ubo_write.dstArrayElement = 0;
+        skybox_ubo_write.descriptorType = vk::DescriptorType::eUniformBuffer;
+        skybox_ubo_write.setBufferInfo(skybox_ubo_info);
+        device.get().updateDescriptorSets({skybox_ubo_write}, {});
+
         ubo_buffers.push_back(std::move(ubo));
     }
 
@@ -969,8 +1099,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     std::unordered_set<uint32_t> keys_held;
     bool mouse_captured{false};
 
-    // Delta time
-    std::chrono::steady_clock::time_point last_time{std::chrono::steady_clock::now()};
+    // Timing — delta time for camera movement, elapsed time for skybox animation.
+    std::chrono::steady_clock::time_point start_time{std::chrono::steady_clock::now()};
+    std::chrono::steady_clock::time_point last_time{start_time};
 
     uint32_t current_frame{0};
 
@@ -1143,6 +1274,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
+            ubo.inv_view_projection = (ubo.projection * ubo.view).inversed();
             ubo.light_pos = MathLib::Vec3{0.0f, 17.0f, 0.0f};
             ubo.light_intensity = 150.0f;
             ubo.camera_pos = camera.position();
@@ -1170,7 +1302,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         recordFrame(cmd, msaa_image.image(), *msaa_view, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index],
             swapchain.extent(), pipeline, pipeline.descriptorSet(current_frame), frustum, total_objects, *pp_pipeline, *pp_pipeline_layout,
             *pp_descriptor_sets[current_frame], bloom_image.image(), bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline, *bloom_downsample_pipeline,
-            *bloom_upsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame, bloom_upsample_sets_for_frame);
+            *bloom_upsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame, bloom_upsample_sets_for_frame, *skybox_pipeline, *skybox_pipeline_layout,
+            *skybox_descriptor_sets[current_frame], std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};

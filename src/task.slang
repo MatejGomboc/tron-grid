@@ -20,6 +20,7 @@
 struct CameraData {
     float4x4 view;
     float4x4 projection;
+    float4x4 inv_view_projection; // Inverse view-projection (for skybox ray reconstruction).
     float3 light_pos; // Point light world-space position.
     float light_intensity; // Point light intensity (pre-multiplier before inverse square falloff).
     float3 camera_pos; // Camera world-space position (for view vector in PBR).

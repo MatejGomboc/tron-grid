@@ -113,6 +113,7 @@ tron_grid/
 │   ├── mesh.slang        # Slang mesh + fragment shader (meshlet rendering)
 │   ├── postprocess.slang # Slang compute post-process (ACES tonemapping, sRGB encoding)
 │   ├── bloom_downsample.slang # Slang compute bloom (extraction + mip chain downsample)
+│   ├── skybox.slang       # Slang procedural cyberpunk skybox (value noise clouds)
 │   ├── terrain.hpp/cpp   # Procedural terrain generator (value noise, flat shading)
 │   ├── triangle.slang    # Legacy vertex + fragment shader (kept for reference)
 │   ├── cull.slang        # Legacy compute cull shader (kept for reference)
