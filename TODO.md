@@ -539,6 +539,74 @@ signals. The AI perceives all of this natively through the nerve bundle.
 
 ---
 
+## Phase 13 — Steam Publishing + Production Polish
+
+**Goal:** Make TronGrid a shippable product on Steam. All the non-gameplay
+features that separate a tech demo from a published game.
+
+### Steamworks Integration
+
+- **Steamworks SDK** — integrate the Steamworks API for achievements,
+  leaderboards, cloud saves, Steam overlay, and screenshot capture.
+  DLL/SO loaded at runtime — does not violate the "no third-party
+  libraries" rule (Steam is the distribution platform, not a dependency).
+- **Achievements** — milestone-based: first kill, first food, survive
+  N seconds, explore N sectors, etc. Displayed in the Steam overlay.
+- **Cloud saves** — automatic sync of human player progress and AI brain
+  persistence data via Steam Cloud.
+- **Leaderboards** — survival time, energy collected, sectors explored.
+- **Steam Deck compatibility** — verified controller support, default
+  controller config, appropriate resolution scaling.
+
+### Production Features
+
+- **Installer / launcher** — Steam handles distribution, but the game
+  must handle first-run setup (Vulkan SDK check, GPU capability check,
+  create default config file).
+- **Configuration UI** — in-game settings menu: resolution, fullscreen/
+  windowed, graphics quality presets (low/medium/high/ultra), key
+  bindings, audio volume, MSAA level, bloom intensity. Persistent
+  settings file (JSON or custom).
+- **Input remapping** — rebindable keys and mouse sensitivity. Controller
+  support (Xbox, PlayStation) via Steam Input API.
+- **Screenshots** — Steam screenshot key (F12) integration. High-res
+  screenshot mode (render at 2x resolution, save to disk).
+- **Loading screen** — animated Tron-style loading indicator during
+  world generation and asset loading.
+- **Main menu** — minimal cyberpunk main menu: New Game, Continue,
+  Settings, Quit. Bot mode bypass (--bot flag skips menu entirely).
+- **Pause menu** — ESC opens pause overlay with Resume, Settings, Quit.
+  Time stops during pause (already in Phase 9 variable speed).
+
+### Quality Assurance
+
+- **Crash reporting** — minidump generation on crash (Windows) + signal
+  handler (Linux). Stack trace + GPU state logged.
+- **Performance targets** — verified 4K@60+ on RTX 4090, 1080p@60+ on
+  RTX 3060, 720p@30+ on GTX 1060. Automatic quality scaling.
+- **Multi-GPU testing** — verified on NVIDIA (RTX 3060, 4090), AMD
+  (RX 6700 XT, 7900 XTX), Intel Arc. Graceful fallback for missing
+  features (no RT = no shadows, reduced MSAA).
+- **Store assets** — 12+ marketing images at various resolutions,
+  gameplay trailer video, store page description, tags, system
+  requirements.
+
+### Acceptance Criteria
+
+- [ ] Steamworks SDK integrated (achievements, cloud saves, overlay)
+- [ ] Steam Deck verified controller support
+- [ ] Configuration UI with graphics quality presets
+- [ ] Input remapping (keyboard + controller)
+- [ ] Main menu + pause menu
+- [ ] Loading screen
+- [ ] Screenshots (F12 + high-res mode)
+- [ ] Crash reporting (minidump + log)
+- [ ] Performance verified on target hardware tiers
+- [ ] Store page assets (images + trailer)
+- [ ] **Phase 13 complete — Steam publishing ready**
+
+---
+
 ## Backlog
 
 - **Grid sectors / zones** — distinct areas with different visual
