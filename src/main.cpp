@@ -96,6 +96,9 @@ constexpr float BLOOM_THRESHOLD{1.0f};
 //! Bloom composite strength — scales the additive bloom contribution before tonemapping.
 constexpr float BLOOM_STRENGTH{0.25f};
 
+//! Fence poll timeout — short enough for responsive shutdown, long enough to avoid busy-waiting.
+constexpr uint64_t FENCE_TIMEOUT_NS{100'000'000};
+
 //! Computes the number of mip levels for the bloom texture (base = half swapchain resolution).
 [[nodiscard]] static uint32_t bloomMipCount(vk::Extent2D extent)
 {
@@ -1172,9 +1175,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             // The render thread owns Vulkan objects (pipelines, semaphores, descriptors)
             // that are destroyed when this function exits — submitted GPU work and pending
             // presents must complete first.
-            constexpr uint64_t STOP_FENCE_TIMEOUT_NS{100'000'000}; // 100 ms.
             for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-                while (device.get().waitForFences({*in_flight_fences[i]}, vk::True, STOP_FENCE_TIMEOUT_NS) == vk::Result::eTimeout) {
+                while (device.get().waitForFences({*in_flight_fences[i]}, vk::True, FENCE_TIMEOUT_NS) == vk::Result::eTimeout) {
                 }
             }
             device.presentQueue().waitIdle();
@@ -1238,7 +1240,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Wait for this frame's fence — poll with timeout to remain responsive to Stop events.
         // GPU-assisted validation can make frame submission very slow, so an infinite wait
         // would block the render thread from processing close events.
-        constexpr uint64_t FENCE_TIMEOUT_NS{100'000'000}; // 100 ms.
         while (true) {
             vk::Result wait_result{device.get().waitForFences({*in_flight_fences[current_frame]}, vk::True, FENCE_TIMEOUT_NS)};
             if (wait_result == vk::Result::eSuccess) {
@@ -1249,8 +1250,12 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 RenderEvent stop_check{};
                 while (render_signal.consume(stop_check)) {
                     if (stop_check.type == RenderEvent::Type::Stop) {
-                        device.get().waitIdle();
-                        logger.logInfo("Render thread stopped (interrupted fence wait).");
+                        // Wait for all in-flight fences + present queue (same as normal Stop).
+                        for (uint32_t f{0}; f < MAX_FRAMES_IN_FLIGHT; ++f) {
+                            while (device.get().waitForFences({*in_flight_fences[f]}, vk::True, FENCE_TIMEOUT_NS) == vk::Result::eTimeout) {
+                            }
+                        }
+                        device.presentQueue().waitIdle();
                         return;
                     }
                 }
@@ -2343,7 +2348,7 @@ int main()
         }
 
         // Signal render thread to stop and wait for it.
-        // The render thread returns immediately on Stop — no GPU wait there.
+        // The render thread waits for in-flight fences + present queue before returning.
         emitRenderEvent({RenderEvent::Type::Stop, 0, 0, 0, 0, false});
         render_worker.join();
 
