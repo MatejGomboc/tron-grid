@@ -13,9 +13,9 @@
 */
 
 // Post-process compute shader — reads from the HDR framebuffer, composites
-// bloom, and writes the tonemapped result to the swapchain image. Applies
-// the ACES fitted RRT+ODT (Stephen Hill / MJP BakingLab) for hue-preserving
-// tonemapping, followed by exact sRGB gamma encoding.
+// bloom, applies cinematic effects, and writes the tonemapped result to the
+// swapchain image. Pipeline: chromatic aberration (HDR) → ACES fitted RRT+ODT
+// tonemapping → sRGB encoding → cool colour grade → vignette → scan lines.
 
 [[vk::binding(0, 0)]]
 [[vk::image_format("rgba16f")]]
@@ -59,6 +59,15 @@ static const float SRGB_POWER_SCALE = 1.055;
 static const float SRGB_POWER_EXPONENT = 1.0 / 2.4;
 static const float SRGB_POWER_OFFSET = 0.055;
 
+// Cinematic post-process effect constants.
+static const float CA_STRENGTH = 0.003; // Chromatic aberration — RGB fringe intensity at screen edges.
+static const float COLOUR_GRADE_STRENGTH = 0.15; // Cool colour grade — lerp toward desaturated cool tint.
+static const float VIGNETTE_STRENGTH = 1.5; // Vignette — radial darkening at screen corners.
+static const float SCAN_LINE_STRENGTH = 0.04; // Scan lines — faint horizontal line pattern intensity.
+
+// Rec. 709 luminance weights (for colour grading desaturation).
+static const float3 LUMINANCE_WEIGHTS = float3(0.2126, 0.7152, 0.0722);
+
 //! Fitted RRT+ODT curve applied per-channel in AP1 space (Hill / MJP).
 float3 rrtAndOdtFit(float3 v)
 {
@@ -87,6 +96,15 @@ float linearToSrgb(float channel)
     return SRGB_POWER_SCALE * pow(channel, SRGB_POWER_EXPONENT) - SRGB_POWER_OFFSET;
 }
 
+//! Reads the HDR image with bloom composite at the given integer coordinate (clamped to valid bounds).
+float3 sampleHdrWithBloom(uint2 coord, uint width, uint height, uint bloom_w, uint bloom_h)
+{
+    uint2 clamped = min(coord, uint2(width - 1, height - 1));
+    float3 hdr = hdr_input[clamped].rgb;
+    uint2 bloom_coord = min(clamped / 2, uint2(bloom_w - 1, bloom_h - 1));
+    return hdr + push.bloom_strength * bloom_texture[bloom_coord].rgb;
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
@@ -100,27 +118,50 @@ void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
         return;
     }
 
-    float4 colour = hdr_input[thread_id.xy];
-
-    // Composite bloom — the bloom texture is at half resolution, so scale coordinates.
     uint bloom_w;
     uint bloom_h;
     bloom_texture.GetDimensions(bloom_w, bloom_h);
-    uint2 bloom_coord = min(thread_id.xy / 2, uint2(bloom_w - 1, bloom_h - 1));
-    float3 bloom = bloom_texture[bloom_coord].rgb;
-    colour.rgb += push.bloom_strength * bloom;
 
-    // ACES fitted RRT+ODT — transforms to AP1 colour space, applies the
-    // tone curve, transforms back. The AP1 matrices reduce hue shifts that
-    // per-channel tonemapping in sRGB space causes (orange → yellow).
-    colour.rgb = acesTonemap(colour.rgb);
+    // ── Chromatic aberration (HDR space) ──
+    // Per-channel UV offset that increases toward screen edges — subtle RGB fringe.
+    float2 uv = (float2(thread_id.xy) + 0.5) / float2(width, height);
+    float2 centre_offset = uv - 0.5;
+    float dist_sq = dot(centre_offset, centre_offset);
+    float2 aberration = centre_offset * dist_sq * CA_STRENGTH;
+    int2 pixel_offset = int2(aberration * float2(width, height));
 
-    // Apply exact sRGB encoding (IEC 61966-2-1). The swapchain uses UNORM format
-    // so the hardware does not apply gamma — the shader must encode manually.
+    float3 colour;
+    colour.r = sampleHdrWithBloom(uint2(int2(thread_id.xy) + pixel_offset), width, height, bloom_w, bloom_h).r;
+    colour.g = sampleHdrWithBloom(thread_id.xy, width, height, bloom_w, bloom_h).g;
+    colour.b = sampleHdrWithBloom(uint2(int2(thread_id.xy) - pixel_offset), width, height, bloom_w, bloom_h).b;
+
+    // ── ACES fitted RRT+ODT ──
+    // Transforms to AP1 colour space, applies the tone curve, transforms back.
+    colour = acesTonemap(colour);
+
+    // ── sRGB encoding (IEC 61966-2-1) ──
+    // The swapchain uses UNORM format so the hardware does not apply gamma.
     colour.r = linearToSrgb(colour.r);
     colour.g = linearToSrgb(colour.g);
     colour.b = linearToSrgb(colour.b);
-    colour.a = 1.0;
 
-    swapchain_output[thread_id.xy] = colour;
+    // ── Cool colour grade ──
+    // Lerp toward a desaturated cool-tinted version — suppresses warm colours,
+    // shifts toward the cyan-blue palette of Tron Legacy.
+    float luminance = dot(colour, LUMINANCE_WEIGHTS);
+    float3 cool_tint = float3(luminance * 0.9, luminance * 0.95, luminance * 1.1);
+    colour = lerp(colour, cool_tint, COLOUR_GRADE_STRENGTH);
+
+    // ── Vignette ──
+    // Radial falloff darkens screen corners, draws the eye inward.
+    float vignette = 1.0 - dot(centre_offset, centre_offset) * VIGNETTE_STRENGTH;
+    vignette = saturate(vignette);
+    colour *= vignette;
+
+    // ── Scan lines ──
+    // Faint horizontal line pattern — sells the "digital display" aesthetic.
+    float scan = 1.0 - SCAN_LINE_STRENGTH * step(0.5, frac(float(thread_id.y) * 0.5));
+    colour *= scan;
+
+    swapchain_output[thread_id.xy] = float4(colour, 1.0);
 }
