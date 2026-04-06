@@ -94,7 +94,7 @@ constexpr uint32_t BLOOM_MAX_MIPS{6};
 constexpr float BLOOM_THRESHOLD{1.0f};
 
 //! Bloom composite strength — scales the additive bloom contribution before tonemapping.
-constexpr float BLOOM_STRENGTH{0.25f};
+constexpr float BLOOM_STRENGTH{0.19f};
 
 //! Fence poll timeout — short enough for responsive shutdown, long enough to avoid busy-waiting.
 constexpr uint64_t FENCE_TIMEOUT_NS{100'000'000};

@@ -210,7 +210,7 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 ### Acceptance Criteria
 
 - [x] No point light abstraction — all lighting from emissive geometry
-- [ ] ReSTIR DI for direct lighting from emissive surfaces
+- [x] ReSTIR DI for direct lighting from emissive surfaces
 - [ ] ReSTIR GI for multi-bounce indirect illumination
 - [ ] World-space irradiance cache
 - [ ] Russian roulette path termination
@@ -643,6 +643,15 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-06 — Phase 8 Etape 37c: ReSTIR DI spatial reuse (Etape 37 complete)
+
+ReSTIR spatial reuse (Etape 37c) merges reservoirs from 5 random neighbours
+within a 20-pixel radius. Reads from `reservoir_previous` (lagged one frame)
+to avoid an extra compute pass — standard optimisation. Per-neighbour M clamped
+to 100. Combined with temporal reuse (37b), the scene is dramatically cleaner
+than raw 1-spp. Bloom strength reduced from 0.25 to 0.19 (user request).
+Etape 37 (ReSTIR DI) is complete — acceptance criterion ticked. 89 PRs merged.
 
 ### 2026-04-06 — Phase 8 Etape 37b: ReSTIR DI temporal reuse
 

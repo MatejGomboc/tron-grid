@@ -138,6 +138,11 @@ StructuredBuffer<Reservoir> reservoir_previous; // Previous frame — read.
 // Maximum temporal M to prevent unbounded accumulation with stale data.
 static const uint MAX_TEMPORAL_M = 20;
 
+// Spatial reuse — merge reservoirs from neighbouring pixels for faster convergence.
+static const uint NUM_SPATIAL_NEIGHBOURS = 5; // Number of random neighbours to merge.
+static const float SPATIAL_RADIUS = 20.0; // Pixel radius for neighbour sampling.
+static const uint MAX_SPATIAL_M = 100; // Per-neighbour M clamp for spatial reuse.
+
 // ── Neon tube constants (per-fragment wireframe pattern, not per-object material) ──
 
 // Dual-colour palette: cyan primary grid with orange accents on major grid lines.
@@ -382,6 +387,63 @@ float4 fragMain(MeshOutput input) : SV_Target
                 r.y_pos = prev_r.y_pos;
                 r.y_emissive = prev_r.y_emissive;
                 r.y_normal = prev_r.y_normal;
+            }
+        }
+
+        // ── Spatial reuse: merge with neighbouring pixels' reservoirs ──
+
+        uint spatial_hash = pcgHash(pixel_seed + 99991u);
+        for (uint s = 0; s < NUM_SPATIAL_NEIGHBOURS; ++s)
+        {
+            // Random neighbour offset within SPATIAL_RADIUS disc.
+            uint hash_x = pcgHash(spatial_hash + s * 2u);
+            uint hash_y = pcgHash(spatial_hash + s * 2u + 1u);
+            float angle = hashToFloat(hash_x) * 2.0 * PI;
+            float radius = sqrt(hashToFloat(hash_y)) * SPATIAL_RADIUS;
+            int2 neighbour_pixel = int2(pixel_x, pixel_y) + int2(int(cos(angle) * radius), int(sin(angle) * radius));
+
+            // Bounds check.
+            if ((neighbour_pixel.x < 0) || (neighbour_pixel.x >= int(camera.screen_width))
+                || (neighbour_pixel.y < 0) || (neighbour_pixel.y >= int(camera.screen_height)))
+            {
+                continue;
+            }
+
+            uint neighbour_idx = uint(neighbour_pixel.y) * camera.screen_width + uint(neighbour_pixel.x);
+            Reservoir neighbour_r = reservoir_previous[neighbour_idx];
+
+            // Skip empty reservoirs (sky pixels, uninitialised).
+            if (neighbour_r.M == 0) {
+                continue;
+            }
+
+            // Clamp M to prevent excessive spatial influence.
+            neighbour_r.M = min(neighbour_r.M, MAX_SPATIAL_M);
+
+            // Evaluate p_hat at the current shading point for the spatial sample.
+            float3 to_spatial = neighbour_r.y_pos - input.world_position;
+            float sp_dist_sq = dot(to_spatial, to_spatial);
+            float sp_dist = sqrt(sp_dist_sq);
+            float3 L_sp = to_spatial / sp_dist;
+            float NdotL_sp = max(dot(N, L_sp), 0.0);
+            float cos_light_sp = abs(dot(neighbour_r.y_normal, -L_sp));
+            float geometry_sp = NdotL_sp * cos_light_sp / max(sp_dist_sq, 0.0001);
+            float p_hat_sp = luminance(neighbour_r.y_emissive) * geometry_sp;
+
+            // RIS weight for the spatial neighbour's contribution.
+            float w_spatial = p_hat_sp * neighbour_r.W * float(neighbour_r.M);
+
+            // Merge into reservoir.
+            r.w_sum += w_spatial;
+            r.M += neighbour_r.M;
+
+            uint hash_sel = pcgHash(spatial_hash + s * 2u + 7777u);
+            float sel = hashToFloat(hash_sel);
+            if ((r.w_sum > 0.0) && (sel < (w_spatial / r.w_sum)))
+            {
+                r.y_pos = neighbour_r.y_pos;
+                r.y_emissive = neighbour_r.y_emissive;
+                r.y_normal = neighbour_r.y_normal;
             }
         }
 
