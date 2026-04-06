@@ -130,7 +130,26 @@ hallmark of photorealistic rendering.
 light, colour bleeds between surfaces, the world has photorealistic
 indirect illumination.
 
-### Etape 39 — Transparency + Refraction
+### Etape 39 — Ray-Traced Ambient Occlusion (RTAO)
+
+Add physically accurate ambient occlusion via short-range ray tracing.
+Soft contact shadows in corners and crevices where geometry meets —
+the obsidian floor at terrain edges, data tower bases, under barriers.
+
+**Approach:**
+
+- **RTAO** via inline ray query — trace short hemispherical rays from
+  each surface point. Count occlusion ratio. 1 ray per pixel with
+  temporal accumulation + spatial filtering for noise-free result.
+- Reuses the existing BLAS/TLAS — no additional acceleration structures.
+- Applied before lighting in the shading pipeline (multiplies diffuse).
+- Much more accurate than SSAO/GTAO — no screen-space artefacts,
+  works correctly in corners, under overhangs, and at silhouettes.
+
+**After this step:** subtle darkening in corners and crevices adds
+depth and grounding to every surface.
+
+### Etape 40 — Transparency + Refraction
 
 Add translucent materials: glass, energy barriers, holographic displays.
 Refraction rays bend through surfaces based on index of refraction.
@@ -148,7 +167,7 @@ Refraction rays bend through surfaces based on index of refraction.
 **After this step:** energy barriers shimmer with refraction, holographic
 displays distort the scene behind them.
 
-### Etape 40 — Volumetric Fog + Light Shafts
+### Etape 41 — Volumetric Fog + Light Shafts
 
 Neon light scattering through atmospheric haze — the #1 mood tool in
 cyberpunk rendering (Frostbite/DICE technique).
@@ -167,7 +186,7 @@ cyberpunk rendering (Frostbite/DICE technique).
 **After this step:** faint neon-coloured fog rises from the grid lines,
 light shafts pierce the darkness — the world breathes.
 
-### Etape 41 — Adaptive LOD + Temporal Denoising
+### Etape 42 — Adaptive LOD + Temporal Denoising
 
 Nanite-inspired GPU-driven level-of-detail and temporal accumulation
 for noise-free RT at 4K @ 60+ FPS.
@@ -196,6 +215,7 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 - [ ] World-space irradiance cache
 - [ ] Russian roulette path termination
 - [ ] Motion vectors for temporal reuse
+- [ ] Ray-traced ambient occlusion (RTAO)
 - [ ] Transparent materials with refraction (Snell's law, IOR)
 - [ ] Weighted Blended OIT or equivalent
 - [ ] Per-material opacity in material SSBO
@@ -248,6 +268,19 @@ libraries (per VISION.md design principles).
   contact feedback (touch), ambient field (temperature), damage (pain).
   Computed on the GPU using the same spatial data structures.
   All routed through the bot interface for AI perception.
+- **Debug visualisation** — toggleable overlays: wireframe mode,
+  frustum culling debug, BVH/BLAS visualisation, GPU profiler HUD
+  (per-pass timestamps), heat map for overdraw. Essential for Phase
+  8-10 development. In-house rendering (no ImGui dependency).
+- **Software Vulkan for CI** — integrate Mesa lavapipe (CPU-based
+  Vulkan 1.3 software rasteriser) into CI pipeline for GPU-less
+  testing. Validates rendering logic, barrier correctness, and
+  resource management without requiring physical GPU hardware.
+- **Deterministic simulation** — same seed + same inputs = same outputs.
+  Essential for AI training reproducibility (per VISION.md).
+- **Variable simulation speed** — pause, 1x, 2x, fast-forward.
+  `dt_seconds` reflects actual elapsed time. No zero-dt ticks during
+  pause. Essential for AI training and observation (per VISION.md).
 
 ### Acceptance Criteria
 
@@ -260,6 +293,10 @@ libraries (per VISION.md design principles).
 - [ ] Rigid body physics reusing rendering acceleration structures
 - [ ] Spatial audio with ray-traced occlusion (shared BLAS/TLAS)
 - [ ] Environment sensory system (smell, touch, temperature, pain)
+- [ ] Debug visualisation overlays (wireframe, BVH, GPU profiler)
+- [ ] Deterministic simulation (same seed = same output)
+- [ ] Variable simulation speed (pause, 1x, 2x, fast-forward)
+- [ ] Mesa lavapipe CI integration for GPU-less testing
 - [ ] **Phase 9 complete — engine architecture + integrated subsystems**
 
 ---
@@ -287,11 +324,21 @@ builds itself; only creature bodies are authored externally.
   accelerated skinning via compute shader. Animation blending and state
   machine for NPC and avatar bodies.
 - **Procedural world generation** — algorithmic generation of Grid
-  architecture: data towers, energy barriers, platforms, data streams,
-  geometric structures. All built from code, not from scene files.
-  Parameterised by seed for deterministic generation. GPU mesh shaders
-  for on-the-fly geometry (AMD GPU Work Graphs technique — HPG 2024 —
-  if Vulkan extension matures, otherwise CPU-side generation).
+  architecture: data towers, energy barriers, platforms, geometric
+  structures. All built from code, not from scene files. Parameterised
+  by seed for deterministic generation. GPU mesh shaders for on-the-fly
+  geometry (AMD GPU Work Graphs technique — HPG 2024 — if Vulkan
+  extension matures, otherwise CPU-side generation).
+- **Data streams** — animated geometric tubes with flowing emissive
+  particles. Pulsing light flowing along paths between Grid structures.
+  Core Tron visual element (per VISION.md).
+- **GPU particle system** — general-purpose compute particle SSBO for
+  ambient effects: floating energy motes, data sparkles, Grid hum
+  particles. The world should feel alive with tiny floating particles
+  of light. Mesh shader rendered (point sprites or billboards).
+- **Energy sources** — procedurally placed food/energy game objects in
+  the Grid. Creatures feed on these to sustain energy. Emissive glow
+  with bloom, depletes when consumed, respawns over time.
 - **Texture streaming** — load textures on demand via VMA staging.
   Mip-chain generation on the GPU. Memory budget awareness.
 
@@ -304,6 +351,9 @@ builds itself; only creature bodies are authored externally.
 - [ ] Skeletal animation with GPU skinning
 - [ ] Procedural Grid architecture generation (data towers, barriers)
 - [ ] Texture streaming with mip generation
+- [ ] Data streams (animated emissive tubes with flowing particles)
+- [ ] GPU particle system (ambient energy motes, sparkles)
+- [ ] Energy sources (procedural, depletable, respawning)
 - [ ] Blender → TronGrid round-trip verified for creature bodies
 - [ ] **Phase 10 complete — asset pipeline + procedural world**
 
@@ -320,18 +370,29 @@ couldn't perceive it through its nerves, the brain doesn't receive it.
 See `docs/VISION.md` § AI Embodiment for the architecture.
 Interface specification will be documented in `docs/AI_INTERFACE.md`.
 
+### NPC Programmes
+
+- **Programme entities** — simple NPCs: geometric wireframe shapes
+  (cubes, pyramids, polyhedra) made of glowing lines. Patrol bots,
+  guardian systems, data couriers — following coded routines.
+- **Basic AI behaviours** — patrol paths, guard zones, flee from
+  threats, pursue intruders. State machine driven, no brain DLL.
+- **Derez on destruction** — programmes dissolve into geometric
+  particles when destroyed (GPU compute particle system from Phase 10).
+
 ### Creature Body + Rendering
 
 - **Avatar entity** — new entity type with skeletal body, joint
   constraints, mass distribution, identity colour. Rendered as organic
-  curves with soft glow (visually distinct from the geometric world).
+  curves with soft glow (visually distinct from the geometric world,
+  per VISION.md § AI Visual Identity).
 - **Controllable glow** — the brain controls glow intensity and colour
   hue as its primary emotional display (warm gold = content, cool blue
   = scared, red flicker = in pain).
 - **Light trails** — moving entities leave persistent glowing streaks
   (ring buffer SSBO, ribbon geometry, emissive HDR + bloom, age fade).
 - **Derez particle system** — entities dissolve into geometric particles
-  (GPU compute, mesh shader point sprites, randomised velocity + fade).
+  (reuses GPU particle system from Phase 10).
 
 ### Sensory Interface (Engine → Brain)
 
@@ -410,6 +471,7 @@ Muscle commands per tick — the engine applies physics:
 - [ ] Shared memory nerve bundle operational
 - [ ] Light trails for moving entities
 - [ ] Derez particle system
+- [ ] NPC Programmes with basic AI behaviours (patrol, guard, flee)
 - [ ] Stage 0 (blind worm) fully functional end-to-end
 - [ ] **Phase 11 complete — AI avatar integration**
 
