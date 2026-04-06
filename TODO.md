@@ -52,472 +52,590 @@ Etapes 25-28 (PR #74), orange accent + light orb + 5 code audits (PR #75)
 
 </details>
 
----
+<details>
+<summary>Phase 7 — Visual Polish ✅ (2026-04-06)</summary>
 
-## Phase 7 — Visual Polish (Bloom, Tonemapping, AA, Skybox, Per-Material PBR)
+Etapes 29-36 (PRs #77-#84), shutdown fix (PR #85)
 
-**Goal:** Make the neon tubes and emissive orb *glow* with soft halos that
-bleed into surrounding pixels, and replace the HDR clamping blit with
-proper tonemapping. This is the single biggest visual upgrade remaining —
-the difference between "coloured wireframe" and "blindingly bright neon
-against infinite darkness."
-
-**Visual reference:** See `images/landscape_dark.png` — every neon line
-and emissive element has a thick, soft glow halo. The orange ring in the
-sky bleeds light across the frame. This is bloom.
-
-**Current pipeline (Phase 6):**
-
-```text
-1. Render scene → HDR image (R16G16B16A16_SFLOAT)
-2. Blit HDR → swapchain (clamping float16 → sRGB, losing all HDR data)
-```
-
-**Target pipeline (Phase 7):**
-
-```text
-1. Render scene → MSAA HDR image (R16G16B16A16_SFLOAT, 4× samples)
-2. Resolve MSAA → single-sample HDR image
-3. Bloom extraction → bright pixels above threshold into bloom texture
-4. Bloom blur → multi-pass Gaussian downsample/upsample (mip chain)
-5. Composite → HDR + bloom → tonemapped → swapchain (sRGB)
-```
-
-### Etape 29 — Fullscreen Compute Pass Infrastructure
-
-Set up the compute pipeline infrastructure for post-processing. This
-etape does not change the visual output — it replaces the blit with a
-compute pass that copies the HDR image to the swapchain (identity
-tonemapping), proving the compute pipeline works.
-
-**Approach:**
-
-- Write a Slang compute shader (`postprocess.slang`) that reads from
-  the HDR image and writes to the swapchain image. Entry point
-  `postprocessMain`, workgroup size 8×8. Uses texture load/store
-  with `SV_DispatchThreadID.xy` as pixel coordinates.
-- Descriptor set layout: 1 storage image (HDR input, `rgba16f`,
-  `readonly`) + 1 storage image (swapchain output, `rgba8`, `writeonly`).
-- Create a `VkComputePipeline` with `VK_PIPELINE_BIND_POINT_COMPUTE`.
-  No render pass, no viewport — just bind pipeline, bind descriptors,
-  dispatch.
-- Replace the `vkCmdBlitImage2` call in `recordFrame` with:
-  1. Transition HDR: `eColorAttachmentOptimal` → `eGeneral` (compute read).
-  2. Transition swapchain: `eUndefined` → `eGeneral` (compute write).
-  3. Bind compute pipeline + descriptors.
-  4. `vkCmdDispatch(ceil(width/8), ceil(height/8), 1)`.
-  5. Transition swapchain: `eGeneral` → `ePresentSrcKHR`.
-- The compute shader initially performs a simple copy with clamping:
-  `output[coord] = clamp(input[coord], 0, 1)`. This verifies the
-  pipeline, barriers, and descriptor bindings before adding tonemapping.
-- Swapchain image usage must include `VK_IMAGE_USAGE_STORAGE_BIT`
-  (verify via `VkSurfaceCapabilitiesKHR::supportedUsageFlags`).
-
-**After this step:** rendering goes through a compute post-process pass.
-Visually identical to the current blit (still clamping), but the
-infrastructure is in place for bloom and tonemapping.
-
-### Etape 30 — ACES Filmic Tonemapping
-
-Add tonemapping to the compute shader so HDR values are compressed into
-the displayable [0, 1] range with proper contrast and hue preservation.
-
-**Approach:**
-
-- Implement ACES Filmic tonemapping in `postprocess.slang`:
-
-  ```text
-  colour = (colour * (2.51 * colour + 0.03)) / (colour * (2.43 * colour + 0.59) + 0.14)
-  ```
-
-- Apply sRGB gamma encoding after tonemapping (the swapchain image is
-  `B8G8R8A8_SRGB`, but when written as a storage image the hardware
-  does not apply gamma — the shader must do `pow(colour, 1/2.2)` or
-  use the linear-to-sRGB transfer function).
-- The orange neon and orb will now appear as proper orange instead of
-  yellow — tonemapping preserves hue ratios that clamping destroys.
-- The cyan neon will gain depth — bright cores with soft rolloff
-  instead of flat white.
-
-**After this step:** the scene has cinematic contrast. Bright emissive
-values are compressed gracefully instead of clipped. The orange neon
-colour is restored.
-
-### Etape 31 — Bloom Extraction + Downsample Chain
-
-Extract bright pixels from the HDR image and create a Gaussian blur
-mip chain for the bloom halo.
-
-**Approach:**
-
-- **Bloom threshold extraction:** a compute pass reads the HDR image
-  and writes pixels above a brightness threshold to a separate bloom
-  texture at half resolution. Pixels below threshold are black.
-  Brightness is computed as weighted luminance:
-  `dot(colour.rgb, float3(0.2126, 0.7152, 0.0722))`. Threshold at
-  `luminance > 1.0` — only HDR-bright pixels contribute to bloom.
-- **Downsample chain:** Create a mip chain (e.g., 6 levels) on the
-  bloom texture. Each level is half the resolution of the previous.
-  A compute pass downsamples each level with a 13-tap filter (the
-  Karis average for the first downsample to prevent fireflies from
-  sub-pixel bright spots). Each mip level needs its own `ImageView`
-  for the compute shader to write to. Note: multisampled images
-  cannot have mip chains — resolve MSAA before bloom.
-- The bloom texture uses `R16G16B16A16_SFLOAT` (same as HDR) to
-  preserve colour fidelity through the blur chain.
-- Recreate the bloom texture and its mip chain on swapchain resize.
-
-**After this step:** a blurred bloom texture exists with soft halos
-around all bright emissive elements. Not yet composited — the final
-image is still tonemapped-only.
-
-### Etape 32 — Bloom Upsample + Composite
-
-Upsample the bloom chain and composite it with the HDR image before
-tonemapping.
-
-**Approach:**
-
-- **Upsample chain:** Starting from the smallest mip level, upsample
-  each level and additively blend with the next larger level. Use
-  bilinear filtering. This produces a smooth, wide bloom halo from
-  the sharp bright spots.
-- **Composite:** In the tonemapping compute shader, add the final
-  bloom value to the HDR colour before tonemapping:
-
-  ```text
-  colour = hdr_colour + bloom_strength * bloom_colour
-  tonemap(colour)
-  ```
-
-- `bloom_strength` is a tunable constant (start with 0.5).
-- The bloom adds the glow halos around neon tubes and the light orb
-  that the concept art shows. The Tron aesthetic is complete.
-
-**After this step:** neon lines glow with soft halos, the light orb
-radiates warmth, and the scene matches the concept art aesthetic.
-
-### Etape 33 — Anti-Aliasing (MSAA or FXAA)
-
-The neon grid lines suffer from aliasing — jagged stair-stepping that
-breaks the clean geometric aesthetic. Anti-aliasing smooths the edges.
-
-**Candidates:**
-
-- **MSAA (GPU max)** — hardware multi-sample anti-aliasing. Resolve the
-  HDR colour attachment from a multisampled image to the single-sample HDR
-  image before the post-process pass. Requires creating the HDR image with
-  the queried max sample count and a separate single-sample resolve target.
-  Best quality for geometric edges (exactly what wireframe neon needs).
-  Cost: N× fragment shading + resolve bandwidth.
-- **FXAA** — fast approximate anti-aliasing as a post-process compute
-  pass after tonemapping. Cheaper than MSAA but blurs textures. Since
-  we have no textures (pure procedural wireframe + emissive), FXAA
-  would work well and is simpler to implement (single compute pass on
-  the final sRGB image).
-
-**Recommendation:** Start with MSAA at the GPU's maximum supported
-sample count for the best wireframe edge quality. The neon tubes are
-thin sub-pixel lines — MSAA handles these much better than post-process
-AA. If performance is an issue, fall back to FXAA.
-
-**Approach (MSAA, GPU max):**
-
-- Query `VkPhysicalDeviceLimits::framebufferColorSampleCounts &
-  framebufferDepthSampleCounts` and select the highest supported sample
-  count (64×, 32×, 16×, 8×, 4×, 2×). Use the GPU's maximum capability
-  by default — the RTX 4090 supports 8× and higher. Store the selected
-  count in `Device` (e.g., `m_max_msaa_samples`). Log it at startup.
-  On weaker GPUs, the same code path automatically falls back to
-  whatever the hardware supports — no manual override needed.
-- Create the HDR colour image with the selected sample count and
-  `VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | COLOR_ATTACHMENT_BIT`.
-  Multisampled images must have exactly 1 mip level.
-- Create a single-sample HDR resolve target (the existing HDR image
-  becomes this). The MSAA image is a new, separate resource.
-- The depth buffer also needs the same sample count to match.
-- The mesh shader pipeline's `VkPipelineMultisampleStateCreateInfo`
-  must set `rasterizationSamples` to the selected sample count.
-- Dynamic rendering: set the MSAA image as the colour attachment and
-  the single-sample HDR image as the resolve attachment (`resolveMode =
-  VK_RESOLVE_MODE_AVERAGE_BIT`). The resolve happens automatically at
-  the end of rendering — no separate `vkCmdResolveImage2` needed.
-- The post-process (bloom + tonemap) reads from the resolved
-  single-sample image as before.
-- Recreate both MSAA + resolve images on swapchain resize.
-- Optional: enable `sampleRateShading` with `minSampleShading = 0.25`
-  for even better quality on thin sub-pixel neon lines (trades
-  performance for smoother anti-aliasing).
-
-**After this step:** neon grid lines are smooth and clean, no jagged
-stair-stepping. The Tron aesthetic is polished.
-
-### Etape 34 — Procedural Cyberpunk Skybox
-
-The sky should feel like a digital atmosphere — not outer space with
-stars, but faintly glowing greenish-cyan clouds drifting through
-infinite darkness. Think data fog, digital aurora, cyberpunk haze.
-The clouds are dim enough to not compete with the neon grid but
-bright enough to break the flat black void and add depth.
-
-**Approach:**
-
-- Write a fullscreen fragment shader (`skybox.slang`) that runs as a
-  separate pass after the scene render, using the depth buffer to skip
-  fragments covered by geometry (depth test, no depth write).
-- The shader takes the inverse view-projection matrix to reconstruct
-  the world-space ray direction from the fragment's screen position.
-- **Cloud layer:** Layered value noise (3-4 octaves) on the ray
-  direction to create slow-rolling volumetric cloud shapes. Colour:
-  dark greenish-cyan tint `(0.0, 0.08, 0.06)` with brighter wisps
-  at `(0.0, 0.15, 0.12)`. The clouds are faint — mostly darkness
-  with subtle luminous patches.
-- **Depth gradient:** Clouds near the horizon are denser and brighter;
-  clouds overhead are sparser. Use `1.0 - abs(ray_dir.y)` as a
-  density multiplier to concentrate the haze at the horizon line
-  where it frames the terrain silhouette.
-- **Animation:** Slowly scroll the noise coordinates over time for
-  drifting cloud motion. Very slow — the clouds should feel like a
-  distant atmospheric phenomenon, not weather.
-- No geometry needed — the skybox is purely procedural in the
-  fragment shader, rendering to the HDR image.
-
-**After this step:** the sky is a dark digital atmosphere with faintly
-glowing cyan-green cloud wisps — cyberpunk, not space opera.
-
-### Etape 35 — Per-Material PBR (Material SSBO)
-
-Replace the hardcoded material constants in the fragment shader with
-a per-object material system. Each entity gets its own PBR parameters
-from a material SSBO.
-
-**Approach:**
-
-- Define a `Material` struct (C++ and Slang):
-
-  ```text
-  base_colour (float3)     — albedo / diffuse colour
-  emissive (float3)        — self-illumination colour
-  emissive_strength (float) — HDR emissive multiplier
-  roughness (float)        — perceptual roughness [0, 1]
-  metallic (float)         — metalness [0, 1]
-  ior (float)              — index of refraction (for Fresnel F0)
-  opacity (float)          — 1.0 = opaque, <1.0 = translucent (Phase 8)
-  ```
-
-- Create a material SSBO and bind it at a new descriptor binding.
-- `ObjectData` gains a `material_index` field pointing into the SSBO.
-- The fragment shader reads the material for the current object and
-  uses it instead of hardcoded constants. The neon tube vs obsidian
-  blend logic stays (it's per-fragment, not per-object), but the
-  material properties it blends between come from the SSBO.
-- The light orb's emissive colour and strength are now data-driven.
-
-**After this step:** materials are data, not code. New objects with
-different visual properties can be added without shader changes.
-
-### Etape 36 — Cinematic Post-Process Effects
-
-Add film-like post-processing to sell the "inside a digital world"
-aesthetic. Inspired by Tron Legacy's colour grading: warm colours
-almost completely removed in favour of cool monochromatic tints.
-
-**Effects (all in the post-process compute shader):**
-
-- **Cool colour grade** — shift the tonemapped image toward cool
-  cyan-blue tints, suppress warm colours. A simple colour matrix
-  multiply or per-channel curve. Configurable intensity.
-- **Chromatic aberration** — subtle RGB fringe at screen edges.
-  Sample the image at slightly offset UVs per channel. Very cheap,
-  very cyberpunk.
-- **Vignette** — darken screen corners to draw the eye inward and
-  frame the neon grid. A radial falloff from screen centre.
-- **Scan lines / CRT noise** — faint horizontal line pattern and
-  subtle noise overlay. Sells the "digital display" aesthetic.
-  Optional / toggleable for taste.
-
-**After this step:** the image looks like it was filmed inside the
-Grid, not rendered by a computer. Cool tints, edge distortion, and
-subtle digital noise complete the Tron Legacy look.
-
-### Acceptance Criteria
+Compute post-process pipeline, ACES fitted RRT+ODT tonemapping with AP1 hue
+preservation, bloom (Karis extraction + mip chain downsample + tent upsample +
+HDR composite), 8× MSAA with full sample-rate shading, fwidth wireframe AA,
+procedural cyberpunk skybox (value noise data fog), per-material PBR via
+material SSBO, cinematic post-process (chromatic aberration, cool colour grade,
+vignette, scan lines). Codebase-wide modernisation: vulkan-hpp setters,
+parenthesised conditionals, Mat4::inversed(), CameraUBO inv_view_projection.
 
 - [x] Compute post-process pipeline replaces the clamping blit
 - [x] ACES Filmic tonemapping with correct sRGB gamma encoding
 - [x] Orange neon appears as proper orange (not yellow — hue preserved)
-- [x] Bloom extraction with brightness threshold
-- [x] Bloom downsample mip chain (Karis average for first level)
-- [x] Bloom upsample chain with additive blending
-- [x] Bloom composite with tunable strength
-- [x] Bloom texture recreated on swapchain resize
+- [x] Bloom extraction, downsample, upsample, and composite
 - [x] Neon tubes and light orb have visible soft glow halos
 - [x] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
-- [x] AA resources recreated on swapchain resize
 - [x] Procedural cyberpunk skybox (cyan-green data fog clouds)
 - [x] Per-material PBR via material SSBO
 - [x] Cinematic post-process (colour grade, chromatic aberration, vignette)
-- [x] No new Vulkan extensions needed (compute + MSAA are core 1.0)
-- [x] Proper synchronisation barriers for all compute passes
-- [x] Proper doxygen, STYLE.md compliant, British spelling
-- [x] All existing + new tests pass on all CI presets
 - [x] **Phase 7 complete — visual polish**
+
+</details>
 
 ---
 
 ## Phase 8 — Full Ray Tracing + Advanced Rendering
 
-**Goal:** Replace the point light abstraction with physically correct
-emissive geometry lighting. Neon tubes and the orb ARE the lights —
-shadow and reflection rays sample their emissive values directly. Add
-multi-bounce global illumination, transparency, and refraction.
+**Goal:** Render the non-living Tron Grid world at Unreal Engine quality.
+Replace the point light abstraction with physically correct emissive
+geometry lighting using ReSTIR. Add multi-bounce GI, transparency,
+volumetric fog, adaptive LOD, and temporal denoising.
 
-### Etape 37 — Emissive Geometry as Light Sources
+### Etape 37 — Emissive Geometry as Light Sources (ReSTIR DI)
 
-Remove the artificial point light. Instead, shadow rays that hit
-emissive geometry (neon tubes, orb) contribute their emissive value
-as incoming radiance. The fragment shader's direct lighting loop
-becomes: for each light-emitting surface, trace a ray toward it,
-evaluate visibility, accumulate radiance weighted by the BRDF.
-
-**Approach:**
-
-- Sample random points on emissive geometry (importance sampling).
-- Trace shadow rays toward those sample points.
-- On hit: evaluate the emissive material at the hit point.
-- Weight by the BRDF, solid angle, and visibility.
-- Multiple samples per pixel (stratified) for noise reduction.
-
-### Etape 38 — Multi-Bounce Global Illumination
-
-Extend reflection rays to trace secondary bounces. Light that bounces
-off the obsidian floor onto nearby surfaces creates subtle indirect
-illumination — the hallmark of photorealistic rendering.
+Remove the artificial point light. Neon tubes and the orb ARE the lights
+— shadow rays that hit emissive geometry contribute their emissive value
+as incoming radiance. Use ReSTIR DI (Reservoir-based Spatiotemporal
+Importance Resampling for Direct Illumination) to efficiently sample
+many emissive surfaces with just 1-2 rays per pixel.
 
 **Approach:**
 
-- After the primary reflection ray hits a surface, trace a secondary
-  ray from the hit point in the reflected direction.
-- Evaluate the material at each bounce and accumulate colour.
-- Limit to 2-3 bounces for performance.
-- Russian roulette termination for unbiased path tracing.
+- **ReSTIR DI** (NVIDIA 2020) — reservoir-based sampling in 3 passes:
+  initialisation (RIS candidate sampling), temporal reuse (merge prior
+  frame's reservoir), spatial reuse (merge neighbouring pixels).
+- Shadow rays toward emissive geometry sample points.
+- BRDF-weighted radiance accumulation with visibility checks.
+- **Motion vectors** generated during the geometry pass (per-pixel
+  screen-space velocity). Essential for temporal reuse in ReSTIR,
+  temporal denoising (Etape 41), and volumetric fog reprojection
+  (Etape 40). Written to a dedicated R16G16 render target.
 
-### Etape 39 — Transparency + Refraction
+**After this step:** all lighting comes from actual emissive surfaces
+— no fake point light. The scene has physically correct direct lighting.
 
-Add support for translucent materials (glass, energy barriers, holographic
-displays). Refraction rays bend through surfaces based on the material's
-index of refraction.
+### Etape 38 — Multi-Bounce Global Illumination (ReSTIR GI)
+
+Extend to multi-bounce indirect illumination. Light bouncing off the
+obsidian floor onto surfaces creates subtle colour bleeding — the
+hallmark of photorealistic rendering.
 
 **Approach:**
 
-- Materials with `opacity < 1.0` trace refraction rays via Snell's law.
-- Total internal reflection handled at critical angles.
-- Order-independent transparency (OIT) or sorted alpha blending for
-  correct compositing of overlapping translucent surfaces.
-- Refraction uses the same inline ray query (`VK_KHR_ray_query`) —
-  no new extensions needed.
+- **ReSTIR GI** (NVIDIA 2021) — path resampling for indirect lighting.
+  Reuses paths across space and time for noise-free GI with few samples.
+- **World-space irradiance cache** (inspired by UE5 Lumen's surface
+  cache) — amortise GI computation across frames by caching lighting
+  on surfaces. Update incrementally, not every frame.
+- 2-3 bounce limit with Russian roulette termination.
+- Indirect specular (glossy reflections) via the same path tracing.
 
-### Etape 40 — Volumetric Fog + Light Shafts
+**After this step:** the obsidian floor glows faintly from neon tube
+light, colour bleeds between surfaces, the world has photorealistic
+indirect illumination.
+
+### Etape 39 — Ray-Traced Ambient Occlusion (RTAO)
+
+Add physically accurate ambient occlusion via short-range ray tracing.
+Soft contact shadows in corners and crevices where geometry meets —
+the obsidian floor at terrain edges, data tower bases, under barriers.
+
+**Approach:**
+
+- **RTAO** via inline ray query — trace short hemispherical rays from
+  each surface point. Count occlusion ratio. 1 ray per pixel with
+  temporal accumulation + spatial filtering for noise-free result.
+- Reuses the existing BLAS/TLAS — no additional acceleration structures.
+- Applied before lighting in the shading pipeline (multiplies diffuse).
+- Much more accurate than SSAO/GTAO — no screen-space artefacts,
+  works correctly in corners, under overhangs, and at silhouettes.
+
+**After this step:** subtle darkening in corners and crevices adds
+depth and grounding to every surface.
+
+### Etape 40 — Transparency + Refraction
+
+Add translucent materials: glass, energy barriers, holographic displays.
+Refraction rays bend through surfaces based on index of refraction.
+
+**Approach:**
+
+- **Weighted Blended OIT** (McGuire & Bavoil 2013) for rasterised
+  transparency — fast, simple, works with standard rasterisation.
+- **Ray-traced refraction** via Snell's law using inline ray query
+  for high-quality glass and holographic surfaces.
+- Total internal reflection at critical angles.
+- Per-material `opacity` field already in Material SSBO.
+- No new Vulkan extensions needed.
+
+**After this step:** energy barriers shimmer with refraction, holographic
+displays distort the scene behind them.
+
+### Etape 41 — Volumetric Fog + Light Shafts
 
 Neon light scattering through atmospheric haze — the #1 mood tool in
-cyberpunk rendering (Cyberpunk 2077 uses volumetric fog extensively).
-Inspired by Tron Legacy where scenes were lit from below and "light
-sprang from within the world."
+cyberpunk rendering (Frostbite/DICE technique).
 
 **Approach:**
 
-- Compute shader raymarches through a 3D volume texture (froxel grid)
-  to accumulate in-scattered light from emissive surfaces.
-- The fog density is low (faint haze) but concentrates near the ground
-  where the neon tubes emit — creating visible light shafts rising from
-  the grid lines.
-- Temporal reprojection reuses previous frame data to reduce noise.
-- The fog colour picks up the emissive colour of nearby neon tubes
-  (cyan shafts from cyan lines, orange from orange lines).
+- **Froxel-based** (frustum-aligned voxels) volumetric fog — the AAA
+  standard used by Frostbite, UE4/5, and Unity HDRP.
+- Compute shader injects light and density into a 3D froxel grid.
+- Raymarch through the grid per pixel to accumulate in-scattered light.
+- Fog density concentrates near the ground where neon tubes emit —
+  creating visible coloured light shafts (cyan from cyan lines, orange
+  from orange lines).
+- **Temporal reprojection** reuses previous frame data to reduce noise.
 
-### Etape 41 — Light Trails
+**After this step:** faint neon-coloured fog rises from the grid lines,
+light shafts pierce the darkness — the world breathes.
 
-Moving objects leave persistent glowing streaks — the signature Tron
-visual. Core identity for light cycles, data couriers, and any
-moving programme.
+### Etape 42 — Adaptive LOD + Temporal Denoising
 
-**Approach:**
-
-- A trail buffer (SSBO) stores a ring buffer of past positions per
-  entity. Each frame, the current position is appended.
-- A compute or mesh shader reads the trail buffer and generates thin
-  ribbon geometry connecting past positions.
-- The ribbon uses the same emissive material as neon tubes (HDR,
-  bloomed). Trail colour matches the entity's identity colour.
-- Trails fade over time (age-based alpha/emissive decay).
-
-### Etape 42 — Derez Particle System
-
-Entities dissolve into geometric particles when destroyed — the Tron
-"derez" effect. Digital Domain used procedural explosion algorithms
-(the "Egyptian algorithm") to generate travelling linework for derez
-sequences.
+Nanite-inspired GPU-driven level-of-detail and temporal accumulation
+for noise-free RT at 4K @ 60+ FPS.
 
 **Approach:**
 
-- GPU compute particle system — particles are stored in an SSBO,
-  updated by a compute shader each frame (position, velocity, lifetime).
-- On derez trigger: the entity's mesh vertices become particle spawn
-  positions. Each particle inherits the vertex's emissive colour.
-- Particles fly outward with randomised velocity, shrink, and fade.
-- Rendered as point sprites or tiny billboard quads via mesh shader.
-- The particle system is general-purpose — also used for energy sparks,
-  data stream effects, and environmental ambience.
+- **Adaptive meshlet LOD** — hierarchical meshlet DAG with GPU-driven
+  selection based on screen-space error (Nanite technique). Dense
+  meshlets near camera, coarse in the distance. Seamless transitions
+  via morphing or dithered crossfade.
+- **Temporal accumulation** — reuse prior frames to denoise RT output.
+  Motion vectors (from Etape 37) enable correct reprojection during
+  camera movement. Exponential moving average with rejection for
+  disoccluded pixels.
+- **GPU profiling** — timestamp queries for per-pass timing, automatic
+  bottleneck detection. Target: 4K @ 60+ FPS sustained on RTX 4090.
+
+**After this step:** the world renders at maximum quality with noise-free
+ray tracing and automatic detail scaling. Unreal Engine-quality output.
 
 ### Acceptance Criteria
 
 - [ ] No point light abstraction — all lighting from emissive geometry
-- [ ] Shadow rays sample emissive surfaces directly
-- [ ] Multi-bounce reflections (2-3 bounces)
+- [ ] ReSTIR DI for direct lighting from emissive surfaces
+- [ ] ReSTIR GI for multi-bounce indirect illumination
+- [ ] World-space irradiance cache
 - [ ] Russian roulette path termination
+- [ ] Motion vectors for temporal reuse
+- [ ] Ray-traced ambient occlusion (RTAO)
 - [ ] Transparent materials with refraction (Snell's law, IOR)
-- [ ] Order-independent transparency or sorted alpha
+- [ ] Weighted Blended OIT or equivalent
 - [ ] Per-material opacity in material SSBO
-- [ ] Volumetric fog with neon light shafts
-- [ ] Light trails for moving entities (ring buffer + ribbon geometry)
-- [ ] Derez particle system (GPU compute, mesh shader rendered)
-- [ ] **Phase 8 complete — full RT + Tron effects**
+- [ ] Froxel-based volumetric fog with neon light shafts
+- [ ] Temporal reprojection for fog noise reduction
+- [ ] Adaptive meshlet LOD with seamless transitions
+- [ ] Temporal denoising for RT output
+- [ ] GPU profiling with per-pass timestamps
+- [ ] 4K @ 60+ FPS sustained on RTX 4090
+- [ ] Proper synchronisation barriers for all new passes
+- [ ] Proper doxygen, STYLE.md compliant, British spelling
+- [ ] All existing + new tests pass on all CI presets
+- [ ] **Phase 8 complete — full RT + advanced rendering**
 
 ---
 
-## Phase 9 — Optimisation
+## Phase 9 — Engine Architecture + Integrated Subsystems
 
-**Goal:** Hit 4K @ 60+ FPS rock-solid on RTX 4090. Adaptive quality
-scaling for weaker hardware.
+**Goal:** Extract the monolithic main.cpp into a proper engine structure
+with tightly integrated physics, spatial audio, and environment sensory
+subsystems. All subsystems share the same Vulkan device, GPU buffers,
+BLAS/TLAS, and compute queues for maximum efficiency — no third-party
+libraries (per VISION.md design principles).
 
 ### Planned Features
 
-- **Nanite-like adaptive LOD** — GPU-driven mesh streaming with
-  automatic level-of-detail selection. Dense meshlets near the camera,
-  coarse meshlets in the distance. Software rasterisation for sub-pixel
-  triangles. Seamless LOD transitions without popping.
-- **Temporal accumulation** — reuse data from previous frames to
-  denoise RT output (temporal anti-aliasing, temporal reprojection).
+- **Engine class** — top-level coordinator that owns the Vulkan instance,
+  device, swapchain, and render loop. Replaces the 2000+ line renderThread
+  function with a structured pipeline.
+- **Rendergraph** — DAG-based render pass scheduling with automatic
+  barrier insertion, resource lifetime tracking, pass reordering, and
+  transient resource aliasing. Replaces hand-coded barriers scattered
+  across recordFrame(). Shader hot-reloading for development iteration.
+- **Resource manager** — centralises GPU resource creation, staging
+  uploads, and lifetime management via resource handles (indirection —
+  the manager can move resources without invalidating references).
+  Async loading with worker threads. Replaces ad-hoc buffer/image
+  creation scattered across renderThread.
 - **Async compute** — overlap post-processing compute with the next
   frame's mesh shader pass on separate compute queues.
-- **GPU profiling** — timestamp queries for per-pass timing, automatic
-  bottleneck detection, adaptive quality scaling.
-- **Memory budget** — VMA budget tracking, streaming eviction policy,
-  residency management for large scenes.
+- **Scene graph** — hierarchical entity/component system with transform
+  parenting, spatial partitioning (BVH), and efficient iteration.
+- **Rigid body physics** — collision detection (GJK/EPA), broadphase
+  reusing the rendering BVH/BLAS, constraint solver, gravity.
+  GPU-accelerated collision queries via the same compute queues.
+- **Spatial audio** — HRTF-based 3D positional audio, ray-traced
+  occlusion and reverb reusing the same BLAS/TLAS as rendering.
+  Audio output to speakers (human mode) or bot interface (bot mode).
+- **Environment sensory** — energy signature gradients (smell), surface
+  contact feedback (touch), ambient field (temperature), damage (pain).
+  Computed on the GPU using the same spatial data structures.
+  All routed through the bot interface for AI perception.
+- **Debug visualisation** — toggleable overlays: wireframe mode,
+  frustum culling debug, BVH/BLAS visualisation, GPU profiler HUD
+  (per-pass timestamps), heat map for overdraw. Essential for Phase
+  8-10 development. In-house rendering (no ImGui dependency).
+- **Software Vulkan for CI** — integrate Mesa lavapipe (CPU-based
+  Vulkan 1.3 software rasteriser) into CI pipeline for GPU-less
+  testing. Validates rendering logic, barrier correctness, and
+  resource management without requiring physical GPU hardware.
+- **Deterministic simulation** — same seed + same inputs = same outputs.
+  Essential for AI training reproducibility (per VISION.md).
+- **Variable simulation speed** — pause, 1x, 2x, fast-forward.
+  `dt_seconds` reflects actual elapsed time. No zero-dt ticks during
+  pause. Essential for AI training and observation (per VISION.md).
 
 ### Acceptance Criteria
 
-- [ ] 4K @ 60+ FPS sustained on RTX 4090
-- [ ] Adaptive LOD with seamless transitions
-- [ ] Temporal denoising for RT output
+- [ ] Engine class with clear module boundaries
+- [ ] Rendergraph with automatic barrier management + resource aliasing
+- [ ] Resource manager with handle indirection + async loading
+- [ ] Shader hot-reloading for development iteration
 - [ ] Async compute overlap
-- [ ] GPU profiling with per-pass timestamps
-- [ ] **Phase 9 complete — optimisation**
+- [ ] Scene graph with spatial partitioning (shared BVH)
+- [ ] Rigid body physics reusing rendering acceleration structures
+- [ ] Spatial audio with ray-traced occlusion (shared BLAS/TLAS)
+- [ ] Environment sensory system (smell, touch, temperature, pain)
+- [ ] Debug visualisation overlays (wireframe, BVH, GPU profiler)
+- [ ] Deterministic simulation (same seed = same output)
+- [ ] Variable simulation speed (pause, 1x, 2x, fast-forward)
+- [ ] Mesa lavapipe CI integration for GPU-less testing
+- [ ] **Phase 9 complete — engine architecture + integrated subsystems**
+
+---
+
+## Phase 10 — Asset Pipeline + Procedural World
+
+**Goal:** Import avatar and NPC body meshes from Blender via glTF 2.0
+(own parser — no third-party libraries). Generate all Grid architecture
+(buildings, data towers, platforms, barriers) procedurally. The Grid
+builds itself; only creature bodies are authored externally.
+
+### Planned Features
+
+- **In-house glTF 2.0 parser** — load `.gltf`/`.glb` files with our
+  own parser (no tinygltf, no fastgltf — write everything ourselves per
+  design principle #2). Extract meshes, materials, skeleton hierarchy,
+  skinning weights, and animations. New `libs/gltf/` static library.
+- **Meshlet conversion** — convert imported triangle meshes to the
+  engine's meshlet format. Extend the existing meshlet builder to accept
+  arbitrary indexed mesh input (not just procedural terrain).
+- **PBR material mapping** — map glTF metallic-roughness materials to
+  the engine's Material SSBO. Texture support: base colour, normal,
+  metallic-roughness, emissive, occlusion maps.
+- **Skeletal animation** — bone hierarchy, joint transforms, GPU-
+  accelerated skinning via compute shader. Animation blending and state
+  machine for NPC and avatar bodies.
+- **Procedural world generation** — algorithmic generation of Grid
+  architecture: data towers, energy barriers, platforms, geometric
+  structures. All built from code, not from scene files. Parameterised
+  by seed for deterministic generation. GPU mesh shaders for on-the-fly
+  geometry (AMD GPU Work Graphs technique — HPG 2024 — if Vulkan
+  extension matures, otherwise CPU-side generation).
+- **Data streams** — animated geometric tubes with flowing emissive
+  particles. Pulsing light flowing along paths between Grid structures.
+  Core Tron visual element (per VISION.md).
+- **GPU particle system** — general-purpose compute particle SSBO for
+  ambient effects: floating energy motes, data sparkles, Grid hum
+  particles. The world should feel alive with tiny floating particles
+  of light. Mesh shader rendered (point sprites or billboards).
+- **Energy sources** — procedurally placed golden glow orbs floating
+  and slowly rotating above the Grid. Pulsing warm emissive with bloom
+  halo (Super Mario-inspired collectible aesthetic). Colour encodes
+  energy value: bright gold = high energy, reddish = low energy. The
+  AI brain has no text label — it must learn to estimate food value
+  from colour alone (human players see a HUD label in Phase 12).
+  Depletes when consumed (shrinks + dims), respawns over time at a
+  different location. Warm tones stand out against the cool cyan-blue
+  Grid palette — instantly recognisable as "food."
+- **Texture streaming** — load textures on demand via VMA staging.
+  Mip-chain generation on the GPU. Memory budget awareness.
+
+### Acceptance Criteria
+
+- [ ] In-house glTF 2.0 parser (own `libs/gltf/` library)
+- [ ] Load glTF meshes + materials + skeleton + animation
+- [ ] Convert glTF meshes to meshlet format
+- [ ] PBR material mapping with texture support
+- [ ] Skeletal animation with GPU skinning
+- [ ] Procedural Grid architecture generation (data towers, barriers)
+- [ ] Texture streaming with mip generation
+- [ ] Data streams (animated emissive tubes with flowing particles)
+- [ ] GPU particle system (ambient energy motes, sparkles)
+- [ ] Energy sources (procedural, depletable, respawning)
+- [ ] Blender → TronGrid round-trip verified for creature bodies
+- [ ] **Phase 10 complete — asset pipeline + procedural world**
+
+---
+
+## Phase 11 — AI Avatar Integration
+
+**Goal:** Load AI brains as DLL/SO plugins. The engine simulates the
+creature's body; the brain DLL is the nervous system. The shared memory
+interface carries raw sensory nerve signals in and muscle commands out —
+no game state, no HUD data, no entity IDs. If a biological creature
+couldn't perceive it through its nerves, the brain doesn't receive it.
+
+See `docs/VISION.md` § AI Embodiment for the architecture.
+Interface specification will be documented in `docs/AI_INTERFACE.md`.
+
+### NPC Programmes
+
+- **Programme entities** — simple NPCs: geometric wireframe shapes
+  (cubes, pyramids, polyhedra) made of glowing lines. Patrol bots,
+  guardian systems, data couriers — following coded routines.
+- **Basic AI behaviours** — patrol paths, guard zones, flee from
+  threats, pursue intruders. State machine driven, no brain DLL.
+- **Derez on destruction** — programmes dissolve into geometric
+  particles when destroyed (GPU compute particle system from Phase 10).
+
+### Creature Body + Rendering
+
+- **Avatar entity** — new entity type with skeletal body, joint
+  constraints, mass distribution, identity colour. Rendered as organic
+  curves with soft glow (visually distinct from the geometric world,
+  per VISION.md § AI Visual Identity).
+- **Controllable glow** — the brain controls glow intensity and colour
+  hue as its primary emotional display (warm gold = content, cool blue
+  = scared, red flicker = in pain).
+- **Light trails** — moving entities leave persistent glowing streaks
+  (ring buffer SSBO, ribbon geometry, emissive HDR + bloom, age fade).
+- **Derez particle system** — entities dissolve into geometric particles
+  (reuses GPU particle system from Phase 10).
+
+### Sensory Interface (Engine → Brain)
+
+Raw nerve signals per tick — the brain learns to interpret them:
+
+- **Vision** — offscreen-rendered RGB + depth framebuffer from the
+  creature's viewpoint. No labels, no bounding boxes. Resolution
+  requested by the brain at init (starts small, grows as visual
+  processing matures).
+- **Hearing** — spatial audio arrivals with bearing, distance, loudness,
+  and frequency bands (low/mid/high). NOT sound categories — the brain
+  learns "rhythmic low-frequency = footsteps" from experience.
+- **Smell (olfaction)** — multi-dimensional scent fingerprint vectors
+  per source. Same entity always produces the same fingerprint. The
+  brain must LEARN which fingerprints belong to which entities — no IDs.
+  Intensity + rate of change + lateral gradient for steering.
+- **Touch (mechanosensation)** — pressure per body zone. Ground contact
+  flags. Multiple zones around the body, each reporting independently.
+- **Proprioception** — joint angles, angular velocities, body curvature,
+  speed, heading, ground contact. The creature's internal body sense.
+- **Temperature** — core temperature + rate of change. Energy sources
+  radiate warmth; void areas are cold.
+- **Pain (nociception)** — localised pain events with zone, intensity,
+  and type (sharp/blunt/burn/sting). Overall damage level.
+- **Vibration** — ground vibration intensity, frequency, bearing.
+  Footsteps, machinery, the Grid's hum.
+- **Feeding signal** — energy received this tick + food contact flag.
+  The brain tracks its own energy level internally.
+
+### Motor Interface (Brain → Engine)
+
+Muscle commands per tick — the engine applies physics:
+
+- **Locomotion** — joint angle targets + muscle effort per joint. The
+  engine applies torques constrained by mass, joint limits, friction.
+  The brain discovers walking by experimenting with joint sequences.
+  Simplified at early stages: forward + angular velocity only.
+- **Head/eye control** — yaw, pitch, focus distance (independent of
+  body movement).
+- **Vocalisation** — pitch, volume, tonality parameters. The engine
+  synthesises animal-like sounds that propagate spatially in the world.
+  Hybrid approach: brain selects emotional intent, engine picks from
+  organic sound library and modulates.
+- **Mouth** — open amount + bite force for active feeding.
+- **Glow** — intensity and colour hue for emotional expression.
+
+### Brain Plugin Interface
+
+- **C-linkage DLL/SO API**: `tg_brain_init`, `tg_brain_spawn`,
+  `tg_brain_tick`, `tg_brain_shutdown`.
+- **Shared memory nerve bundle** — sensory buffer (engine writes, brain
+  reads) + motor buffer (brain writes, engine reads).
+- **Staged rollout** — Stage 0 (blind worm: smell + touch + pain +
+  temperature + simple locomotion), Stage 1 (insect: + vibration +
+  directional light), Stage 2 (hamster: + vision + hearing + limbs +
+  vocalisation), Stage 3 (full creature: + glow control + expression).
+- **Phoenix model** — death is traumatic and remembered. Pre-death
+  warning tick, then shutdown. Brain persists memories to disk.
+  Respawn via init + spawn.
+- **Persistence directory** — writable path for brain data (memories,
+  learned associations).
+
+### Acceptance Criteria
+
+- [ ] Avatar entity with skeletal body and physics
+- [ ] Offscreen rendering for bot vision (RGB + depth)
+- [ ] Spatial audio routed to bot hearing interface
+- [ ] Scent fingerprint system (stable per-entity vectors)
+- [ ] Touch, proprioception, temperature, pain, vibration sensors
+- [ ] Feeding mechanism (proximity-based → action-based)
+- [ ] Locomotion via joint targets + physics (and simplified mode)
+- [ ] Head/eye control independent of body
+- [ ] Vocalisation synthesis (parametric or hybrid)
+- [ ] Controllable glow (intensity + colour)
+- [ ] C-linkage DLL/SO brain plugin loads and ticks
+- [ ] Shared memory nerve bundle operational
+- [ ] Light trails for moving entities
+- [ ] Derez particle system
+- [ ] NPC Programmes with basic AI behaviours (patrol, guard, flee)
+- [ ] Stage 0 (blind worm) fully functional end-to-end
+- [ ] **Phase 11 complete — AI avatar integration**
+
+---
+
+## Phase 12 — Cyberpunk HUD + Human Player Mode
+
+**Goal:** Human player mode UI — a sleek cyberpunk heads-up display
+rendered as a GPU-driven 2D overlay. The HUD gives human players
+information that the AI brain must learn from raw senses. Not shown
+in bot mode — the brain has no HUD, just like a biological creature
+has no HUD.
+
+**Design principle:** The HUD is a "cheat" that compensates for the
+human's inability to smell, sense temperature, or process raw nerve
+signals. The AI perceives all of this natively through the nerve bundle.
+
+### Planned Features
+
+- **MSDF text rendering** — in-house multi-channel signed distance field
+  font atlas generator (sharper corners than plain SDF) and GPU text
+  renderer. Crisp text at any resolution, single texture lookup per
+  fragment.
+- **Energy bar** — the player's energy level, styled as a neon-glow
+  horizontal bar with scan line artefacts.
+- **Health bar** — the player's health/damage level, separate from energy.
+  Dims and flickers as damage increases.
+- **Food value indicator** — floating text above energy orbs showing how
+  much energy they are worth. The AI brain does not see this — it must
+  estimate food value from colour (golden = high, reddish = low).
+- **Entity labels** — floating text above NPCs, avatars, and other
+  entities with name/type. The AI brain does not see these — it must
+  learn to recognise entities from scent fingerprints and vision.
+- **Energy signature visualisation** — visible coloured auras around
+  scent sources that the AI can only "smell." Rendered as faint glowing
+  halos with colour matching the scent fingerprint. Gives the human
+  player a visual representation of the olfactory landscape.
+- **Compass / heading indicator** — current facing direction, sector
+  name. Minimal — just enough to orient.
+- **Threat indicators** — directional damage flash on screen edges
+  when hit. No enemy radar — the player uses their eyes and ears.
+- **Scan line overlay** — faint CRT-style overlay that intensifies
+  during low energy or damage. Sells the "inside a digital display"
+  aesthetic.
+
+### Acceptance Criteria
+
+- [ ] MSDF font atlas generation + GPU text rendering
+- [ ] Energy bar with neon-glow styling
+- [ ] Health bar (separate from energy)
+- [ ] Food value floating text above energy orbs
+- [ ] Entity labels floating above NPCs and avatars
+- [ ] Energy signature aura visualisation (scent → visual for humans)
+- [ ] Compass / heading indicator
+- [ ] Directional damage flash
+- [ ] Scan line overlay (intensity varies with player state)
+- [ ] HUD hidden in bot mode
+- [ ] **Phase 12 complete — cyberpunk HUD**
+
+---
+
+## Phase 13 — Steam Publishing + Production Polish
+
+**Goal:** Make TronGrid a shippable product on Steam. All the non-gameplay
+features that separate a tech demo from a published game.
+
+### Steamworks Integration
+
+- **Steamworks SDK** — integrate the Steamworks API for achievements,
+  leaderboards, cloud saves, Steam overlay, and screenshot capture.
+  DLL/SO loaded at runtime — does not violate the "no third-party
+  libraries" rule (Steam is the distribution platform, not a dependency).
+- **Achievements** — milestone-based: first kill, first food, survive
+  N seconds, explore N sectors, etc. Displayed in the Steam overlay.
+- **Cloud saves** — automatic sync of human player progress and AI brain
+  persistence data via Steam Cloud.
+- **Leaderboards** — survival time, energy collected, sectors explored.
+- **Steam Deck compatibility** — verified controller support, default
+  controller config, appropriate resolution scaling.
+
+### Production Features
+
+- **Installer / launcher** — Steam handles distribution, but the game
+  must handle first-run setup (Vulkan SDK check, GPU capability check,
+  create default config file).
+- **Configuration UI** — in-game settings menu: resolution, fullscreen/
+  windowed, graphics quality presets (low/medium/high/ultra), key
+  bindings, audio volume, MSAA level, bloom intensity. Persistent
+  settings file (JSON or custom).
+- **Input remapping** — rebindable keys and mouse sensitivity. Controller
+  support (Xbox, PlayStation) via Steam Input API.
+- **Screenshots** — Steam screenshot key (F12) integration. High-res
+  screenshot mode (render at 2x resolution, save to disk).
+- **Loading screen** — animated Tron-style loading indicator during
+  world generation and asset loading.
+- **Main menu** — minimal cyberpunk main menu: New Game, Continue,
+  Settings, Quit. Bot mode bypass (--bot flag skips menu entirely).
+- **Pause menu** — ESC opens pause overlay with Resume, Settings, Quit.
+  Time stops during pause (already in Phase 9 variable speed).
+
+### Quality Assurance
+
+- **Crash reporting** — minidump generation on crash (Windows) + signal
+  handler (Linux). Stack trace + GPU state logged.
+- **Performance targets** — verified 4K@60+ on RTX 4090, 1080p@60+ on
+  RTX 3060, 720p@30+ on GTX 1060. Automatic quality scaling.
+- **Multi-GPU testing** — verified on NVIDIA (RTX 3060, 4090), AMD
+  (RX 6700 XT, 7900 XTX), Intel Arc. Graceful fallback for missing
+  features (no RT = no shadows, reduced MSAA).
+- **Store assets** — 12+ marketing images at various resolutions,
+  gameplay trailer video, store page description, tags, system
+  requirements.
+
+### Acceptance Criteria
+
+- [ ] Steamworks SDK integrated (achievements, cloud saves, overlay)
+- [ ] Steam Deck verified controller support
+- [ ] Configuration UI with graphics quality presets
+- [ ] Input remapping (keyboard + controller)
+- [ ] Main menu + pause menu
+- [ ] Loading screen
+- [ ] Screenshots (F12 + high-res mode)
+- [ ] Crash reporting (minidump + log)
+- [ ] Performance verified on target hardware tiers
+- [ ] Store page assets (images + trailer)
+- [ ] **Phase 13 complete — Steam publishing ready**
 
 ---
 
 ## Backlog
 
-<!-- Ideas, improvements, and tasks for later phases. -->
+- **Grid sectors / zones** — distinct areas with different visual
+  characteristics, density, architecture style. Industrial sector,
+  residential, the Outlands, data processing centres. Procedurally
+  generated per seed. Different ambient sounds and fog density per zone.
+- **Ambient world life** — the Grid hums and breathes without players.
+  Recogniser patrol ships overhead (geometric, emissive), data stream
+  pulses between towers, flickering Grid segments, background particle
+  effects. Makes the world feel alive and inhabited.
+- **Identity discs** — the signature Tron weapon. Thrown projectile
+  with glowing trail, returns to thrower. Physics-based trajectory.
+  Used by NPCs and player avatars in combat.
+- **Combat system** — disc combat, energy attacks, derez mechanics.
+  Damage model with pain feedback to AI brain via nerve bundle.
+- **Accessibility** — colourblind mode (palette remapping for the
+  cyan/orange/gold colour scheme), input remapping, subtitle system
+  for vocalisations, screen reader support for menus.
+- **Configuration system** — graphics quality presets, key bindings,
+  audio volume, render resolution scaling. Persistent settings file.
+- **Save/load** — human player progress persistence. World state
+  snapshot + player inventory + position. AI brain handles its own
+  persistence via the DLL interface.
+- **Memory budget** — VMA budget tracking, streaming eviction policy,
+  residency management for large scenes.
+- **Multiplayer** — extract world state to authoritative server, network
+  replication, prediction + reconciliation, multiple concurrent players.
+  See `docs/VISION.md` § Future: Multiplayer. Deferred until single-player
+  is fully polished.
 
 ---
 
