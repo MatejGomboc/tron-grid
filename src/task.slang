@@ -21,10 +21,13 @@ struct CameraData {
     float4x4 view;
     float4x4 projection;
     float4x4 inv_view_projection; // Inverse view-projection (for skybox ray reconstruction).
-    float3 light_pos; // Point light world-space position.
-    float light_intensity; // Point light intensity (pre-multiplier before inverse square falloff).
+    float4x4 prev_view_projection; // Previous frame's view-projection (for motion vectors).
     float3 camera_pos; // Camera world-space position (for view vector in PBR).
-    float camera_pad;
+    uint frame_count; // Frame counter (for pseudo-random sampling).
+    uint emissive_count; // Number of emissive triangles.
+    float total_emissive_power; // Sum of all emissive triangle powers.
+    float ubo_pad0;
+    float ubo_pad1;
 };
 
 // Must match C++ ObjectData struct layout (including padding).

@@ -38,6 +38,20 @@ struct TerrainMesh {
     float bounding_radius{0.0f}; //!< Bounding sphere radius from origin.
 };
 
+//! Sub-mesh for a single colour of neon tube geometry (cyan or orange).
+struct NeonSubMesh {
+    std::vector<Vertex> vertices; //!< Per-face vertices (6 per edge quad, flat shaded).
+    std::vector<uint32_t> indices; //!< Triangle indices.
+    std::vector<MathLib::Vec3> positions; //!< Vertex positions (for meshlet generation).
+};
+
+//! Result of neon tube generation — thin emissive quads along terrain grid edges.
+struct NeonTubeMesh {
+    NeonSubMesh cyan; //!< Primary grid tubes (cyan emissive).
+    NeonSubMesh orange; //!< Major grid line tubes (orange emissive).
+    float bounding_radius{0.0f}; //!< Bounding sphere radius from origin.
+};
+
 /*!
     Generates a procedural heightmap terrain with the angular Tron aesthetic.
 
@@ -49,3 +63,17 @@ struct TerrainMesh {
     \return TerrainMesh with vertices, indices, and positions.
 */
 [[nodiscard]] TerrainMesh generateTerrain(const TerrainConfig& config);
+
+/*!
+    Generates thin emissive quad geometry along every horizontal and vertical
+    terrain grid edge. Each quad is slightly offset above the terrain surface
+    so that ray tracing can sample neon tubes as area light sources.
+
+    Edges are classified as cyan (primary grid) or orange (major grid lines,
+    every 8th row/column) and separated into two sub-meshes for distinct
+    material assignment.
+
+    \param config Terrain generation parameters (same config as generateTerrain).
+    \return NeonTubeMesh with cyan and orange sub-meshes.
+*/
+[[nodiscard]] NeonTubeMesh generateNeonTubes(const TerrainConfig& config);
