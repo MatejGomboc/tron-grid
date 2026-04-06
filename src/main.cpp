@@ -518,9 +518,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline,
     camera state, input processing, and delta time.
 */
-static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t total_objects,
-    uint32_t emissive_count, float total_emissive_power, vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal,
-    std::mutex& render_mutex, std::condition_variable& render_cv, LoggingLib::Logger& logger)
+static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t total_objects, uint32_t emissive_count,
+    float total_emissive_power, vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex,
+    std::condition_variable& render_cv, LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -1491,8 +1491,8 @@ int main()
         MeshData cyan_meshlets{buildMeshlets(neon_tubes.cyan.positions, neon_tubes.cyan.indices)};
         MeshData orange_meshlets{buildMeshlets(neon_tubes.orange.positions, neon_tubes.orange.indices)};
 
-        logger.logInfo("Neon tubes: cyan " + std::to_string(neon_tubes.cyan.indices.size() / 3) + " tris, orange "
-            + std::to_string(neon_tubes.orange.indices.size() / 3) + " tris.");
+        logger.logInfo("Neon tubes: cyan " + std::to_string(neon_tubes.cyan.indices.size() / 3) + " tris, orange " + std::to_string(neon_tubes.orange.indices.size() / 3)
+            + " tris.");
 
         // ── Light orb sphere ──
 

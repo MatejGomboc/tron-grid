@@ -77,6 +77,9 @@ constexpr float NEON_TUBE_SURFACE_OFFSET{0.005f};
 //! Major grid line interval (every Nth grid cell gets orange neon tubes).
 constexpr float NEON_MAJOR_GRID_SPACING{8.0f};
 
+//! Epsilon for near-zero cross product check (edge nearly parallel to up vector).
+constexpr float CROSS_PRODUCT_EPSILON{0.000001f};
+
 //! Emits a thin quad along the edge from A to B, appending to the target sub-mesh.
 static void emitEdgeQuad(NeonSubMesh& mesh, const MathLib::Vec3& a, const MathLib::Vec3& b)
 {
@@ -85,7 +88,7 @@ static void emitEdgeQuad(NeonSubMesh& mesh, const MathLib::Vec3& a, const MathLi
     MathLib::Vec3 side{edge.cross(up)};
 
     // If edge is nearly vertical, use alternative reference direction.
-    if (side.lengthSquared() < 0.000001f) {
+    if (side.lengthSquared() < CROSS_PRODUCT_EPSILON) {
         up = MathLib::Vec3{1.0f, 0.0f, 0.0f};
         side = edge.cross(up);
     }
