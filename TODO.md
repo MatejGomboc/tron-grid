@@ -168,46 +168,80 @@ sprang from within the world."
 
 ---
 
-## Phase 9 — Optimisation
+## Phase 9 — Engine Architecture Refactor
 
-**Goal:** Hit 4K @ 60+ FPS rock-solid on RTX 4090. Adaptive quality
-scaling for weaker hardware.
+**Goal:** Extract the monolithic main.cpp into a proper engine structure.
+Separate rendering, resource management, and scene logic into reusable
+modules. Prepare the codebase for avatar integration in Phase 10.
 
 ### Planned Features
 
-- **Nanite-like adaptive LOD** — GPU-driven mesh streaming with
-  automatic level-of-detail selection. Dense meshlets near the camera,
-  coarse meshlets in the distance. Software rasterisation for sub-pixel
-  triangles. Seamless LOD transitions without popping.
-- **Temporal accumulation** — reuse data from previous frames to
-  denoise RT output (temporal anti-aliasing, temporal reprojection).
-- **Async compute** — overlap post-processing compute with the next
-  frame's mesh shader pass on separate compute queues.
+- **Engine class** — top-level coordinator that owns the Vulkan instance,
+  device, swapchain, and render loop. Replaces the 2000+ line renderThread
+  function with a structured pipeline.
+- **Render pipeline module** — encapsulates the multi-pass rendering
+  sequence (scene → skybox → bloom → tonemap → present) with explicit
+  pass registration and automatic barrier management.
+- **Resource manager** — centralises GPU resource creation, staging
+  uploads, and lifetime management. Replaces ad-hoc buffer/image creation
+  scattered across renderThread.
 - **GPU profiling** — timestamp queries for per-pass timing, automatic
   bottleneck detection, adaptive quality scaling.
-- **Memory budget** — VMA budget tracking, streaming eviction policy,
-  residency management for large scenes.
+- **Async compute** — overlap post-processing compute with the next
+  frame's mesh shader pass on separate compute queues.
+- **Temporal accumulation** — reuse data from previous frames to
+  denoise RT output (temporal anti-aliasing, temporal reprojection).
 
 ### Acceptance Criteria
 
-- [ ] 4K @ 60+ FPS sustained on RTX 4090
-- [ ] Adaptive LOD with seamless transitions
-- [ ] Temporal denoising for RT output
-- [ ] Async compute overlap
+- [ ] Engine class with clear module boundaries
+- [ ] Render pipeline extracted from renderThread
+- [ ] Resource manager for GPU buffers and images
 - [ ] GPU profiling with per-pass timestamps
-- [ ] **Phase 9 complete — optimisation**
+- [ ] Async compute overlap
+- [ ] 4K @ 60+ FPS sustained on RTX 4090
+- [ ] **Phase 9 complete — engine architecture**
+
+---
+
+## Phase 10 — AI Avatar Integration
+
+**Goal:** Load AI brains as DLL/SO plugins. Avatars navigate the world,
+perceive through rendered images, and interact with the environment.
+See `docs/VISION.md` § Future: Multiplayer for the long-term goal.
+
+### Planned Features
+
+- **Avatar entity** — new entity type with position, orientation,
+  velocity, identity colour. Rendered as a geometric Tron-style body.
+- **AI brain plugin interface** — C-linkage DLL/SO API for perception
+  (rendered image + depth), action (movement commands), and lifecycle.
+- **Light trails** — moving entities leave persistent glowing streaks
+  (ring buffer SSBO, ribbon geometry, emissive HDR + bloom, age fade).
+- **Derez particle system** — entities dissolve into geometric particles
+  (GPU compute, mesh shader point sprites, randomised velocity + fade).
+- **Sensory system** — offscreen render-to-texture for bot perception,
+  shared memory IPC for brain communication.
+
+### Acceptance Criteria
+
+- [ ] Avatar entity rendered in the world
+- [ ] DLL/SO brain plugin loads and receives perception frames
+- [ ] Light trails for moving entities
+- [ ] Derez particle system
+- [ ] Offscreen rendering for bot perception
+- [ ] **Phase 10 complete — AI avatar integration**
 
 ---
 
 ## Backlog
 
-- **Light trails** — moving entities leave persistent glowing streaks
-  (ring buffer SSBO of past positions, ribbon geometry via mesh shader,
-  emissive HDR + bloom, age-based fade). Requires avatar/entity system.
-- **Derez particle system** — entities dissolve into geometric particles
-  (GPU compute SSBO, mesh shader point sprites, randomised velocity +
-  fade). General-purpose particle system for energy sparks and ambience.
-  Requires avatar/entity system.
+- **Nanite-like adaptive LOD** — GPU-driven mesh streaming, automatic
+  level-of-detail, software rasterisation for sub-pixel triangles.
+- **Memory budget** — VMA budget tracking, streaming eviction policy,
+  residency management for large scenes.
+- **Multiplayer** — extract world state to authoritative server, network
+  replication, multiple AI brains per instance.
 
 ---
 

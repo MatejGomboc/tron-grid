@@ -263,8 +263,8 @@ The canonical task checklist lives in `TODO.md`.
 | 6 | Physically-based RT | Full RT lighting |
 | 7 | Visual polish | Bloom, tonemapping, AA, skybox, per-material PBR |
 | 8 | Full RT + advanced rendering | Emissive light sources, multi-bounce GI, transparency, refraction |
-| 9 | Optimisation | Nanite-like adaptive LOD, 4K @ 60+ rock-solid |
-| 10 | AI integration | Bot interface, single AI brain per instance |
+| 9 | Engine architecture | Extract modules from main.cpp, Engine class, GPU profiling, async compute |
+| 10 | AI avatar integration | Bot DLL/SO plugins, avatar entities, light trails, derez particles |
 | 11 | Multiplayer | Authoritative server, MMO networking |
 
 Phases 3–4 and 5–6 can be developed in parallel after Phase 2.
