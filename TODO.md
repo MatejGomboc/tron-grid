@@ -337,12 +337,14 @@ builds itself; only creature bodies are authored externally.
   particles. The world should feel alive with tiny floating particles
   of light. Mesh shader rendered (point sprites or billboards).
 - **Energy sources** — procedurally placed golden glow orbs floating
-  and slowly rotating above the Grid. Pulsing warm gold emissive with
-  bloom halo (Super Mario-inspired collectible aesthetic). Creatures
-  feed on these to sustain energy. Depletes when consumed (shrinks +
-  dims), respawns over time at a different location. The warm gold
-  stands out against the cool cyan-blue Grid palette — instantly
-  recognisable as "food" even to a learning AI brain.
+  and slowly rotating above the Grid. Pulsing warm emissive with bloom
+  halo (Super Mario-inspired collectible aesthetic). Colour encodes
+  energy value: bright gold = high energy, reddish = low energy. The
+  AI brain has no text label — it must learn to estimate food value
+  from colour alone (human players see a HUD label in Phase 12).
+  Depletes when consumed (shrinks + dims), respawns over time at a
+  different location. Warm tones stand out against the cool cyan-blue
+  Grid palette — instantly recognisable as "food."
 - **Texture streaming** — load textures on demand via VMA staging.
   Mip-chain generation on the GPU. Memory budget awareness.
 
@@ -484,8 +486,14 @@ Muscle commands per tick — the engine applies physics:
 ## Phase 12 — Cyberpunk HUD + Human Player Mode
 
 **Goal:** Human player mode UI — a sleek cyberpunk heads-up display
-rendered as a GPU-driven 2D overlay. Not shown in bot mode — the
-brain has no HUD, just like a biological creature has no HUD.
+rendered as a GPU-driven 2D overlay. The HUD gives human players
+information that the AI brain must learn from raw senses. Not shown
+in bot mode — the brain has no HUD, just like a biological creature
+has no HUD.
+
+**Design principle:** The HUD is a "cheat" that compensates for the
+human's inability to smell, sense temperature, or process raw nerve
+signals. The AI perceives all of this natively through the nerve bundle.
 
 ### Planned Features
 
@@ -494,7 +502,19 @@ brain has no HUD, just like a biological creature has no HUD.
   renderer. Crisp text at any resolution, single texture lookup per
   fragment.
 - **Energy bar** — the player's energy level, styled as a neon-glow
-  horizontal bar with scan line artifacts.
+  horizontal bar with scan line artefacts.
+- **Health bar** — the player's health/damage level, separate from energy.
+  Dims and flickers as damage increases.
+- **Food value indicator** — floating text above energy orbs showing how
+  much energy they are worth. The AI brain does not see this — it must
+  estimate food value from colour (golden = high, reddish = low).
+- **Entity labels** — floating text above NPCs, avatars, and other
+  entities with name/type. The AI brain does not see these — it must
+  learn to recognise entities from scent fingerprints and vision.
+- **Energy signature visualisation** — visible coloured auras around
+  scent sources that the AI can only "smell." Rendered as faint glowing
+  halos with colour matching the scent fingerprint. Gives the human
+  player a visual representation of the olfactory landscape.
 - **Compass / heading indicator** — current facing direction, sector
   name. Minimal — just enough to orient.
 - **Threat indicators** — directional damage flash on screen edges
@@ -507,6 +527,10 @@ brain has no HUD, just like a biological creature has no HUD.
 
 - [ ] MSDF font atlas generation + GPU text rendering
 - [ ] Energy bar with neon-glow styling
+- [ ] Health bar (separate from energy)
+- [ ] Food value floating text above energy orbs
+- [ ] Entity labels floating above NPCs and avatars
+- [ ] Energy signature aura visualisation (scent → visual for humans)
 - [ ] Compass / heading indicator
 - [ ] Directional damage flash
 - [ ] Scan line overlay (intensity varies with player state)
