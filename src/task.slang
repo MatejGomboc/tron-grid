@@ -26,8 +26,8 @@ struct CameraData {
     uint frame_count; // Frame counter (for pseudo-random sampling).
     uint emissive_count; // Number of emissive triangles.
     float total_emissive_power; // Sum of all emissive triangle powers.
-    float ubo_pad0;
-    float ubo_pad1;
+    uint screen_width; // Render target width in pixels.
+    uint screen_height; // Render target height in pixels.
 };
 
 // Must match C++ ObjectData struct layout (including padding).

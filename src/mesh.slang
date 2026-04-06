@@ -25,8 +25,8 @@ struct CameraData {
     uint frame_count; // Frame counter (for pseudo-random sampling).
     uint emissive_count; // Number of emissive triangles.
     float total_emissive_power; // Sum of all emissive triangle powers.
-    float ubo_pad0;
-    float ubo_pad1;
+    uint screen_width; // Render target width in pixels.
+    uint screen_height; // Render target height in pixels.
 };
 
 // Must match C++ ObjectData struct layout (including padding).
@@ -77,6 +77,7 @@ struct MeshOutput {
     float3 world_position : TEXCOORD1; // World-space position for shadow ray origin.
     nointerpolation float3 world_normal : TEXCOORD2; // World-space face normal (flat shading).
     nointerpolation uint material_index : TEXCOORD3; // Index into the material SSBO.
+    float4 prev_clip_pos : TEXCOORD4; // Previous frame's clip-space position (for motion vectors).
 };
 
 [[vk::binding(0, 0)]]
@@ -117,6 +118,25 @@ struct EmissiveTriangle {
 
 [[vk::binding(9, 0)]]
 StructuredBuffer<EmissiveTriangle> emissive_triangles;
+
+// Per-pixel reservoir for ReSTIR temporal reuse — must match C++ Reservoir struct.
+struct Reservoir {
+    float3 y_pos; // Selected light sample position.
+    float w_sum; // Sum of RIS weights.
+    float3 y_emissive; // Emissive radiance at the selected sample.
+    uint M; // Number of candidates merged.
+    float3 y_normal; // Light surface normal at the selected sample.
+    float W; // Final contribution weight.
+};
+
+[[vk::binding(10, 0)]]
+RWStructuredBuffer<Reservoir> reservoir_current; // Current frame — write.
+
+[[vk::binding(11, 0)]]
+StructuredBuffer<Reservoir> reservoir_previous; // Previous frame — read.
+
+// Maximum temporal M to prevent unbounded accumulation with stale data.
+static const uint MAX_TEMPORAL_M = 20;
 
 // ── Neon tube constants (per-fragment wireframe pattern, not per-object material) ──
 
@@ -260,14 +280,22 @@ float4 fragMain(MeshOutput input) : SV_Target
     }
     float NdotV = abs(dot(N, V)) + 1e-5;
 
-    // ── Emissive area light sampling (Monte Carlo, 1 sample per pixel) ──
+    // ── ReSTIR DI temporal reuse (emissive area light sampling) ──
+
+    // Helper: evaluate the unshadowed target function p_hat at shading point
+    // for a given light sample. Returns the luminance of the full contribution.
+    // Also outputs the full-colour unshadowed contribution for final shading.
 
     float3 direct_lighting = float3(0.0, 0.0, 0.0);
+    uint pixel_x = uint(input.position.x);
+    uint pixel_y = uint(input.position.y);
+    uint pixel_idx = pixel_y * camera.screen_width + pixel_x;
 
     if (camera.emissive_count > 0)
     {
-        // Generate pseudo-random numbers from pixel position + frame count.
-        uint pixel_seed = uint(input.position.x) * 1973u + uint(input.position.y) * 9277u + camera.frame_count * 26699u;
+        // ── Generate candidate sample (same as 37a) ──
+
+        uint pixel_seed = pixel_x * 1973u + pixel_y * 9277u + camera.frame_count * 26699u;
         uint hash0 = pcgHash(pixel_seed);
         uint hash1 = pcgHash(hash0);
         uint hash2 = pcgHash(hash1);
@@ -276,47 +304,112 @@ float4 fragMain(MeshOutput input) : SV_Target
         float r1 = hashToFloat(hash1);
         float r2 = hashToFloat(hash2);
 
-        // Select emissive triangle via power-weighted CDF.
         uint tri_idx = searchCDF(r0, camera.emissive_count);
         EmissiveTriangle etri = emissive_triangles[tri_idx];
 
-        // Uniform barycentric sampling on the selected triangle.
         float su = sqrt(r1);
-        float u = 1.0 - su;
-        float v = su * r2;
-        float w = 1.0 - u - v;
+        float bary_u = 1.0 - su;
+        float bary_v = su * r2;
+        float3 light_point = bary_u * etri.v0 + bary_v * etri.v1 + (1.0 - bary_u - bary_v) * etri.v2;
+        float3 light_normal = normalize(cross(etri.v1 - etri.v0, etri.v2 - etri.v0));
 
-        // Sample point on the emissive triangle.
-        float3 light_point = u * etri.v0 + v * etri.v1 + w * etri.v2;
-
-        // Direction and distance from shading point to light sample.
+        // Evaluate target function p_hat for the candidate at the current shading point.
         float3 to_light = light_point - input.world_position;
         float dist_sq = dot(to_light, to_light);
         float dist = sqrt(dist_sq);
         float3 L = to_light / dist;
+        float NdotL_cand = max(dot(N, L), 0.0);
+        float cos_light = abs(dot(light_normal, -L));
+        float geometry = NdotL_cand * cos_light / max(dist_sq, 0.0001);
+        float p_hat_cand = luminance(etri.emissive) * geometry;
 
-        float NdotL = max(dot(N, L), 0.0);
+        // Source PDF from the power-weighted CDF.
+        float pdf_source = max(luminance(etri.emissive) / camera.total_emissive_power, 1e-8);
 
-        if (NdotL > 0.0)
+        // RIS weight for the candidate.
+        float w_cand = (pdf_source > 0.0) ? (p_hat_cand / pdf_source) : 0.0;
+
+        // Initialise reservoir with the candidate.
+        Reservoir r;
+        r.y_pos = light_point;
+        r.y_emissive = etri.emissive;
+        r.y_normal = light_normal;
+        r.w_sum = w_cand;
+        r.M = 1;
+        r.W = 0.0;
+
+        // ── Temporal reuse: merge with previous frame's reservoir ──
+
+        // Reproject current world position to previous frame's screen space.
+        float4 prev_clip = input.prev_clip_pos;
+        float2 prev_ndc = prev_clip.xy / prev_clip.w;
+        float2 prev_uv = prev_ndc * 0.5 + 0.5;
+        int2 prev_pixel = int2(prev_uv * float2(camera.screen_width, camera.screen_height));
+
+        bool prev_valid = (prev_pixel.x >= 0) && (prev_pixel.x < int(camera.screen_width))
+            && (prev_pixel.y >= 0) && (prev_pixel.y < int(camera.screen_height))
+            && (prev_clip.w > 0.0);
+
+        if (prev_valid)
         {
-            // Light surface normal — double-sided for thin quads.
-            float3 light_normal = normalize(cross(etri.v1 - etri.v0, etri.v2 - etri.v0));
-            float cos_light = abs(dot(light_normal, -L));
+            uint prev_idx = uint(prev_pixel.y) * camera.screen_width + uint(prev_pixel.x);
+            Reservoir prev_r = reservoir_previous[prev_idx];
 
-            // Geometry term: cos_surface × cos_light / distance².
-            float geometry = NdotL * cos_light / max(dist_sq, 0.0001);
+            // Clamp M to prevent unbounded temporal accumulation.
+            prev_r.M = min(prev_r.M, MAX_TEMPORAL_M);
 
-            // Sampling PDF = luminance(Le) / total_power.
-            float lum = luminance(etri.emissive);
-            float pdf = max(lum / camera.total_emissive_power, 1e-8);
+            // Evaluate p_hat at the current shading point for the temporal sample.
+            float3 to_temporal = prev_r.y_pos - input.world_position;
+            float temp_dist_sq = dot(to_temporal, to_temporal);
+            float temp_dist = sqrt(temp_dist_sq);
+            float3 L_temp = to_temporal / temp_dist;
+            float NdotL_temp = max(dot(N, L_temp), 0.0);
+            float cos_light_temp = abs(dot(prev_r.y_normal, -L_temp));
+            float geometry_temp = NdotL_temp * cos_light_temp / max(temp_dist_sq, 0.0001);
+            float p_hat_temp = luminance(prev_r.y_emissive) * geometry_temp;
 
-            // Shadow ray from surface toward the sampled light point.
+            // RIS weight for the temporal reservoir's contribution.
+            float w_temporal = p_hat_temp * prev_r.W * float(prev_r.M);
+
+            // Merge: add temporal weight and probabilistically select.
+            r.w_sum += w_temporal;
+            r.M += prev_r.M;
+
+            uint hash3 = pcgHash(hash2 + 54321u);
+            float select_r = hashToFloat(hash3);
+            if ((r.w_sum > 0.0) && (select_r < (w_temporal / r.w_sum)))
+            {
+                r.y_pos = prev_r.y_pos;
+                r.y_emissive = prev_r.y_emissive;
+                r.y_normal = prev_r.y_normal;
+            }
+        }
+
+        // Compute final contribution weight W for the selected sample.
+        float3 to_selected = r.y_pos - input.world_position;
+        float sel_dist_sq = dot(to_selected, to_selected);
+        float sel_dist = sqrt(sel_dist_sq);
+        float3 L_sel = to_selected / sel_dist;
+        float NdotL_sel = max(dot(N, L_sel), 0.0);
+        float cos_light_sel = abs(dot(r.y_normal, -L_sel));
+        float geometry_sel = NdotL_sel * cos_light_sel / max(sel_dist_sq, 0.0001);
+        float p_hat_sel = luminance(r.y_emissive) * geometry_sel;
+
+        r.W = ((p_hat_sel > 0.0) && (r.M > 0)) ? (r.w_sum / (float(r.M) * p_hat_sel)) : 0.0;
+
+        // Store reservoir for next frame's temporal reuse.
+        reservoir_current[pixel_idx] = r;
+
+        // ── Final shading: shadow ray + BRDF for the selected sample ──
+
+        if ((NdotL_sel > 0.0) && (r.W > 0.0))
+        {
             float3 origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
-            float ray_tmax = max(dist - SELF_INTERSECTION_OFFSET, RAY_T_MIN + 0.001);
+            float ray_tmax = max(sel_dist - SELF_INTERSECTION_OFFSET, RAY_T_MIN + 0.001);
 
             RayDesc ray;
             ray.Origin = origin;
-            ray.Direction = L;
+            ray.Direction = L_sel;
             ray.TMin = RAY_T_MIN;
             ray.TMax = ray_tmax;
 
@@ -327,20 +420,21 @@ float4 fragMain(MeshOutput input) : SV_Target
             bool in_shadow = (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
             if (!in_shadow)
             {
-                // Cook-Torrance BRDF for the sampled light direction.
-                float3 H = normalize(V + L);
+                // Cook-Torrance BRDF for the selected light direction.
+                float3 H = normalize(V + L_sel);
                 float NdotH = clamp(dot(N, H), 0.0, 1.0);
                 float VdotH = clamp(dot(V, H), 0.0, 1.0);
 
                 float D_val = D_GGX(NdotH, roughness);
-                float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
+                float Vis = V_SmithGGXCorrelated(NdotV, NdotL_sel, roughness);
                 float3 F = F_Schlick(VdotH, F0_DIELECTRIC);
 
                 float3 spec = D_val * Vis * F;
                 float3 diff = (1.0 - F) * base_colour / PI;
 
-                // Monte Carlo estimator: BRDF × Le × geometry / pdf.
-                direct_lighting = (diff + spec) * etri.emissive * geometry / pdf;
+                // ReSTIR estimator: BRDF × Le × geometry × W.
+                float3 Lo_unshadowed = (diff + spec) * r.y_emissive * geometry_sel;
+                direct_lighting = Lo_unshadowed * r.W;
             }
         }
     }
@@ -488,6 +582,7 @@ void meshMain(
                 output.world_position = world_pos.xyz;
                 output.world_normal = mul((float3x3)model, normals[v]);
                 output.material_index = mat_idx;
+                output.prev_clip_pos = mul(camera.prev_view_projection, world_pos);
                 out_vertices[vert_base + v] = output;
             }
 

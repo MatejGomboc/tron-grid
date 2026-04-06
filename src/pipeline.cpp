@@ -153,18 +153,20 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     colour_blend.logicOpEnable = vk::False;
     colour_blend.setAttachments(colour_blend_attachment);
 
-    // Descriptor set layout — 10 bindings for the mesh shader pipeline.
-    // Binding 0: camera UBO (task + mesh + fragment stages)
-    // Binding 1: object transforms SSBO (task + mesh stages)
-    // Binding 2: object bounds SSBO (task stage only)
-    // Binding 3: meshlet descriptors SSBO (mesh stage only)
-    // Binding 4: vertex data SSBO (mesh stage only)
-    // Binding 5: meshlet vertex indices SSBO (mesh stage only)
-    // Binding 6: meshlet triangle indices SSBO (mesh stage only)
-    // Binding 7: TLAS (fragment stage — inline ray query for shadows)
-    // Binding 8: material SSBO (fragment stage — per-object PBR properties)
-    // Binding 9: emissive triangle SSBO (fragment stage — area light sampling)
-    std::array<vk::DescriptorSetLayoutBinding, 10> bindings{};
+    // Descriptor set layout — 12 bindings for the mesh shader pipeline.
+    // Binding 0:  camera UBO (task + mesh + fragment stages)
+    // Binding 1:  object transforms SSBO (task + mesh + fragment stages)
+    // Binding 2:  object bounds SSBO (task stage only)
+    // Binding 3:  meshlet descriptors SSBO (mesh stage only)
+    // Binding 4:  vertex data SSBO (mesh stage only)
+    // Binding 5:  meshlet vertex indices SSBO (mesh stage only)
+    // Binding 6:  meshlet triangle indices SSBO (mesh stage only)
+    // Binding 7:  TLAS (fragment stage — inline ray query for shadows)
+    // Binding 8:  material SSBO (fragment stage — per-object PBR properties)
+    // Binding 9:  emissive triangle SSBO (fragment stage — area light sampling)
+    // Binding 10: reservoir current — RW (fragment stage — ReSTIR temporal write)
+    // Binding 11: reservoir previous — RO (fragment stage — ReSTIR temporal read)
+    std::array<vk::DescriptorSetLayoutBinding, 12> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
     bindings[0].descriptorCount = 1;
@@ -205,6 +207,14 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     bindings[9].descriptorType = vk::DescriptorType::eStorageBuffer;
     bindings[9].descriptorCount = 1;
     bindings[9].stageFlags = vk::ShaderStageFlagBits::eFragment;
+    bindings[10].binding = 10;
+    bindings[10].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[10].descriptorCount = 1;
+    bindings[10].stageFlags = vk::ShaderStageFlagBits::eFragment;
+    bindings[11].binding = 11;
+    bindings[11].descriptorType = vk::DescriptorType::eStorageBuffer;
+    bindings[11].descriptorCount = 1;
+    bindings[11].stageFlags = vk::ShaderStageFlagBits::eFragment;
 
     vk::DescriptorSetLayoutCreateInfo layout_info{};
     layout_info.setBindings(bindings);
@@ -242,12 +252,12 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     m_pipeline = vk::raii::Pipeline{device.get(), nullptr, pipeline_info};
 
-    // Descriptor pool — UBO + 8 SSBOs + 1 TLAS per frame.
+    // Descriptor pool — UBO + 10 SSBOs + 1 TLAS per frame.
     std::array<vk::DescriptorPoolSize, 3> pool_sizes{};
     pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
     pool_sizes[0].descriptorCount = frames_in_flight;
     pool_sizes[1].type = vk::DescriptorType::eStorageBuffer;
-    pool_sizes[1].descriptorCount = frames_in_flight * 8;
+    pool_sizes[1].descriptorCount = frames_in_flight * 10;
     pool_sizes[2].type = vk::DescriptorType::eAccelerationStructureKHR;
     pool_sizes[2].descriptorCount = frames_in_flight;
 
@@ -381,4 +391,29 @@ void Pipeline::bindEmissiveSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceS
     write.setBufferInfo(buffer_info);
 
     m_device->get().updateDescriptorSets({write}, {});
+}
+
+void Pipeline::bindReservoirBuffers(uint32_t frame_index, VkBuffer write_buffer, VkDeviceSize write_size, VkBuffer read_buffer, VkDeviceSize read_size) const
+{
+    std::array<vk::DescriptorBufferInfo, 2> buffer_infos{};
+    buffer_infos[0].buffer = write_buffer;
+    buffer_infos[0].offset = 0;
+    buffer_infos[0].range = write_size;
+    buffer_infos[1].buffer = read_buffer;
+    buffer_infos[1].offset = 0;
+    buffer_infos[1].range = read_size;
+
+    std::array<vk::WriteDescriptorSet, 2> writes{};
+    writes[0].dstSet = *m_descriptor_sets[frame_index];
+    writes[0].dstBinding = 10;
+    writes[0].dstArrayElement = 0;
+    writes[0].descriptorType = vk::DescriptorType::eStorageBuffer;
+    writes[0].setBufferInfo(buffer_infos[0]);
+    writes[1].dstSet = *m_descriptor_sets[frame_index];
+    writes[1].dstBinding = 11;
+    writes[1].dstArrayElement = 0;
+    writes[1].descriptorType = vk::DescriptorType::eStorageBuffer;
+    writes[1].setBufferInfo(buffer_infos[1]);
+
+    m_device->get().updateDescriptorSets(writes, {});
 }

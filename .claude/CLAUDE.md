@@ -191,10 +191,13 @@ horizon gradient, animated drift). Per-material PBR via material SSBO
 (binding 8, data-driven). Cinematic post-process (chromatic aberration, cool
 colour grade, vignette, scan lines). Emissive area light sampling — real neon
 tube quad geometry (binding 9 emissive triangle SSBO) replaces the point light;
-Monte Carlo 1-spp with power-weighted CDF, PCG hash RNG, Cook-Torrance BRDF
-evaluation, shadow ray visibility. 4 BLASes (terrain, orb, cyan neon, orange
-neon). Motion vectors ready (`prev_view_projection` + `frame_count` in
-CameraUBO). RT single-bounce reflections with per-material hit lookup via
+power-weighted CDF, PCG hash RNG, Cook-Torrance BRDF evaluation, shadow ray
+visibility. ReSTIR DI temporal reuse (bindings 10/11 ping-pong reservoir
+SSBOs) accumulates up to 20 frames of samples per pixel via RIS-weighted
+reservoir merging with motion vector reprojection (`prev_clip_pos` in
+MeshOutput). 4 BLASes (terrain, orb, cyan neon, orange neon).
+`fragmentStoresAndAtomics` enabled for fragment shader reservoir writes. RT
+single-bounce reflections with per-material hit lookup via
 `CommittedInstanceID()`. Mesh shaders (task + mesh + fragment), per-object
 frustum culling, meshlet pipeline. Entity/component scene with SoA arrays.
 Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror. See

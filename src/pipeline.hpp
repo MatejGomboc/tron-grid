@@ -81,8 +81,8 @@ struct CameraUBO {
     uint32_t frame_count{0}; //!< Frame counter (for pseudo-random sampling in emissive lighting).
     uint32_t emissive_count{0}; //!< Number of emissive triangles in the emissive SSBO.
     float total_emissive_power{0.0f}; //!< Sum of all emissive triangle powers (for PDF normalisation).
-    float ubo_pad0{0.0f}; //!< Padding to 16-byte alignment.
-    float ubo_pad1{0.0f}; //!< Padding to 16-byte alignment.
+    uint32_t screen_width{0}; //!< Render target width in pixels (for reservoir indexing).
+    uint32_t screen_height{0}; //!< Render target height in pixels (for reservoir indexing).
 };
 
 //! Emissive triangle for area light sampling — matches the Slang EmissiveTriangle struct.
@@ -95,6 +95,16 @@ struct EmissiveTriangle {
     float emissive_pad0{0.0f}; //!< Padding.
     MathLib::Vec3 emissive{}; //!< Emissive radiance (colour × strength).
     float emissive_pad1{0.0f}; //!< Padding.
+};
+
+//! Per-pixel reservoir for ReSTIR temporal reuse — matches the Slang Reservoir struct.
+struct Reservoir {
+    MathLib::Vec3 y_pos{}; //!< Selected light sample position.
+    float w_sum{0.0f}; //!< Sum of RIS weights.
+    MathLib::Vec3 y_emissive{}; //!< Emissive radiance at the selected sample.
+    uint32_t M{0}; //!< Number of candidates merged into this reservoir.
+    MathLib::Vec3 y_normal{}; //!< Light surface normal at the selected sample.
+    float W{0.0f}; //!< Final contribution weight: w_sum / (M × p_hat(y)).
 };
 
 //! Push constants for the task shader — frustum planes + object count.
@@ -166,6 +176,9 @@ public:
     //! Binds the emissive triangle SSBO to descriptor binding 9 for the given frame index.
     void bindEmissiveSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const;
 
+    //! Binds reservoir ping-pong buffers to bindings 10 (write) and 11 (read) for the given frame index.
+    void bindReservoirBuffers(uint32_t frame_index, VkBuffer write_buffer, VkDeviceSize write_size, VkBuffer read_buffer, VkDeviceSize read_size) const;
+
     //! Updates the camera UBO for the given frame index via its mapped pointer.
     void updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const;
 
@@ -179,7 +192,7 @@ private:
     const Device* m_device{nullptr}; //!< Non-owning device reference.
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
 
-    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 10 bindings: UBO + 8 SSBOs + TLAS.
+    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 12 bindings: UBO + 10 SSBOs + TLAS.
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
     vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.
