@@ -209,12 +209,12 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 
 ### Acceptance Criteria
 
-- [ ] No point light abstraction — all lighting from emissive geometry
+- [x] No point light abstraction — all lighting from emissive geometry
 - [ ] ReSTIR DI for direct lighting from emissive surfaces
 - [ ] ReSTIR GI for multi-bounce indirect illumination
 - [ ] World-space irradiance cache
 - [ ] Russian roulette path termination
-- [ ] Motion vectors for temporal reuse
+- [x] Motion vectors for temporal reuse
 - [ ] Ray-traced ambient occlusion (RTAO)
 - [ ] Transparent materials with refraction (Snell's law, IOR)
 - [ ] Weighted Blended OIT or equivalent
@@ -643,6 +643,20 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-06 — Phase 8 Etape 37a: emissive geometry sampling + motion vectors
+
+Replaced the fake point light with physically correct direct lighting from
+emissive geometry (Etape 37a). Neon tube quad geometry generated along every
+terrain grid edge (14,336 cyan + 2,304 orange triangles) plus orb (528
+triangles) — 17,168 emissive triangles total. Power-weighted CDF for triangle
+selection, PCG hash RNG, uniform barycentric sampling, shadow ray with
+Cook-Torrance BRDF evaluation. 1 sample per pixel — noisy but correct.
+CameraUBO gains `prev_view_projection` (motion vectors) and `frame_count`
+(random seed). Point light removed entirely. 4 BLASes in TLAS (terrain, orb,
+cyan neon, orange neon). Emissive triangle SSBO at descriptor binding 9.
+Reflection code now uses `CommittedInstanceID()` for per-material hit lookup.
+Zero validation errors, zero warnings. 87 PRs merged.
 
 ### 2026-04-05 — Phase 7 Etapes 29-31: compute post-process + ACES tonemapping + bloom extraction
 
