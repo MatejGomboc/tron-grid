@@ -185,7 +185,9 @@ tonemapping with AP1 hue preservation, exact sRGB encoding, swapchain
 `B8G8R8A8_UNORM` with storage writes). Bloom with soft glow halos (Karis extraction, mip chain downsample, 3×3
 tent-filter upsample, HDR composite with tunable strength). 8× MSAA with
 full sample-rate shading, screen-space derivative wireframe antialiasing
-(fwidth-based smoothstep), automatic GPU capability fallback. RT hard
+(fwidth-based smoothstep), automatic GPU capability fallback. Procedural
+cyberpunk skybox (value noise data fog clouds, horizon gradient, animated
+drift). RT hard
 shadows and single-bounce reflections via inline ray query (`VK_KHR_ray_query`,
 BLAS/TLAS). Mesh shaders (task + mesh + fragment), per-object frustum culling,
 meshlet pipeline. Entity/component scene with SoA arrays. Code quality:
