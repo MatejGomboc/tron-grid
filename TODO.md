@@ -347,10 +347,10 @@ subtle digital noise complete the Tron Legacy look.
 - [x] Orange neon appears as proper orange (not yellow — hue preserved)
 - [x] Bloom extraction with brightness threshold
 - [x] Bloom downsample mip chain (Karis average for first level)
-- [ ] Bloom upsample chain with additive blending
-- [ ] Bloom composite with tunable strength
+- [x] Bloom upsample chain with additive blending
+- [x] Bloom composite with tunable strength
 - [x] Bloom texture recreated on swapchain resize
-- [ ] Neon tubes and light orb have visible soft glow halos
+- [x] Neon tubes and light orb have visible soft glow halos
 - [ ] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
 - [ ] AA resources recreated on swapchain resize
 - [ ] Procedural cyberpunk skybox (cyan-green data fog clouds)
@@ -540,6 +540,16 @@ per-step barriers. Bloom texture recreated on swapchain resize. Codebase-wide
 modernisation: all Vulkan struct count+pointer assignments replaced with
 vulkan-hpp setter methods, all compound conditionals parenthesised. 79 PRs
 merged.
+
+### 2026-04-06 — Phase 7 Etape 32: bloom upsample + composite
+
+Bloom upsample chain (Etape 32, PR #80) with 3×3 tent filter and additive
+blending from smallest mip back to mip 0. Post-process shader composites
+bloom with HDR image before ACES tonemapping via push constant bloom_strength
+(tuned to 0.4). Neon tubes and light orb now have visible soft glow halos —
+the Tron aesthetic is complete. Per-mip dual barriers (source + destination)
+for correct read-after-write synchronisation during additive upsample blend.
+80 PRs merged.
 
 ### 2026-04-05 — Phase 6 complete: PBR obsidian floor with neon tube reflections
 
