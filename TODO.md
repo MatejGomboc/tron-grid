@@ -102,7 +102,10 @@ many emissive surfaces with just 1-2 rays per pixel.
   frame's reservoir), spatial reuse (merge neighbouring pixels).
 - Shadow rays toward emissive geometry sample points.
 - BRDF-weighted radiance accumulation with visibility checks.
-- Motion vectors generated during the geometry pass for temporal reuse.
+- **Motion vectors** generated during the geometry pass (per-pixel
+  screen-space velocity). Essential for temporal reuse in ReSTIR,
+  temporal denoising (Etape 41), and volumetric fog reprojection
+  (Etape 40). Written to a dedicated R16G16 render target.
 
 **After this step:** all lighting comes from actual emissive surfaces
 — no fake point light. The scene has physically correct direct lighting.
@@ -223,11 +226,14 @@ libraries (per VISION.md design principles).
   device, swapchain, and render loop. Replaces the 2000+ line renderThread
   function with a structured pipeline.
 - **Rendergraph** — DAG-based render pass scheduling with automatic
-  barrier insertion, resource lifetime tracking, and pass reordering.
-  Replaces hand-coded barriers scattered across recordFrame().
+  barrier insertion, resource lifetime tracking, pass reordering, and
+  transient resource aliasing. Replaces hand-coded barriers scattered
+  across recordFrame(). Shader hot-reloading for development iteration.
 - **Resource manager** — centralises GPU resource creation, staging
-  uploads, and lifetime management. Replaces ad-hoc buffer/image creation
-  scattered across renderThread.
+  uploads, and lifetime management via resource handles (indirection —
+  the manager can move resources without invalidating references).
+  Async loading with worker threads. Replaces ad-hoc buffer/image
+  creation scattered across renderThread.
 - **Async compute** — overlap post-processing compute with the next
   frame's mesh shader pass on separate compute queues.
 - **Scene graph** — hierarchical entity/component system with transform
@@ -246,8 +252,9 @@ libraries (per VISION.md design principles).
 ### Acceptance Criteria
 
 - [ ] Engine class with clear module boundaries
-- [ ] Rendergraph with automatic barrier management
-- [ ] Resource manager for GPU buffers and images
+- [ ] Rendergraph with automatic barrier management + resource aliasing
+- [ ] Resource manager with handle indirection + async loading
+- [ ] Shader hot-reloading for development iteration
 - [ ] Async compute overlap
 - [ ] Scene graph with spatial partitioning (shared BVH)
 - [ ] Rigid body physics reusing rendering acceleration structures
@@ -282,7 +289,9 @@ builds itself; only creature bodies are authored externally.
 - **Procedural world generation** — algorithmic generation of Grid
   architecture: data towers, energy barriers, platforms, data streams,
   geometric structures. All built from code, not from scene files.
-  Parameterised by seed for deterministic generation.
+  Parameterised by seed for deterministic generation. GPU mesh shaders
+  for on-the-fly geometry (AMD GPU Work Graphs technique — HPG 2024 —
+  if Vulkan extension matures, otherwise CPU-side generation).
 - **Texture streaming** — load textures on demand via VMA staging.
   Mip-chain generation on the GPU. Memory budget awareness.
 
@@ -414,8 +423,10 @@ brain has no HUD, just like a biological creature has no HUD.
 
 ### Planned Features
 
-- **SDF text rendering** — in-house signed distance field font atlas
-  generator and GPU text renderer. Crisp text at any scale.
+- **MSDF text rendering** — in-house multi-channel signed distance field
+  font atlas generator (sharper corners than plain SDF) and GPU text
+  renderer. Crisp text at any resolution, single texture lookup per
+  fragment.
 - **Energy bar** — the player's energy level, styled as a neon-glow
   horizontal bar with scan line artifacts.
 - **Compass / heading indicator** — current facing direction, sector
@@ -428,7 +439,7 @@ brain has no HUD, just like a biological creature has no HUD.
 
 ### Acceptance Criteria
 
-- [ ] SDF font atlas generation + GPU text rendering
+- [ ] MSDF font atlas generation + GPU text rendering
 - [ ] Energy bar with neon-glow styling
 - [ ] Compass / heading indicator
 - [ ] Directional damage flash
