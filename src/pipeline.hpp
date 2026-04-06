@@ -49,8 +49,20 @@ struct ObjectData {
     MathLib::Mat4 model{}; //!< Model-to-world transform.
     uint32_t meshlet_offset{0}; //!< First meshlet index for this object's mesh.
     uint32_t meshlet_count{0}; //!< Number of meshlets for this object's mesh.
-    uint32_t material_type{0}; //!< Material type: 0 = terrain (PBR obsidian + neon), 1 = emissive orb.
+    uint32_t material_index{0}; //!< Index into the material SSBO.
     uint32_t pad1{0}; //!< Padding to 16-byte alignment.
+};
+
+//! PBR material properties stored in the material SSBO — matches the Slang MaterialData struct.
+struct Material {
+    MathLib::Vec3 base_colour{}; //!< Albedo / diffuse colour.
+    float roughness{0.5f}; //!< Perceptual roughness [0, 1].
+    MathLib::Vec3 emissive{}; //!< Self-illumination colour.
+    float emissive_strength{0.0f}; //!< HDR emissive multiplier.
+    float metallic{0.0f}; //!< Metalness [0, 1].
+    float ior{1.5f}; //!< Index of refraction (for Fresnel F0 computation).
+    float opacity{1.0f}; //!< 1.0 = opaque, <1.0 = translucent (Phase 8).
+    float pad{0.0f}; //!< Padding to 16-byte alignment (48 bytes total).
 };
 
 //! Per-object bounding sphere — matches the Slang ObjectBounds struct.
@@ -132,6 +144,9 @@ public:
 
     //! Binds the TLAS to descriptor binding 7 for the given frame index.
     void bindTLAS(uint32_t frame_index, vk::AccelerationStructureKHR tlas) const;
+
+    //! Binds the material SSBO to descriptor binding 8 for the given frame index.
+    void bindMaterialSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const;
 
     //! Updates the camera UBO for the given frame index via its mapped pointer.
     void updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const;

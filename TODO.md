@@ -354,7 +354,7 @@ subtle digital noise complete the Tron Legacy look.
 - [x] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
 - [x] AA resources recreated on swapchain resize
 - [x] Procedural cyberpunk skybox (cyan-green data fog clouds)
-- [ ] Per-material PBR via material SSBO
+- [x] Per-material PBR via material SSBO
 - [ ] Cinematic post-process (colour grade, chromatic aberration, vignette)
 - [x] No new Vulkan extensions needed (compute + MSAA are core 1.0)
 - [x] Proper synchronisation barriers for all compute passes
@@ -550,6 +550,16 @@ bloom with HDR image before ACES tonemapping via push constant bloom_strength
 the Tron aesthetic is complete. Per-mip dual barriers (source + destination)
 for correct read-after-write synchronisation during additive upsample blend.
 80 PRs merged.
+
+### 2026-04-06 — Phase 7 Etape 35: per-material PBR via material SSBO
+
+Per-material PBR system (Etape 35, PR #83) replaces hardcoded material
+constants with a data-driven material SSBO at descriptor binding 8. Material
+struct: base_colour, roughness, emissive, emissive_strength, metallic, ior,
+opacity (48 bytes). ObjectData::material_type renamed to material_index.
+Fragment shader loads material from SSBO array. Neon tube emissive colours
+remain as shader constants (per-fragment wireframe pattern). Two materials
+defined: obsidian terrain + emissive orb. 83 PRs merged.
 
 ### 2026-04-06 — Phase 7 Etape 34: procedural cyberpunk skybox
 
