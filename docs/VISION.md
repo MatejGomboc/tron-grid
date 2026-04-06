@@ -264,7 +264,7 @@ The canonical task checklist lives in `TODO.md`.
 | 7 | Visual polish | Bloom, tonemapping, AA, skybox, per-material PBR |
 | 8 | Full RT + advanced rendering | ReSTIR emissive lighting, multi-bounce GI, transparency, volumetric fog, adaptive LOD, temporal denoising |
 | 9 | Engine architecture + subsystems | Engine class, rendergraph, physics, spatial audio, sensory — all sharing Vulkan machinery |
-| 10 | AI avatar integration | Bot DLL/SO plugins, avatar entities, light trails, derez particles |
+| 10 | AI avatar integration | Sensory nerve bundle (vision, hearing, smell, touch, pain), motor outputs, DLL/SO brain plugins, staged rollout |
 | 11 | Multiplayer | Authoritative server, MMO networking |
 
 Phases 3–4 and 5–6 can be developed in parallel after Phase 2.

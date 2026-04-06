@@ -259,35 +259,107 @@ libraries (per VISION.md design principles).
 
 ## Phase 10 — AI Avatar Integration
 
-**Goal:** Load AI brains as DLL/SO plugins. Avatars navigate the world
-using the physics engine, perceive through the rendering + audio +
-sensory subsystems, and interact with the environment.
-See `docs/VISION.md` § AI Embodiment for the full specification.
+**Goal:** Load AI brains as DLL/SO plugins. The engine simulates the
+creature's body; the brain DLL is the nervous system. The shared memory
+interface carries raw sensory nerve signals in and muscle commands out —
+no game state, no HUD data, no entity IDs. If a biological creature
+couldn't perceive it through its nerves, the brain doesn't receive it.
 
-### Planned Features
+See `docs/VISION.md` § AI Embodiment for the architecture.
+Interface specification will be documented in `docs/AI_INTERFACE.md`.
 
-- **Avatar entity** — new entity type with position, orientation,
-  velocity, identity colour. Rendered as organic curves with soft glow
-  (visually distinct from the geometric world, per VISION.md).
-- **AI brain plugin interface** — C-linkage DLL/SO API for perception
-  (rendered image + depth + audio + sensory), action (movement commands),
-  and lifecycle. Documented in `AI_INTERFACE.md`.
+### Creature Body + Rendering
+
+- **Avatar entity** — new entity type with skeletal body, joint
+  constraints, mass distribution, identity colour. Rendered as organic
+  curves with soft glow (visually distinct from the geometric world).
+- **Controllable glow** — the brain controls glow intensity and colour
+  hue as its primary emotional display (warm gold = content, cool blue
+  = scared, red flicker = in pain).
 - **Light trails** — moving entities leave persistent glowing streaks
   (ring buffer SSBO, ribbon geometry, emissive HDR + bloom, age fade).
 - **Derez particle system** — entities dissolve into geometric particles
   (GPU compute, mesh shader point sprites, randomised velocity + fade).
-- **Offscreen rendering** — render-to-texture for bot perception,
-  shared memory IPC for brain communication.
+
+### Sensory Interface (Engine → Brain)
+
+Raw nerve signals per tick — the brain learns to interpret them:
+
+- **Vision** — offscreen-rendered RGB + depth framebuffer from the
+  creature's viewpoint. No labels, no bounding boxes. Resolution
+  requested by the brain at init (starts small, grows as visual
+  processing matures).
+- **Hearing** — spatial audio arrivals with bearing, distance, loudness,
+  and frequency bands (low/mid/high). NOT sound categories — the brain
+  learns "rhythmic low-frequency = footsteps" from experience.
+- **Smell (olfaction)** — multi-dimensional scent fingerprint vectors
+  per source. Same entity always produces the same fingerprint. The
+  brain must LEARN which fingerprints belong to which entities — no IDs.
+  Intensity + rate of change + lateral gradient for steering.
+- **Touch (mechanosensation)** — pressure per body zone. Ground contact
+  flags. Multiple zones around the body, each reporting independently.
+- **Proprioception** — joint angles, angular velocities, body curvature,
+  speed, heading, ground contact. The creature's internal body sense.
+- **Temperature** — core temperature + rate of change. Energy sources
+  radiate warmth; void areas are cold.
+- **Pain (nociception)** — localised pain events with zone, intensity,
+  and type (sharp/blunt/burn/sting). Overall damage level.
+- **Vibration** — ground vibration intensity, frequency, bearing.
+  Footsteps, machinery, the Grid's hum.
+- **Feeding signal** — energy received this tick + food contact flag.
+  The brain tracks its own energy level internally.
+
+### Motor Interface (Brain → Engine)
+
+Muscle commands per tick — the engine applies physics:
+
+- **Locomotion** — joint angle targets + muscle effort per joint. The
+  engine applies torques constrained by mass, joint limits, friction.
+  The brain discovers walking by experimenting with joint sequences.
+  Simplified at early stages: forward + angular velocity only.
+- **Head/eye control** — yaw, pitch, focus distance (independent of
+  body movement).
+- **Vocalisation** — pitch, volume, tonality parameters. The engine
+  synthesises animal-like sounds that propagate spatially in the world.
+  Hybrid approach: brain selects emotional intent, engine picks from
+  organic sound library and modulates.
+- **Mouth** — open amount + bite force for active feeding.
+- **Glow** — intensity and colour hue for emotional expression.
+
+### Brain Plugin Interface
+
+- **C-linkage DLL/SO API**: `tg_brain_init`, `tg_brain_spawn`,
+  `tg_brain_tick`, `tg_brain_shutdown`.
+- **Shared memory nerve bundle** — sensory buffer (engine writes, brain
+  reads) + motor buffer (brain writes, engine reads).
+- **Staged rollout** — Stage 0 (blind worm: smell + touch + pain +
+  temperature + simple locomotion), Stage 1 (insect: + vibration +
+  directional light), Stage 2 (hamster: + vision + hearing + limbs +
+  vocalisation), Stage 3 (full creature: + glow control + expression).
+- **Phoenix model** — death is traumatic and remembered. Pre-death
+  warning tick, then shutdown. Brain persists memories to disk.
+  Respawn via init + spawn.
+- **Persistence directory** — writable path for brain data (memories,
+  learned associations).
 
 ### Acceptance Criteria
 
-- [ ] Avatar entity rendered in the world (organic curves, soft glow)
-- [ ] DLL/SO brain plugin loads and receives perception frames
+- [ ] Avatar entity with skeletal body and physics
+- [ ] Offscreen rendering for bot vision (RGB + depth)
+- [ ] Spatial audio routed to bot hearing interface
+- [ ] Scent fingerprint system (stable per-entity vectors)
+- [ ] Touch, proprioception, temperature, pain, vibration sensors
+- [ ] Feeding mechanism (proximity-based → action-based)
+- [ ] Locomotion via joint targets + physics (and simplified mode)
+- [ ] Head/eye control independent of body
+- [ ] Vocalisation synthesis (parametric or hybrid)
+- [ ] Controllable glow (intensity + colour)
+- [ ] C-linkage DLL/SO brain plugin loads and ticks
+- [ ] Shared memory nerve bundle operational
 - [ ] Light trails for moving entities
 - [ ] Derez particle system
-- [ ] Offscreen rendering for bot perception
-- [ ] Shared memory bot interface operational
-- [ ] **Phase 11 complete — AI avatar integration**
+- [ ] Stage 0 (blind worm) fully functional end-to-end
+- [ ] **Phase 10 complete — AI avatar integration**
 
 ---
 
