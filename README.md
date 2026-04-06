@@ -17,7 +17,8 @@ sensory) are written in-house with no third-party libraries.
 PBR obsidian floor with dual-colour neon tube edges (cyan + orange accent),
 Cook-Torrance BRDF, HDR framebuffer with compute post-process pass (ACES
 fitted RRT+ODT tonemapping with AP1 hue preservation, exact sRGB encoding),
-bloom extraction with Karis average and mip chain downsample, RT hard shadows
+bloom with soft glow halos (extraction, mip chain downsample, tent-filter
+upsample, HDR composite), RT hard shadows
 and single-bounce reflections via inline ray query (`VK_KHR_ray_query`). Mesh
 shader rendering (task + mesh + fragment), procedural Tron terrain, per-object
 frustum culling, meshlet-based geometry, entity/component scene. Code quality:
