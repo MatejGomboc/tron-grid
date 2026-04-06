@@ -192,10 +192,10 @@ horizon gradient, animated drift). Per-material PBR via material SSBO
 colour grade, vignette, scan lines). Emissive area light sampling — real neon
 tube quad geometry (binding 9 emissive triangle SSBO) replaces the point light;
 power-weighted CDF, PCG hash RNG, Cook-Torrance BRDF evaluation, shadow ray
-visibility. ReSTIR DI temporal reuse (bindings 10/11 ping-pong reservoir
-SSBOs) accumulates up to 20 frames of samples per pixel via RIS-weighted
-reservoir merging with motion vector reprojection (`prev_clip_pos` in
-MeshOutput). 4 BLASes (terrain, orb, cyan neon, orange neon).
+visibility. ReSTIR DI temporal + spatial reuse (bindings 10/11 ping-pong reservoir
+SSBOs) — temporal accumulates up to 20 frames via motion vector
+reprojection (`prev_clip_pos` in MeshOutput), spatial merges 5 random
+neighbours within 20-pixel radius for fast convergence. 4 BLASes (terrain, orb, cyan neon, orange neon).
 `fragmentStoresAndAtomics` enabled for fragment shader reservoir writes. RT
 single-bounce reflections with per-material hit lookup via
 `CommittedInstanceID()`. Mesh shaders (task + mesh + fragment), per-object
