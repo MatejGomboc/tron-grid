@@ -94,7 +94,7 @@ constexpr uint32_t BLOOM_MAX_MIPS{6};
 constexpr float BLOOM_THRESHOLD{1.0f};
 
 //! Bloom composite strength — scales the additive bloom contribution before tonemapping.
-constexpr float BLOOM_STRENGTH{0.19f};
+constexpr float BLOOM_STRENGTH{0.095f};
 
 //! Fence poll timeout — short enough for responsive shutdown, long enough to avoid busy-waiting.
 constexpr uint64_t FENCE_TIMEOUT_NS{100'000'000};
@@ -1523,9 +1523,9 @@ int main()
             sphere_positions.push_back(p0);
             sphere_positions.push_back(p1);
             sphere_positions.push_back(p2);
-            sphere_vertices.push_back({{p0.x, p0.y, p0.z}, {n0.x, n0.y, n0.z}, {0.0f, 0.0f}});
-            sphere_vertices.push_back({{p1.x, p1.y, p1.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}});
-            sphere_vertices.push_back({{p2.x, p2.y, p2.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}});
+            sphere_vertices.push_back({{p0.x, p0.y, p0.z}, {n0.x, n0.y, n0.z}, {0.0f, 0.0f}, {n0.x, n0.y, n0.z}, 0.0f});
+            sphere_vertices.push_back({{p1.x, p1.y, p1.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}, {n1.x, n1.y, n1.z}, 0.0f});
+            sphere_vertices.push_back({{p2.x, p2.y, p2.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}, {n2.x, n2.y, n2.z}, 0.0f});
             sphere_indices.push_back(sphere_vi++);
             sphere_indices.push_back(sphere_vi++);
             sphere_indices.push_back(sphere_vi++);
@@ -2350,7 +2350,7 @@ int main()
             {
                 // Material 0: obsidian terrain.
                 {0.005f, 0.005f, 0.01f}, // base_colour — deep black with cool tint.
-                0.06f, // roughness — polished obsidian.
+                0.15f, // roughness — polished obsidian (slightly glossy to soften terrace reflections).
                 {}, // emissive — none.
                 0.0f, // emissive_strength.
                 0.0f, // metallic.
@@ -2708,13 +2708,36 @@ int main()
         constexpr uint32_t RESERVOIR_MAX_HEIGHT{2160};
         VkDeviceSize reservoir_buffer_size{static_cast<VkDeviceSize>(RESERVOIR_MAX_WIDTH) * RESERVOIR_MAX_HEIGHT * sizeof(Reservoir)};
 
-        AllocatedBuffer reservoir_a{allocator.createBuffer(reservoir_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer), 0,
-            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+        AllocatedBuffer reservoir_a{allocator.createBuffer(reservoir_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        AllocatedBuffer reservoir_b{allocator.createBuffer(reservoir_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer), 0,
-            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+        AllocatedBuffer reservoir_b{allocator.createBuffer(reservoir_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
 
-        logger.logInfo("Reservoir buffers allocated: 2 × " + std::to_string(reservoir_buffer_size) + " bytes (" + std::to_string(RESERVOIR_MAX_WIDTH) + "×"
+        // Zero-initialise both reservoir buffers to prevent garbage data on the first frame.
+        {
+            vk::CommandBufferAllocateInfo cmd_alloc{};
+            cmd_alloc.commandPool = *command_pool;
+            cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
+            cmd_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers cmds(device.get(), cmd_alloc);
+
+            const vk::raii::CommandBuffer& cmd = cmds[0];
+            vk::CommandBufferBeginInfo begin_info{};
+            begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            cmd.begin(begin_info);
+            cmd.fillBuffer(reservoir_a.buffer(), 0, reservoir_buffer_size, 0);
+            cmd.fillBuffer(reservoir_b.buffer(), 0, reservoir_buffer_size, 0);
+            cmd.end();
+
+            vk::CommandBuffer raw_cmd{*cmd};
+            vk::SubmitInfo submit{};
+            submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Reservoir buffers allocated and zeroed: 2 × " + std::to_string(reservoir_buffer_size) + " bytes (" + std::to_string(RESERVOIR_MAX_WIDTH) + "×"
             + std::to_string(RESERVOIR_MAX_HEIGHT) + " pixels).");
 
         // Bind all descriptor sets — SSBOs + TLAS are static, UBOs are per-frame.

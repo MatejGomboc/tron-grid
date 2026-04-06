@@ -57,11 +57,13 @@ struct MeshletDesc {
     uint triangle_count;
 };
 
-// Layout must match C++ Vertex struct (tightly packed, no float3 padding).
+// Layout must match C++ Vertex struct (48 bytes, 16-byte aligned).
 struct Vertex {
     float pos_x, pos_y, pos_z;
     float norm_x, norm_y, norm_z;
     float uv_x, uv_y;
+    float smooth_nx, smooth_ny, smooth_nz;
+    float vertex_pad;
 };
 
 // Task payload — received from the task shader.
@@ -78,6 +80,7 @@ struct MeshOutput {
     nointerpolation float3 world_normal : TEXCOORD2; // World-space face normal (flat shading).
     nointerpolation uint material_index : TEXCOORD3; // Index into the material SSBO.
     float4 prev_clip_pos : TEXCOORD4; // Previous frame's clip-space position (for motion vectors).
+    float3 smooth_normal : TEXCOORD5; // Per-vertex smooth normal (interpolated, for reflections).
 };
 
 [[vk::binding(0, 0)]]
@@ -127,6 +130,8 @@ struct Reservoir {
     uint M; // Number of candidates merged.
     float3 y_normal; // Light surface normal at the selected sample.
     float W; // Final contribution weight.
+    float3 indirect; // Accumulated indirect radiance (single-bounce GI).
+    float indirect_pad;
 };
 
 [[vk::binding(10, 0)]]
@@ -231,6 +236,20 @@ float luminance(float3 c)
     return dot(c, float3(0.2126, 0.7152, 0.0722));
 }
 
+// Builds an orthonormal basis from a normal (Frisvad's method for robust tangent frame).
+void buildOrthonormalBasis(float3 n, out float3 t, out float3 b)
+{
+    if (n.z < -0.9999) {
+        t = float3(0.0, -1.0, 0.0);
+        b = float3(-1.0, 0.0, 0.0);
+        return;
+    }
+    float a = 1.0 / (1.0 + n.z);
+    float d = -n.x * n.y * a;
+    t = float3(1.0 - n.x * n.x * a, d, -n.x);
+    b = float3(d, 1.0 - n.y * n.y * a, -n.y);
+}
+
 // Binary search the CDF to select an emissive triangle index.
 uint searchCDF(float r, uint count)
 {
@@ -256,7 +275,22 @@ float4 fragMain(MeshOutput input) : SV_Target
     MaterialData mat = materials[input.material_index];
 
     // Pure emissive objects (orb, neon tubes) — no wireframe or PBR, just emit light.
+    // Zero the reservoir slot so spatial reuse neighbours don't read stale data.
     if (mat.emissive_strength > 0.0) {
+        uint ex = uint(input.position.x);
+        uint ey = uint(input.position.y);
+        if ((ex < camera.screen_width) && (ey < camera.screen_height)) {
+            Reservoir empty;
+            empty.y_pos = float3(0.0, 0.0, 0.0);
+            empty.w_sum = 0.0;
+            empty.y_emissive = float3(0.0, 0.0, 0.0);
+            empty.M = 0;
+            empty.y_normal = float3(0.0, 0.0, 0.0);
+            empty.W = 0.0;
+            empty.indirect = float3(0.0, 0.0, 0.0);
+            empty.indirect_pad = 0.0;
+            reservoir_current[ey * camera.screen_width + ex] = empty;
+        }
         return float4(mat.emissive * mat.emissive_strength, 1.0);
     }
 
@@ -276,10 +310,14 @@ float4 fragMain(MeshOutput input) : SV_Target
     float3 emissive = lerp(tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), wire);
 
     // Vectors.
+    float3 N_geo = normalize(input.world_normal); // Flat geometric normal (per-face).
+    float3 N_smooth = normalize(input.smooth_normal); // Smooth heightmap-gradient normal (for reflections).
+    float3 V = normalize(camera.camera_pos - input.world_position);
+
     // Flip normal to face the camera — two-sided lighting prevents steep terrain
     // slopes from appearing invisible when their face normal points away from the viewer.
-    float3 N = normalize(input.world_normal);
-    float3 V = normalize(camera.camera_pos - input.world_position);
+    // The unflipped geometric normal (N_geo) is preserved for correct reflection directions.
+    float3 N = N_geo;
     if (dot(N, V) < 0.0) {
         N = -N;
     }
@@ -287,11 +325,8 @@ float4 fragMain(MeshOutput input) : SV_Target
 
     // ── ReSTIR DI temporal reuse (emissive area light sampling) ──
 
-    // Helper: evaluate the unshadowed target function p_hat at shading point
-    // for a given light sample. Returns the luminance of the full contribution.
-    // Also outputs the full-colour unshadowed contribution for final shading.
-
     float3 direct_lighting = float3(0.0, 0.0, 0.0);
+    float3 indirect_gi = base_colour * AMBIENT; // Fallback flat ambient if no emissive triangles.
     uint pixel_x = uint(input.position.x);
     uint pixel_y = uint(input.position.y);
     uint pixel_idx = pixel_y * camera.screen_width + pixel_x;
@@ -342,13 +377,17 @@ float4 fragMain(MeshOutput input) : SV_Target
         r.w_sum = w_cand;
         r.M = 1;
         r.W = 0.0;
+        r.indirect = float3(0.0, 0.0, 0.0);
+        r.indirect_pad = 0.0;
 
         // ── Temporal reuse: merge with previous frame's reservoir ──
 
         // Reproject current world position to previous frame's screen space.
+        // prev_clip_pos uses the raw projection matrix (math convention: Y+ = up),
+        // but screen pixels use Vulkan convention (Y=0 at top). Negate NDC Y to match.
         float4 prev_clip = input.prev_clip_pos;
         float2 prev_ndc = prev_clip.xy / prev_clip.w;
-        float2 prev_uv = prev_ndc * 0.5 + 0.5;
+        float2 prev_uv = prev_ndc * float2(0.5, -0.5) + 0.5;
         int2 prev_pixel = int2(prev_uv * float2(camera.screen_width, camera.screen_height));
 
         bool prev_valid = (prev_pixel.x >= 0) && (prev_pixel.x < int(camera.screen_width))
@@ -388,7 +427,14 @@ float4 fragMain(MeshOutput input) : SV_Target
                 r.y_emissive = prev_r.y_emissive;
                 r.y_normal = prev_r.y_normal;
             }
+
+            // Carry forward the previous frame's accumulated indirect GI.
+            r.indirect = prev_r.indirect;
         }
+
+        // Save M before spatial merge — used for indirect GI EMA alpha.
+        // Spatial M inflates the count but doesn't contribute new indirect samples.
+        uint temporal_M = r.M;
 
         // ── Spatial reuse: merge with neighbouring pixels' reservoirs ──
 
@@ -459,8 +505,131 @@ float4 fragMain(MeshOutput input) : SV_Target
 
         r.W = ((p_hat_sel > 0.0) && (r.M > 0)) ? (r.w_sum / (float(r.M) * p_hat_sel)) : 0.0;
 
-        // Store reservoir for next frame's temporal reuse.
-        reservoir_current[pixel_idx] = r;
+        // ── Single-bounce indirect GI (cosine-weighted hemisphere sampling) ──
+
+        // Russian roulette — terminate early for dark surfaces (most obsidian pixels).
+        float rr_prob = clamp(luminance(base_colour) * 10.0, 0.0, 0.95);
+        uint hash_rr = pcgHash(pixel_seed + 77777u);
+        float3 new_indirect = float3(0.0, 0.0, 0.0);
+
+        if (hashToFloat(hash_rr) < rr_prob)
+        {
+            // Cosine-weighted hemisphere direction from the shading normal.
+            uint hash_gi0 = pcgHash(hash_rr + 11111u);
+            uint hash_gi1 = pcgHash(hash_gi0);
+            float gi_r1 = hashToFloat(hash_gi0);
+            float gi_r2 = hashToFloat(hash_gi1);
+
+            float cos_theta = sqrt(gi_r2);
+            float sin_theta = sqrt(1.0 - gi_r2);
+            float phi = 2.0 * PI * gi_r1;
+
+            float3 tangent;
+            float3 bitangent;
+            buildOrthonormalBasis(N, tangent, bitangent);
+            float3 gi_dir = tangent * (sin_theta * cos(phi)) + N * cos_theta + bitangent * (sin_theta * sin(phi));
+
+            // Trace indirect ray.
+            float3 gi_origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
+
+            RayDesc gi_ray;
+            gi_ray.Origin = gi_origin;
+            gi_ray.Direction = gi_dir;
+            gi_ray.TMin = RAY_T_MIN;
+            gi_ray.TMax = 200.0;
+
+            RayQuery<RAY_FLAG_NONE> gi_query;
+            gi_query.TraceRayInline(scene_tlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, gi_ray);
+            gi_query.Proceed();
+
+            if (gi_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+            {
+                // Evaluate incoming radiance at the bounce point.
+                uint gi_hit_instance = gi_query.CommittedInstanceID();
+                uint gi_hit_mat_idx = objects[gi_hit_instance].material_index;
+                MaterialData gi_hit_mat = materials[gi_hit_mat_idx];
+
+                float3 incoming = float3(0.0, 0.0, 0.0);
+                if (gi_hit_mat.emissive_strength > 0.0) {
+                    // Hit emissive geometry directly — use its radiance.
+                    incoming = gi_hit_mat.emissive * gi_hit_mat.emissive_strength;
+                } else {
+                    // Hit non-emissive surface (terrain) — evaluate direct illumination.
+                    // Read the hit surface normal from the vertex SSBO. Non-emissive hits
+                    // are always terrain (entity 0), whose sequential index buffer means
+                    // CommittedPrimitiveIndex() * 3 maps directly to the vertex SSBO.
+                    float3 gi_hit_pos = gi_origin + gi_dir * gi_query.CommittedRayT();
+                    uint gi_prim = gi_query.CommittedPrimitiveIndex();
+                    Vertex gi_hit_vtx = vertices[gi_prim * 3];
+                    float3 gi_hit_normal = normalize(float3(gi_hit_vtx.norm_x, gi_hit_vtx.norm_y, gi_hit_vtx.norm_z));
+
+                    // Flip hit normal to face the incoming GI ray (two-sided).
+                    if (dot(gi_hit_normal, -gi_dir) < 0.0) {
+                        gi_hit_normal = -gi_hit_normal;
+                    }
+
+                    uint hash_gi2 = pcgHash(hash_gi1 + 33333u);
+                    uint hash_gi3 = pcgHash(hash_gi2);
+                    uint hash_gi4 = pcgHash(hash_gi3);
+
+                    uint gi_tri_idx = searchCDF(hashToFloat(hash_gi2), camera.emissive_count);
+                    EmissiveTriangle gi_etri = emissive_triangles[gi_tri_idx];
+
+                    float gi_su = sqrt(hashToFloat(hash_gi3));
+                    float gi_bu = 1.0 - gi_su;
+                    float gi_bv = gi_su * hashToFloat(hash_gi4);
+                    float3 gi_light_pt = gi_bu * gi_etri.v0 + gi_bv * gi_etri.v1 + (1.0 - gi_bu - gi_bv) * gi_etri.v2;
+
+                    float3 gi_to_light = gi_light_pt - gi_hit_pos;
+                    float gi_light_dist_sq = dot(gi_to_light, gi_to_light);
+                    float gi_light_dist = sqrt(gi_light_dist_sq);
+                    float3 gi_L = gi_to_light / gi_light_dist;
+
+                    // Full geometry term: NdotL at hit surface × cos_light at emissive surface / distance².
+                    float gi_NdotL_hit = max(dot(gi_hit_normal, gi_L), 0.0);
+                    float3 gi_light_n = normalize(cross(gi_etri.v1 - gi_etri.v0, gi_etri.v2 - gi_etri.v0));
+                    float gi_cos_light = abs(dot(gi_light_n, -gi_L));
+                    float gi_geometry = gi_NdotL_hit * gi_cos_light / max(gi_light_dist_sq, 0.0001);
+                    float gi_pdf = max(luminance(gi_etri.emissive) / camera.total_emissive_power, 1e-8);
+
+                    // Shadow ray from bounce hit point to the sampled light.
+                    if (gi_NdotL_hit > 0.0) {
+                        float3 gi_shadow_origin = gi_hit_pos + gi_hit_normal * SELF_INTERSECTION_OFFSET;
+                        float gi_shadow_tmax = max(gi_light_dist - SELF_INTERSECTION_OFFSET, RAY_T_MIN + 0.001);
+
+                        RayDesc gi_shadow_ray;
+                        gi_shadow_ray.Origin = gi_shadow_origin;
+                        gi_shadow_ray.Direction = gi_L;
+                        gi_shadow_ray.TMin = RAY_T_MIN;
+                        gi_shadow_ray.TMax = gi_shadow_tmax;
+
+                        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> gi_shadow_query;
+                        gi_shadow_query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, gi_shadow_ray);
+                        gi_shadow_query.Proceed();
+
+                        bool gi_in_shadow = (gi_shadow_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
+                        if (!gi_in_shadow) {
+                            incoming = gi_etri.emissive * gi_geometry / gi_pdf * gi_hit_mat.base_colour / PI;
+                        }
+                    }
+                }
+
+                // Cosine-weighted estimator: base_colour * incoming / rr_prob.
+                // (cos_theta and PI cancel between BRDF and hemisphere PDF.)
+                new_indirect = base_colour * incoming / rr_prob;
+            }
+        }
+
+        // Blend indirect with temporal accumulation (exponential moving average).
+        // Use temporal_M (not post-spatial r.M) to avoid diluting the alpha.
+        float indirect_alpha = (temporal_M > 1) ? (1.0 / float(temporal_M)) : 1.0;
+        r.indirect = lerp(r.indirect, new_indirect, indirect_alpha);
+        indirect_gi = r.indirect;
+
+        // Store reservoir for next frame's temporal reuse (with bounds guard).
+        if ((pixel_x < camera.screen_width) && (pixel_y < camera.screen_height)) {
+            reservoir_current[pixel_idx] = r;
+        }
 
         // ── Final shading: shadow ray + BRDF for the selected sample ──
 
@@ -506,14 +675,18 @@ float4 fragMain(MeshOutput input) : SV_Target
     float3 reflected_colour = float3(0.0, 0.0, 0.0);
 
     // Fresnel at the primary surface — controls reflection strength.
-    float3 F_view = F_Schlick(max(dot(N, V), 0.0), F0_DIELECTRIC);
+    // Compute F0 from the material's index of refraction (Fresnel's law for dielectrics).
+    float ior_ratio = (mat.ior - 1.0) / (mat.ior + 1.0);
+    float3 F0_mat = float3(ior_ratio * ior_ratio, ior_ratio * ior_ratio, ior_ratio * ior_ratio);
+    float3 F_view = F_Schlick(max(dot(N, V), 0.0), F0_mat);
 
     // Only trace reflections for obsidian-dominant fragments (wire > 0.5).
-    // Neon tube edges are emissive light sources — they glow, they do not reflect.
+    // Use the smooth interpolated normal for continuous reflections across tile boundaries
+    // — prevents the "cut in half" artefact where flat and steep tiles meet.
     if ((wire > 0.5) && (F_view.x > 0.01))
     {
-        float3 reflect_dir = reflect(-V, N);
-        float3 reflect_origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
+        float3 reflect_dir = reflect(-V, N_smooth);
+        float3 reflect_origin = input.world_position + N_smooth * SELF_INTERSECTION_OFFSET;
 
         RayDesc reflect_ray;
         reflect_ray.Origin = reflect_origin;
@@ -521,8 +694,9 @@ float4 fragMain(MeshOutput input) : SV_Target
         reflect_ray.TMin = RAY_T_MIN;
         reflect_ray.TMax = 200.0;
 
+        // No back-face culling — neon tube quads must be visible from both sides in reflections.
         RayQuery<RAY_FLAG_NONE> reflect_query;
-        reflect_query.TraceRayInline(scene_tlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, reflect_ray);
+        reflect_query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, reflect_ray);
         reflect_query.Proceed();
 
         if (reflect_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
@@ -547,13 +721,33 @@ float4 fragMain(MeshOutput input) : SV_Target
 
                 float3 hit_emissive = lerp(hit_tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
                 float3 hit_base = lerp(float3(0.0, 0.0, 0.0), hit_mat.base_colour, hit_wire);
-                reflected_colour = hit_emissive + hit_base * AMBIENT;
+
+                // Look up the reflected hit's indirect GI from its reservoir (one frame latent).
+                float3 hit_indirect = hit_base * AMBIENT; // Fallback.
+                float4 hit_clip = mul(camera.projection, mul(camera.view, float4(hit_pos, 1.0)));
+                if (hit_clip.w > 0.0) {
+                    float2 hit_ndc = hit_clip.xy / hit_clip.w;
+                    float2 hit_uv = hit_ndc * float2(0.5, -0.5) + 0.5;
+                    int2 hit_px = int2(hit_uv * float2(camera.screen_width, camera.screen_height));
+                    if ((hit_px.x >= 0) && (hit_px.x < int(camera.screen_width))
+                        && (hit_px.y >= 0) && (hit_px.y < int(camera.screen_height)))
+                    {
+                        uint hit_res_idx = uint(hit_px.y) * camera.screen_width + uint(hit_px.x);
+                        Reservoir hit_res = reservoir_previous[hit_res_idx];
+                        if (hit_res.M > 0) {
+                            hit_indirect = hit_res.indirect;
+                        }
+                    }
+                }
+
+                reflected_colour = hit_emissive + hit_indirect;
             }
         }
     }
 
-    // Ambient + direct lighting + emissive + reflection.
-    float3 colour = base_colour * AMBIENT + direct_lighting + emissive + reflected_colour * F_view;
+    // Indirect GI + direct lighting + emissive + reflection.
+    // The indirect term replaces the flat ambient constant — spatially varying, physically correct.
+    float3 colour = indirect_gi + direct_lighting + emissive + reflected_colour * F_view;
     return float4(colour, 1.0);
 }
 
@@ -612,12 +806,14 @@ void meshMain(
 
             float3 positions[3];
             float3 normals[3];
+            float3 smooth_normals[3];
             float diagonal_flags[3];
             for (uint v = 0; v < 3; ++v) {
                 uint global_idx = meshlet_vertex_indices[meshlet.vertex_offset + local_indices[v]];
                 Vertex vtx = vertices[global_idx];
                 positions[v] = float3(vtx.pos_x, vtx.pos_y, vtx.pos_z);
                 normals[v] = float3(vtx.norm_x, vtx.norm_y, vtx.norm_z);
+                smooth_normals[v] = float3(vtx.smooth_nx, vtx.smooth_ny, vtx.smooth_nz);
                 diagonal_flags[v] = vtx.uv_x;
             }
 
@@ -645,6 +841,7 @@ void meshMain(
                 output.world_normal = mul((float3x3)model, normals[v]);
                 output.material_index = mat_idx;
                 output.prev_clip_pos = mul(camera.prev_view_projection, world_pos);
+                output.smooth_normal = mul((float3x3)model, smooth_normals[v]);
                 out_vertices[vert_base + v] = output;
             }
 

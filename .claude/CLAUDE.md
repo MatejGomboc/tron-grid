@@ -195,7 +195,10 @@ power-weighted CDF, PCG hash RNG, Cook-Torrance BRDF evaluation, shadow ray
 visibility. ReSTIR DI temporal + spatial reuse (bindings 10/11 ping-pong reservoir
 SSBOs) — temporal accumulates up to 20 frames via motion vector
 reprojection (`prev_clip_pos` in MeshOutput), spatial merges 5 random
-neighbours within 20-pixel radius for fast convergence. 4 BLASes (terrain, orb, cyan neon, orange neon).
+neighbours within 20-pixel radius for fast convergence. Single-bounce
+indirect GI via cosine-weighted hemisphere sampling with Russian roulette
+and temporal EMA accumulation in the reservoir (replaces flat ambient).
+4 BLASes (terrain, orb, cyan neon, orange neon).
 `fragmentStoresAndAtomics` enabled for fragment shader reservoir writes. RT
 single-bounce reflections with per-material hit lookup via
 `CommittedInstanceID()`. Mesh shaders (task + mesh + fragment), per-object

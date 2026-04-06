@@ -37,11 +37,13 @@ class Device; // forward declaration
 //! Returns the directory containing the running executable (with trailing separator).
 [[nodiscard]] std::string executableDirectory();
 
-//! Vertex layout — position (float3) + normal (float3) + UV (float2). Meshlet/RT-ready.
+//! Vertex layout — position + flat normal + UV + smooth normal. Meshlet/RT-ready.
 struct Vertex {
     std::array<float, 3> position{}; //!< World-space position.
-    std::array<float, 3> normal{}; //!< Surface normal.
-    std::array<float, 2> uv{}; //!< Texture coordinates.
+    std::array<float, 3> normal{}; //!< Per-face flat normal (for shading).
+    std::array<float, 2> uv{}; //!< Texture coordinates (uv.x = diagonal suppression flag).
+    std::array<float, 3> smooth_normal{}; //!< Per-vertex smooth normal (for reflections).
+    float vertex_pad{0.0f}; //!< Padding to 16-byte alignment (48 bytes total).
 };
 
 //! Per-object data stored in the SSBO — matches the Slang ObjectData struct.
@@ -105,6 +107,8 @@ struct Reservoir {
     uint32_t M{0}; //!< Number of candidates merged into this reservoir.
     MathLib::Vec3 y_normal{}; //!< Light surface normal at the selected sample.
     float W{0.0f}; //!< Final contribution weight: w_sum / (M × p_hat(y)).
+    MathLib::Vec3 indirect{}; //!< Accumulated indirect radiance (single-bounce GI).
+    float indirect_pad{0.0f}; //!< Padding to 16-byte alignment (64 bytes total).
 };
 
 //! Push constants for the task shader — frustum planes + object count.

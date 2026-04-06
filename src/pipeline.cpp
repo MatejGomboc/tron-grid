@@ -186,7 +186,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     bindings[4].binding = 4;
     bindings[4].descriptorType = vk::DescriptorType::eStorageBuffer;
     bindings[4].descriptorCount = 1;
-    bindings[4].stageFlags = vk::ShaderStageFlagBits::eMeshEXT;
+    bindings[4].stageFlags = vk::ShaderStageFlagBits::eMeshEXT | vk::ShaderStageFlagBits::eFragment;
     bindings[5].binding = 5;
     bindings[5].descriptorType = vk::DescriptorType::eStorageBuffer;
     bindings[5].descriptorCount = 1;

@@ -211,9 +211,9 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 
 - [x] No point light abstraction — all lighting from emissive geometry
 - [x] ReSTIR DI for direct lighting from emissive surfaces
-- [ ] ReSTIR GI for multi-bounce indirect illumination
+- [x] ReSTIR GI for multi-bounce indirect illumination
 - [ ] World-space irradiance cache
-- [ ] Russian roulette path termination
+- [x] Russian roulette path termination
 - [x] Motion vectors for temporal reuse
 - [ ] Ray-traced ambient occlusion (RTAO)
 - [ ] Transparent materials with refraction (Snell's law, IOR)
@@ -643,6 +643,18 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-06 — Phase 8 Etape 38: single-bounce indirect GI + RT bug fixes
+
+Single-bounce indirect GI (Etape 38) replaces the flat ambient constant with
+physically correct indirect illumination. Cosine-weighted hemisphere sampling
+with Russian roulette (probability scaled by surface luminance), two-bounce
+path tracing (eye → surface → bounce → light), temporal EMA accumulation
+in the reservoir's `indirect` field. Reservoir struct extended to 64 bytes.
+Also fixed two RT bugs: temporal reprojection Y-flip (prev_clip_pos NDC
+mapped with wrong Y sign) and two-sided normal flip leaking into reflection
+direction (now uses unflipped geometric normal N_geo for reflections). 90
+PRs merged.
 
 ### 2026-04-06 — Phase 8 Etape 37c: ReSTIR DI spatial reuse (Etape 37 complete)
 
