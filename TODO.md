@@ -541,12 +541,33 @@ signals. The AI perceives all of this natively through the nerve bundle.
 
 ## Backlog
 
+- **Grid sectors / zones** — distinct areas with different visual
+  characteristics, density, architecture style. Industrial sector,
+  residential, the Outlands, data processing centres. Procedurally
+  generated per seed. Different ambient sounds and fog density per zone.
+- **Ambient world life** — the Grid hums and breathes without players.
+  Recogniser patrol ships overhead (geometric, emissive), data stream
+  pulses between towers, flickering Grid segments, background particle
+  effects. Makes the world feel alive and inhabited.
+- **Identity discs** — the signature Tron weapon. Thrown projectile
+  with glowing trail, returns to thrower. Physics-based trajectory.
+  Used by NPCs and player avatars in combat.
+- **Combat system** — disc combat, energy attacks, derez mechanics.
+  Damage model with pain feedback to AI brain via nerve bundle.
+- **Accessibility** — colourblind mode (palette remapping for the
+  cyan/orange/gold colour scheme), input remapping, subtitle system
+  for vocalisations, screen reader support for menus.
+- **Configuration system** — graphics quality presets, key bindings,
+  audio volume, render resolution scaling. Persistent settings file.
+- **Save/load** — human player progress persistence. World state
+  snapshot + player inventory + position. AI brain handles its own
+  persistence via the DLL interface.
+- **Memory budget** — VMA budget tracking, streaming eviction policy,
+  residency management for large scenes.
 - **Multiplayer** — extract world state to authoritative server, network
   replication, prediction + reconciliation, multiple concurrent players.
   See `docs/VISION.md` § Future: Multiplayer. Deferred until single-player
   is fully polished.
-- **Memory budget** — VMA budget tracking, streaming eviction policy,
-  residency management for large scenes.
 
 ---
 
