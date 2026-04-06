@@ -200,27 +200,46 @@ static void recordBloomUpsample(const vk::raii::CommandBuffer& cmd, vk::Image bl
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, upsample_pipeline);
 
     // Upsample from mip (mip_count - 2) down to mip 0.
-    // At step i, we read from mip (i + 1) and write to mip i.
+    // At step i, we read from mip (i + 1) and read+write mip i (additive blend).
     for (uint32_t i{mip_count - 2};; --i) {
-        // Barrier: source mip (i + 1) writes must complete before read.
-        vk::ImageMemoryBarrier2 mip_barrier{};
-        mip_barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-        mip_barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
-        mip_barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-        mip_barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
-        mip_barrier.oldLayout = vk::ImageLayout::eGeneral;
-        mip_barrier.newLayout = vk::ImageLayout::eGeneral;
-        mip_barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-        mip_barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-        mip_barrier.image = bloom_image;
-        mip_barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-        mip_barrier.subresourceRange.baseMipLevel = i + 1;
-        mip_barrier.subresourceRange.levelCount = 1;
-        mip_barrier.subresourceRange.baseArrayLayer = 0;
-        mip_barrier.subresourceRange.layerCount = 1;
+        // Barrier on source mip (i + 1): prior writes must complete before read.
+        vk::ImageMemoryBarrier2 src_barrier{};
+        src_barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+        src_barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+        src_barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+        src_barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+        src_barrier.oldLayout = vk::ImageLayout::eGeneral;
+        src_barrier.newLayout = vk::ImageLayout::eGeneral;
+        src_barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+        src_barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+        src_barrier.image = bloom_image;
+        src_barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        src_barrier.subresourceRange.baseMipLevel = i + 1;
+        src_barrier.subresourceRange.levelCount = 1;
+        src_barrier.subresourceRange.baseArrayLayer = 0;
+        src_barrier.subresourceRange.layerCount = 1;
 
+        // Barrier on destination mip (i): prior writes must complete before read+write
+        // (upsample reads existing value for additive blend, then writes the sum).
+        vk::ImageMemoryBarrier2 dst_barrier{};
+        dst_barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+        dst_barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+        dst_barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+        dst_barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+        dst_barrier.oldLayout = vk::ImageLayout::eGeneral;
+        dst_barrier.newLayout = vk::ImageLayout::eGeneral;
+        dst_barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+        dst_barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+        dst_barrier.image = bloom_image;
+        dst_barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        dst_barrier.subresourceRange.baseMipLevel = i;
+        dst_barrier.subresourceRange.levelCount = 1;
+        dst_barrier.subresourceRange.baseArrayLayer = 0;
+        dst_barrier.subresourceRange.layerCount = 1;
+
+        std::array<vk::ImageMemoryBarrier2, 2> upsample_barriers{src_barrier, dst_barrier};
         vk::DependencyInfo dep{};
-        dep.setImageMemoryBarriers(mip_barrier);
+        dep.setImageMemoryBarriers(upsample_barriers);
         cmd.pipelineBarrier2(dep);
 
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, bloom_layout, 0, {upsample_sets[i]}, {});
@@ -699,7 +718,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         device.get().updateDescriptorSets(writes, {});
     };
 
-    // ── Bloom compute pipelines (extraction + downsample) ──
+    // ── Bloom compute pipelines (extraction + downsample + upsample) ──
 
     std::vector<uint32_t> bloom_extract_spirv{loadSpirv(exe_dir_rt + "bloom_extract.spv", logger)};
     std::vector<uint32_t> bloom_down_spirv{loadSpirv(exe_dir_rt + "bloom_downsample.spv", logger)};
