@@ -336,9 +336,13 @@ builds itself; only creature bodies are authored externally.
   ambient effects: floating energy motes, data sparkles, Grid hum
   particles. The world should feel alive with tiny floating particles
   of light. Mesh shader rendered (point sprites or billboards).
-- **Energy sources** — procedurally placed food/energy game objects in
-  the Grid. Creatures feed on these to sustain energy. Emissive glow
-  with bloom, depletes when consumed, respawns over time.
+- **Energy sources** — procedurally placed golden glow orbs floating
+  and slowly rotating above the Grid. Pulsing warm gold emissive with
+  bloom halo (Super Mario-inspired collectible aesthetic). Creatures
+  feed on these to sustain energy. Depletes when consumed (shrinks +
+  dims), respawns over time at a different location. The warm gold
+  stands out against the cool cyan-blue Grid palette — instantly
+  recognisable as "food" even to a learning AI brain.
 - **Texture streaming** — load textures on demand via VMA staging.
   Mip-chain generation on the GPU. Memory budget awareness.
 
