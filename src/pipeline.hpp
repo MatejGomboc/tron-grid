@@ -63,6 +63,7 @@ struct ObjectBounds {
 struct CameraUBO {
     MathLib::Mat4 view{}; //!< View matrix.
     MathLib::Mat4 projection{}; //!< Projection matrix.
+    MathLib::Mat4 inv_view_projection{}; //!< Inverse view-projection matrix (for skybox ray reconstruction).
     MathLib::Vec3 light_pos{}; //!< Point light world-space position.
     float light_intensity{1.0f}; //!< Point light intensity (pre-multiplier before inverse square falloff).
     MathLib::Vec3 camera_pos{}; //!< Camera world-space position (for view vector in PBR).

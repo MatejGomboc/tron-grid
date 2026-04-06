@@ -192,6 +192,27 @@ add_custom_command(
     VERBATIM
 )
 
+# Skybox shader (vertex + fragment) — compile, then validate SPIR-V
+set(SKYBOX_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/skybox.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/skybox.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${SKYBOX_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -fvk-invert-y
+        -warnings-as-errors all
+        -entry skyVertMain
+        -entry skyFragMain
+        -o ${SHADER_OUTPUT_DIR}/skybox.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/skybox.spv
+    DEPENDS ${SKYBOX_SOURCE}
+    COMMENT "Compiling skybox.slang -> skybox.spv (with validation)"
+    VERBATIM
+)
+
 # Compile shaders — ALL target ensures they build even when the executable is up to date.
 add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/triangle.spv
@@ -202,6 +223,7 @@ add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/bloom_extract.spv
     ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
     ${SHADER_OUTPUT_DIR}/bloom_upsample.spv
+    ${SHADER_OUTPUT_DIR}/skybox.spv
 )
 add_dependencies(${PROJECT_NAME} shaders)
 
@@ -227,6 +249,8 @@ add_custom_target(copy_shaders ALL
         ${SHADER_OUTPUT_DIR}/bloom_downsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_downsample.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/bloom_upsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_upsample.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/skybox.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/skybox.spv
     COMMENT "Copying shaders to output directory"
     VERBATIM
 )

@@ -353,7 +353,7 @@ subtle digital noise complete the Tron Legacy look.
 - [x] Neon tubes and light orb have visible soft glow halos
 - [x] Anti-aliased neon grid lines (GPU max MSAA, automatic fallback)
 - [x] AA resources recreated on swapchain resize
-- [ ] Procedural cyberpunk skybox (cyan-green data fog clouds)
+- [x] Procedural cyberpunk skybox (cyan-green data fog clouds)
 - [ ] Per-material PBR via material SSBO
 - [ ] Cinematic post-process (colour grade, chromatic aberration, vignette)
 - [x] No new Vulkan extensions needed (compute + MSAA are core 1.0)
@@ -550,6 +550,16 @@ bloom with HDR image before ACES tonemapping via push constant bloom_strength
 the Tron aesthetic is complete. Per-mip dual barriers (source + destination)
 for correct read-after-write synchronisation during additive upsample blend.
 80 PRs merged.
+
+### 2026-04-06 — Phase 7 Etape 34: procedural cyberpunk skybox
+
+Real-time procedural skybox (Etape 34, PR #82) with value noise data fog
+clouds drifting through infinite darkness. Fullscreen triangle vertex shader
+(SV_VertexID, no vertex buffer), 3-octave value noise on world-space ray
+direction, horizon density gradient, time-scrolled animation. MathLib extended
+with Mat4::inversed() (cofactor / Cramer's rule). CameraUBO gains
+inv_view_projection for skybox ray reconstruction. Renders in the same pass
+as the scene (transient MSAA attachment preserved). 82 PRs merged.
 
 ### 2026-04-06 — Phase 7 Etape 33: MSAA 8× + antialiased wireframe
 
