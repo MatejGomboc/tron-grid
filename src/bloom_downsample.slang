@@ -12,9 +12,10 @@
     GNU General Public License for more details.
 */
 
-// Bloom extraction and downsample compute shaders. Two entry points:
-//   bloomExtractMain   — extracts bright pixels from HDR with Karis average
+// Bloom compute shaders. Three entry points:
+//   bloomExtractMain    — extracts bright pixels from HDR with Karis average
 //   bloomDownsampleMain — 2×2 box-filter downsample for the mip chain
+//   bloomUpsampleMain   — 3×3 tent-filter upsample with additive blend
 
 [[vk::binding(0, 0)]]
 [[vk::image_format("rgba16f")]]
@@ -129,4 +130,44 @@ void bloomDownsampleMain(uint3 thread_id : SV_DispatchThreadID)
     float3 result = (s00 + s10 + s01 + s11) * 0.25;
 
     bloom_dst[thread_id.xy] = float4(result, 1.0);
+}
+
+//! Upsamples a smaller bloom mip and additively blends into the next larger mip.
+[shader("compute")]
+[numthreads(8, 8, 1)]
+void bloomUpsampleMain(uint3 thread_id : SV_DispatchThreadID)
+{
+    uint dst_w;
+    uint dst_h;
+    bloom_dst.GetDimensions(dst_w, dst_h);
+
+    if ((thread_id.x >= dst_w) || (thread_id.y >= dst_h))
+    {
+        return;
+    }
+
+    // Map destination texel to source coordinates (source is half the size).
+    uint src_w;
+    uint src_h;
+    bloom_src.GetDimensions(src_w, src_h);
+
+    int2 base = int2(thread_id.xy) / 2;
+    int2 max_coord = int2(src_w - 1, src_h - 1);
+
+    // 3×3 tent filter for smooth upsampling — standard bloom upsample kernel.
+    // Weights: corners 1/16, edges 2/16, centre 4/16.
+    float3 sum = float3(0.0, 0.0, 0.0);
+    sum += (1.0 / 16.0) * bloom_src[clamp(base + int2(-1, -1), int2(0, 0), max_coord)].rgb;
+    sum += (2.0 / 16.0) * bloom_src[clamp(base + int2( 0, -1), int2(0, 0), max_coord)].rgb;
+    sum += (1.0 / 16.0) * bloom_src[clamp(base + int2( 1, -1), int2(0, 0), max_coord)].rgb;
+    sum += (2.0 / 16.0) * bloom_src[clamp(base + int2(-1,  0), int2(0, 0), max_coord)].rgb;
+    sum += (4.0 / 16.0) * bloom_src[clamp(base + int2( 0,  0), int2(0, 0), max_coord)].rgb;
+    sum += (2.0 / 16.0) * bloom_src[clamp(base + int2( 1,  0), int2(0, 0), max_coord)].rgb;
+    sum += (1.0 / 16.0) * bloom_src[clamp(base + int2(-1,  1), int2(0, 0), max_coord)].rgb;
+    sum += (2.0 / 16.0) * bloom_src[clamp(base + int2( 0,  1), int2(0, 0), max_coord)].rgb;
+    sum += (1.0 / 16.0) * bloom_src[clamp(base + int2( 1,  1), int2(0, 0), max_coord)].rgb;
+
+    // Additive blend: accumulate upsampled mip onto the current destination value.
+    float3 existing = bloom_dst[thread_id.xy].rgb;
+    bloom_dst[thread_id.xy] = float4(existing + sum, 1.0);
 }

@@ -12,10 +12,10 @@
     GNU General Public License for more details.
 */
 
-// Post-process compute shader — reads from the HDR framebuffer and writes
-// to the swapchain image. Applies the ACES fitted RRT+ODT (Stephen Hill /
-// MJP BakingLab) for hue-preserving tonemapping, followed by exact sRGB
-// gamma encoding. Bloom will be added in Etapes 31-32.
+// Post-process compute shader — reads from the HDR framebuffer, composites
+// bloom, and writes the tonemapped result to the swapchain image. Applies
+// the ACES fitted RRT+ODT (Stephen Hill / MJP BakingLab) for hue-preserving
+// tonemapping, followed by exact sRGB gamma encoding.
 
 [[vk::binding(0, 0)]]
 [[vk::image_format("rgba16f")]]
@@ -24,6 +24,18 @@ RWTexture2D<float4> hdr_input;
 [[vk::binding(1, 0)]]
 [[vk::image_format("unknown")]]
 RWTexture2D<float4> swapchain_output;
+
+[[vk::binding(2, 0)]]
+[[vk::image_format("rgba16f")]]
+RWTexture2D<float4> bloom_texture;
+
+struct PostProcessPushConstants
+{
+    float bloom_strength;
+};
+
+[[vk::push_constant]]
+PostProcessPushConstants push;
 
 // ACES colour space matrices (Stephen Hill / MJP BakingLab).
 // sRGB primaries → approximate AP1 (Academy Color Encoding System).
@@ -89,6 +101,14 @@ void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
     }
 
     float4 colour = hdr_input[thread_id.xy];
+
+    // Composite bloom — the bloom texture is at half resolution, so scale coordinates.
+    uint bloom_w;
+    uint bloom_h;
+    bloom_texture.GetDimensions(bloom_w, bloom_h);
+    uint2 bloom_coord = min(thread_id.xy / 2, uint2(bloom_w - 1, bloom_h - 1));
+    float3 bloom = bloom_texture[bloom_coord].rgb;
+    colour.rgb += push.bloom_strength * bloom;
 
     // ACES fitted RRT+ODT — transforms to AP1 colour space, applies the
     // tone curve, transforms back. The AP1 matrices reduce hue shifts that

@@ -175,6 +175,22 @@ add_custom_command(
     COMMENT "Compiling bloom_downsample.slang (downsample) -> bloom_downsample.spv (with validation)"
     VERBATIM
 )
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/bloom_upsample.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${BLOOM_DOWN_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry bloomUpsampleMain
+        -o ${SHADER_OUTPUT_DIR}/bloom_upsample.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/bloom_upsample.spv
+    DEPENDS ${BLOOM_DOWN_SOURCE}
+    COMMENT "Compiling bloom_downsample.slang (upsample) -> bloom_upsample.spv (with validation)"
+    VERBATIM
+)
 
 # Compile shaders — ALL target ensures they build even when the executable is up to date.
 add_custom_target(shaders ALL DEPENDS
@@ -185,6 +201,7 @@ add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/postprocess.spv
     ${SHADER_OUTPUT_DIR}/bloom_extract.spv
     ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
+    ${SHADER_OUTPUT_DIR}/bloom_upsample.spv
 )
 add_dependencies(${PROJECT_NAME} shaders)
 
@@ -208,6 +225,8 @@ add_custom_target(copy_shaders ALL
         ${SHADER_OUTPUT_DIR}/bloom_extract.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_extract.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/bloom_downsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_downsample.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/bloom_upsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_upsample.spv
     COMMENT "Copying shaders to output directory"
     VERBATIM
 )

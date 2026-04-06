@@ -93,6 +93,9 @@ constexpr uint32_t BLOOM_MAX_MIPS{6};
 //! HDR luminance threshold for bloom extraction — only pixels brighter than this contribute.
 constexpr float BLOOM_THRESHOLD{1.0f};
 
+//! Bloom composite strength — scales the additive bloom contribution before tonemapping.
+constexpr float BLOOM_STRENGTH{0.4f};
+
 //! Computes the number of mip levels for the bloom texture (base = half swapchain resolution).
 [[nodiscard]] static uint32_t bloomMipCount(vk::Extent2D extent)
 {
@@ -183,17 +186,69 @@ static void recordBloomDownsample(const vk::raii::CommandBuffer& cmd, vk::Image 
 }
 
 /*!
+    Records bloom upsample passes (smallest mip → mip 0) into the command buffer.
+    Each pass reads from a smaller mip and additively blends into the next larger mip.
+    The bloom image must already be in GENERAL layout with downsample writes complete.
+*/
+static void recordBloomUpsample(const vk::raii::CommandBuffer& cmd, vk::Image bloom_image, uint32_t mip_count, uint32_t base_w, uint32_t base_h,
+    vk::Pipeline upsample_pipeline, vk::PipelineLayout bloom_layout, const std::vector<vk::DescriptorSet>& upsample_sets)
+{
+    if (mip_count < 2) {
+        return;
+    }
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, upsample_pipeline);
+
+    // Upsample from mip (mip_count - 2) down to mip 0.
+    // At step i, we read from mip (i + 1) and write to mip i.
+    for (uint32_t i{mip_count - 2};; --i) {
+        // Barrier: source mip (i + 1) writes must complete before read.
+        vk::ImageMemoryBarrier2 mip_barrier{};
+        mip_barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+        mip_barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+        mip_barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+        mip_barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+        mip_barrier.oldLayout = vk::ImageLayout::eGeneral;
+        mip_barrier.newLayout = vk::ImageLayout::eGeneral;
+        mip_barrier.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+        mip_barrier.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+        mip_barrier.image = bloom_image;
+        mip_barrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+        mip_barrier.subresourceRange.baseMipLevel = i + 1;
+        mip_barrier.subresourceRange.levelCount = 1;
+        mip_barrier.subresourceRange.baseArrayLayer = 0;
+        mip_barrier.subresourceRange.layerCount = 1;
+
+        vk::DependencyInfo dep{};
+        dep.setImageMemoryBarriers(mip_barrier);
+        cmd.pipelineBarrier2(dep);
+
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, bloom_layout, 0, {upsample_sets[i]}, {});
+
+        uint32_t mip_w{std::max(base_w >> i, 1u)};
+        uint32_t mip_h{std::max(base_h >> i, 1u)};
+        uint32_t gx{(mip_w + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
+        uint32_t gy{(mip_h + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
+        cmd.dispatch(gx, gy, 1);
+
+        if (i == 0) {
+            break;
+        }
+    }
+}
+
+/*!
     Records a command buffer with mesh shader rendering and compute post-processing.
     The task shader performs per-object frustum culling and dispatches mesh shader
-    workgroups for visible objects. Bloom extraction + downsample runs between the
-    scene render and the tonemap pass. A compute post-process pass reads the HDR
-    image and writes the tonemapped result to the swapchain image.
+    workgroups for visible objects. Bloom extraction, downsample, and upsample
+    run between the scene render and the tonemap pass. The post-process shader
+    composites bloom with the HDR image before tonemapping.
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image, vk::ImageView hdr_view, vk::ImageView depth_view, vk::Image depth_image,
     vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set, const MathLib::Frustum& frustum, uint32_t total_objects,
     vk::Pipeline pp_pipeline, vk::PipelineLayout pp_layout, vk::DescriptorSet pp_descriptor_set, vk::Image bloom_image, uint32_t bloom_mip_count, uint32_t bloom_base_w,
-    uint32_t bloom_base_h, vk::Pipeline bloom_extract_pipeline, vk::Pipeline bloom_downsample_pipeline, vk::PipelineLayout bloom_layout,
-    const std::vector<vk::DescriptorSet>& bloom_sets)
+    uint32_t bloom_base_h, vk::Pipeline bloom_extract_pipeline, vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline,
+    vk::PipelineLayout bloom_layout, const std::vector<vk::DescriptorSet>& bloom_sets, const std::vector<vk::DescriptorSet>& bloom_upsample_sets)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -350,12 +405,14 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     dep_to_compute.setImageMemoryBarriers(to_compute_barriers);
     cmd.pipelineBarrier2(dep_to_compute);
 
-    // ── Bloom extraction + downsample chain ──
+    // ── Bloom extraction + downsample + upsample chain ──
 
     recordBloomDownsample(cmd, bloom_image, bloom_mip_count, bloom_base_w, bloom_base_h, bloom_extract_pipeline, bloom_downsample_pipeline, bloom_layout, bloom_sets,
         BLOOM_THRESHOLD);
 
-    // Barrier: bloom writes must complete before tonemap reads (Etape 32 will read bloom).
+    recordBloomUpsample(cmd, bloom_image, bloom_mip_count, bloom_base_w, bloom_base_h, bloom_upsample_pipeline, bloom_layout, bloom_upsample_sets);
+
+    // Barrier: bloom upsample writes must complete before tonemap reads bloom mip 0.
     vk::ImageMemoryBarrier2 bloom_after{};
     bloom_after.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
     bloom_after.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
@@ -376,10 +433,11 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image hdr_image,
     dep_bloom_done.setImageMemoryBarriers(bloom_after);
     cmd.pipelineBarrier2(dep_bloom_done);
 
-    // ── Tonemap: HDR → swapchain ──
+    // ── Tonemap: HDR + bloom → swapchain ──
 
-    // Bind compute pipeline and dispatch post-process.
+    // Bind compute pipeline, push bloom strength, and dispatch post-process.
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_pipeline);
+    cmd.pushConstants<float>(pp_layout, vk::ShaderStageFlagBits::eCompute, 0, BLOOM_STRENGTH);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_layout, 0, {pp_descriptor_set}, {});
 
     uint32_t group_x{(extent.width + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
@@ -543,8 +601,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     std::string exe_dir_rt{executableDirectory()};
     std::vector<uint32_t> postprocess_spirv{loadSpirv(exe_dir_rt + "postprocess.spv", logger)};
 
-    // Descriptor set layout: 2 storage images (HDR input + swapchain output).
-    std::array<vk::DescriptorSetLayoutBinding, 2> pp_bindings{};
+    // Descriptor set layout: 3 storage images (HDR input + swapchain output + bloom).
+    std::array<vk::DescriptorSetLayoutBinding, 3> pp_bindings{};
     pp_bindings[0].binding = 0;
     pp_bindings[0].descriptorType = vk::DescriptorType::eStorageImage;
     pp_bindings[0].descriptorCount = 1;
@@ -553,13 +611,23 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     pp_bindings[1].descriptorType = vk::DescriptorType::eStorageImage;
     pp_bindings[1].descriptorCount = 1;
     pp_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pp_bindings[2].binding = 2;
+    pp_bindings[2].descriptorType = vk::DescriptorType::eStorageImage;
+    pp_bindings[2].descriptorCount = 1;
+    pp_bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
 
     vk::DescriptorSetLayoutCreateInfo pp_layout_info{};
     pp_layout_info.setBindings(pp_bindings);
     vk::raii::DescriptorSetLayout pp_descriptor_set_layout{device.get(), pp_layout_info};
 
+    vk::PushConstantRange pp_push_range{};
+    pp_push_range.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    pp_push_range.offset = 0;
+    pp_push_range.size = sizeof(float);
+
     vk::PipelineLayoutCreateInfo pp_pipeline_layout_info{};
     pp_pipeline_layout_info.setSetLayouts(*pp_descriptor_set_layout);
+    pp_pipeline_layout_info.setPushConstantRanges(pp_push_range);
     vk::raii::PipelineLayout pp_pipeline_layout{device.get(), pp_pipeline_layout_info};
 
     vk::ShaderModuleCreateInfo pp_module_info{};
@@ -581,7 +649,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     // Descriptor pool and sets for post-process.
     std::array<vk::DescriptorPoolSize, 1> pp_pool_sizes{};
     pp_pool_sizes[0].type = vk::DescriptorType::eStorageImage;
-    pp_pool_sizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
+    pp_pool_sizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 3;
 
     vk::DescriptorPoolCreateInfo pp_pool_info{};
     pp_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -596,7 +664,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     std::vector<vk::raii::DescriptorSet> pp_descriptor_sets{device.get().allocateDescriptorSets(pp_alloc_info)};
 
     // Updates post-process descriptor set bindings for the given frame.
-    auto updatePostProcessDescriptors = [&](uint32_t frame_index, vk::ImageView hdr_sv, vk::ImageView swap_sv) {
+    auto updatePostProcessDescriptors = [&](uint32_t frame_index, vk::ImageView hdr_sv, vk::ImageView swap_sv, vk::ImageView bloom_sv) {
         vk::DescriptorImageInfo hdr_info{};
         hdr_info.imageView = hdr_sv;
         hdr_info.imageLayout = vk::ImageLayout::eGeneral;
@@ -605,7 +673,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         swap_info.imageView = swap_sv;
         swap_info.imageLayout = vk::ImageLayout::eGeneral;
 
-        std::array<vk::WriteDescriptorSet, 2> writes{};
+        vk::DescriptorImageInfo bloom_info{};
+        bloom_info.imageView = bloom_sv;
+        bloom_info.imageLayout = vk::ImageLayout::eGeneral;
+
+        std::array<vk::WriteDescriptorSet, 3> writes{};
         writes[0].dstSet = *pp_descriptor_sets[frame_index];
         writes[0].dstBinding = 0;
         writes[0].dstArrayElement = 0;
@@ -617,6 +689,12 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         writes[1].dstArrayElement = 0;
         writes[1].descriptorType = vk::DescriptorType::eStorageImage;
         writes[1].setImageInfo(swap_info);
+
+        writes[2].dstSet = *pp_descriptor_sets[frame_index];
+        writes[2].dstBinding = 2;
+        writes[2].dstArrayElement = 0;
+        writes[2].descriptorType = vk::DescriptorType::eStorageImage;
+        writes[2].setImageInfo(bloom_info);
 
         device.get().updateDescriptorSets(writes, {});
     };
@@ -685,10 +763,27 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     bloom_down_pipeline_info.layout = *bloom_pipeline_layout;
     vk::raii::Pipeline bloom_downsample_pipeline{device.get(), nullptr, bloom_down_pipeline_info};
 
-    logger.logInfo("Bloom compute pipelines created (extract + downsample).");
+    // Bloom upsample pipeline.
+    std::vector<uint32_t> bloom_up_spirv{loadSpirv(exe_dir_rt + "bloom_upsample.spv", logger)};
 
-    // Descriptor pool and sets for bloom — one set per mip step per frame.
-    uint32_t bloom_total_sets{MAX_FRAMES_IN_FLIGHT * BLOOM_MAX_MIPS};
+    vk::ShaderModuleCreateInfo bloom_up_module_info{};
+    bloom_up_module_info.setCode(bloom_up_spirv);
+    vk::raii::ShaderModule bloom_up_module{device.get(), bloom_up_module_info};
+
+    vk::PipelineShaderStageCreateInfo bloom_up_stage{};
+    bloom_up_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    bloom_up_stage.module = *bloom_up_module;
+    bloom_up_stage.setPName("bloomUpsampleMain");
+
+    vk::ComputePipelineCreateInfo bloom_up_pipeline_info{};
+    bloom_up_pipeline_info.stage = bloom_up_stage;
+    bloom_up_pipeline_info.layout = *bloom_pipeline_layout;
+    vk::raii::Pipeline bloom_upsample_pipeline{device.get(), nullptr, bloom_up_pipeline_info};
+
+    logger.logInfo("Bloom compute pipelines created (extract + downsample + upsample).");
+
+    // Descriptor pool and sets for bloom — downsample + upsample sets per mip per frame.
+    uint32_t bloom_total_sets{MAX_FRAMES_IN_FLIGHT * BLOOM_MAX_MIPS * 2};
 
     std::array<vk::DescriptorPoolSize, 1> bloom_pool_sizes{};
     bloom_pool_sizes[0].type = vk::DescriptorType::eStorageImage;
@@ -700,13 +795,21 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     bloom_pool_info.setPoolSizes(bloom_pool_sizes);
     vk::raii::DescriptorPool bloom_descriptor_pool{device.get(), bloom_pool_info};
 
-    std::vector<vk::DescriptorSetLayout> bloom_layouts(bloom_total_sets, *bloom_descriptor_set_layout);
+    uint32_t bloom_half_sets{MAX_FRAMES_IN_FLIGHT * BLOOM_MAX_MIPS};
+
+    std::vector<vk::DescriptorSetLayout> bloom_down_layouts(bloom_half_sets, *bloom_descriptor_set_layout);
     vk::DescriptorSetAllocateInfo bloom_alloc_info{};
     bloom_alloc_info.descriptorPool = *bloom_descriptor_pool;
-    bloom_alloc_info.setSetLayouts(bloom_layouts);
+    bloom_alloc_info.setSetLayouts(bloom_down_layouts);
     std::vector<vk::raii::DescriptorSet> bloom_descriptor_sets{device.get().allocateDescriptorSets(bloom_alloc_info)};
 
-    // Updates bloom descriptor set bindings for the given frame.
+    std::vector<vk::DescriptorSetLayout> bloom_up_layouts(bloom_half_sets, *bloom_descriptor_set_layout);
+    vk::DescriptorSetAllocateInfo bloom_up_alloc_info{};
+    bloom_up_alloc_info.descriptorPool = *bloom_descriptor_pool;
+    bloom_up_alloc_info.setSetLayouts(bloom_up_layouts);
+    std::vector<vk::raii::DescriptorSet> bloom_upsample_descriptor_sets{device.get().allocateDescriptorSets(bloom_up_alloc_info)};
+
+    // Updates bloom downsample descriptor set bindings for the given frame.
     auto updateBloomDescriptors = [&](uint32_t frame_index) {
         for (uint32_t i{0}; i < bloom_mip_count; ++i) {
             uint32_t set_idx{frame_index * BLOOM_MAX_MIPS + i};
@@ -746,6 +849,46 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
     };
 
+    // Updates bloom upsample descriptor set bindings for the given frame.
+    auto updateBloomUpsampleDescriptors = [&](uint32_t frame_index) {
+        for (uint32_t i{0}; i < bloom_mip_count; ++i) {
+            uint32_t set_idx{frame_index * BLOOM_MAX_MIPS + i};
+
+            std::array<vk::WriteDescriptorSet, 3> writes{};
+            std::array<vk::DescriptorImageInfo, 3> infos{};
+
+            // Binding 0: HDR input (unused by upsample, but must bind something valid).
+            infos[0].imageView = *hdr_view;
+            infos[0].imageLayout = vk::ImageLayout::eGeneral;
+            writes[0].dstSet = *bloom_upsample_descriptor_sets[set_idx];
+            writes[0].dstBinding = 0;
+            writes[0].dstArrayElement = 0;
+            writes[0].descriptorType = vk::DescriptorType::eStorageImage;
+            writes[0].setImageInfo(infos[0]);
+
+            // Binding 1: source mip (i + 1, smaller). Last mip has no source — bind self.
+            vk::ImageView src_view{(i + 1 < bloom_mip_count) ? *bloom_mip_views[i + 1] : *bloom_mip_views[i]};
+            infos[1].imageView = src_view;
+            infos[1].imageLayout = vk::ImageLayout::eGeneral;
+            writes[1].dstSet = *bloom_upsample_descriptor_sets[set_idx];
+            writes[1].dstBinding = 1;
+            writes[1].dstArrayElement = 0;
+            writes[1].descriptorType = vk::DescriptorType::eStorageImage;
+            writes[1].setImageInfo(infos[1]);
+
+            // Binding 2: destination mip (i, larger).
+            infos[2].imageView = *bloom_mip_views[i];
+            infos[2].imageLayout = vk::ImageLayout::eGeneral;
+            writes[2].dstSet = *bloom_upsample_descriptor_sets[set_idx];
+            writes[2].dstBinding = 2;
+            writes[2].dstArrayElement = 0;
+            writes[2].descriptorType = vk::DescriptorType::eStorageImage;
+            writes[2].setImageInfo(infos[2]);
+
+            device.get().updateDescriptorSets(writes, {});
+        }
+    };
+
     // Per-frame camera UBOs (persistently mapped)
     std::vector<AllocatedBuffer> ubo_buffers;
     for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
@@ -772,6 +915,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     // Pre-allocated scratch vector for bloom descriptor sets (avoids per-frame heap allocation).
     std::vector<vk::DescriptorSet> bloom_sets_for_frame;
     bloom_sets_for_frame.reserve(BLOOM_MAX_MIPS);
+    std::vector<vk::DescriptorSet> bloom_upsample_sets_for_frame;
+    bloom_upsample_sets_for_frame.reserve(BLOOM_MAX_MIPS);
 
     while (true) {
         // Block until the main thread sends an event
@@ -946,18 +1091,24 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         // Record command buffer — mesh shaders + compute post-process in one submission
         const vk::raii::CommandBuffer& cmd = command_buffers[current_frame];
         cmd.reset();
-        updatePostProcessDescriptors(current_frame, *hdr_view, *swapchain_storage_views[image_index]);
+        updatePostProcessDescriptors(current_frame, *hdr_view, *swapchain_storage_views[image_index], *bloom_mip_views[0]);
         updateBloomDescriptors(current_frame);
+        updateBloomUpsampleDescriptors(current_frame);
 
-        // Collect bloom descriptor sets for this frame (reuses pre-allocated vector).
+        // Collect bloom descriptor sets for this frame (reuses pre-allocated vectors).
         bloom_sets_for_frame.clear();
         for (uint32_t m{0}; m < bloom_mip_count; ++m) {
             bloom_sets_for_frame.push_back(*bloom_descriptor_sets[current_frame * BLOOM_MAX_MIPS + m]);
         }
+        bloom_upsample_sets_for_frame.clear();
+        for (uint32_t m{0}; m < bloom_mip_count; ++m) {
+            bloom_upsample_sets_for_frame.push_back(*bloom_upsample_descriptor_sets[current_frame * BLOOM_MAX_MIPS + m]);
+        }
 
         recordFrame(cmd, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index], swapchain.extent(), pipeline,
             pipeline.descriptorSet(current_frame), frustum, total_objects, *pp_pipeline, *pp_pipeline_layout, *pp_descriptor_sets[current_frame], bloom_image.image(),
-            bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline, *bloom_downsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame);
+            bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline, *bloom_downsample_pipeline, *bloom_upsample_pipeline, *bloom_pipeline_layout,
+            bloom_sets_for_frame, bloom_upsample_sets_for_frame);
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
