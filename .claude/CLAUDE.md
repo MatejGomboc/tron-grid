@@ -194,7 +194,7 @@ shadows and single-bounce reflections via inline ray query (`VK_KHR_ray_query`,
 BLAS/TLAS). Mesh shaders (task + mesh + fragment), per-object frustum culling,
 meshlet pipeline. Entity/component scene with SoA arrays. Code quality:
 Clang-Tidy, sanitisers, GPU validation, -Werror. See `docs/VISION.md` §
-Phased Roadmap for the full 12-phase plan (0–11).
+Phased Roadmap for the full 13-phase plan (0–12).
 
 ## Off Limits
 

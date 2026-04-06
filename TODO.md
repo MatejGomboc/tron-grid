@@ -257,7 +257,50 @@ libraries (per VISION.md design principles).
 
 ---
 
-## Phase 10 — AI Avatar Integration
+## Phase 10 — Asset Pipeline + Procedural World
+
+**Goal:** Import avatar and NPC body meshes from Blender via glTF 2.0
+(own parser — no third-party libraries). Generate all Grid architecture
+(buildings, data towers, platforms, barriers) procedurally. The Grid
+builds itself; only creature bodies are authored externally.
+
+### Planned Features
+
+- **In-house glTF 2.0 parser** — load `.gltf`/`.glb` files with our
+  own parser (no tinygltf, no fastgltf — write everything ourselves per
+  design principle #2). Extract meshes, materials, skeleton hierarchy,
+  skinning weights, and animations. New `libs/gltf/` static library.
+- **Meshlet conversion** — convert imported triangle meshes to the
+  engine's meshlet format. Extend the existing meshlet builder to accept
+  arbitrary indexed mesh input (not just procedural terrain).
+- **PBR material mapping** — map glTF metallic-roughness materials to
+  the engine's Material SSBO. Texture support: base colour, normal,
+  metallic-roughness, emissive, occlusion maps.
+- **Skeletal animation** — bone hierarchy, joint transforms, GPU-
+  accelerated skinning via compute shader. Animation blending and state
+  machine for NPC and avatar bodies.
+- **Procedural world generation** — algorithmic generation of Grid
+  architecture: data towers, energy barriers, platforms, data streams,
+  geometric structures. All built from code, not from scene files.
+  Parameterised by seed for deterministic generation.
+- **Texture streaming** — load textures on demand via VMA staging.
+  Mip-chain generation on the GPU. Memory budget awareness.
+
+### Acceptance Criteria
+
+- [ ] In-house glTF 2.0 parser (own `libs/gltf/` library)
+- [ ] Load glTF meshes + materials + skeleton + animation
+- [ ] Convert glTF meshes to meshlet format
+- [ ] PBR material mapping with texture support
+- [ ] Skeletal animation with GPU skinning
+- [ ] Procedural Grid architecture generation (data towers, barriers)
+- [ ] Texture streaming with mip generation
+- [ ] Blender → TronGrid round-trip verified for creature bodies
+- [ ] **Phase 10 complete — asset pipeline + procedural world**
+
+---
+
+## Phase 11 — AI Avatar Integration
 
 **Goal:** Load AI brains as DLL/SO plugins. The engine simulates the
 creature's body; the brain DLL is the nervous system. The shared memory
@@ -392,10 +435,12 @@ Multiple human and AI players share a persistent world. See
 
 ## Backlog
 
+- **Cyberpunk HUD** — human player mode UI: energy bar, compass, sector
+  name, threat indicators, scan line overlay. Rendered as GPU-driven 2D
+  overlay in the post-process pass. In-house text rendering (SDF font
+  atlas). Not shown in bot mode — the brain has no HUD.
 - **Memory budget** — VMA budget tracking, streaming eviction policy,
   residency management for large scenes.
-- **Multiplayer** — extract world state to authoritative server, network
-  replication, multiple AI brains per instance.
 
 ---
 
