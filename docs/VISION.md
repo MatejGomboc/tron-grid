@@ -266,7 +266,7 @@ The canonical task checklist lives in `TODO.md`.
 | 9 | Engine architecture + subsystems | Engine class, rendergraph, physics, spatial audio, sensory — all sharing Vulkan machinery |
 | 10 | Asset pipeline + procedural world | In-house glTF parser, skeletal animation, procedural Grid architecture |
 | 11 | AI avatar integration | Sensory nerve bundle (vision, hearing, smell, touch, pain), motor outputs, DLL/SO brain plugins |
-| 12 | Multiplayer | Authoritative server, MMO networking |
+| 12 | Cyberpunk HUD | Human player mode UI — SDF text, energy bar, compass, damage flash |
 
 Phases 3–4 and 5–6 can be developed in parallel after Phase 2.
 
@@ -276,4 +276,5 @@ Phase 0 --> 1 --> 2 --+--> 3 --> 4
                       +--> 5 --> 6
 
 3 + 6 --> 7 --> 8 --> 9 --> 10 --> 11 --> 12
+                                             (Multiplayer: Backlog)
 ```

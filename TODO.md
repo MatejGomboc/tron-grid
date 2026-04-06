@@ -402,43 +402,48 @@ Muscle commands per tick — the engine applies physics:
 - [ ] Light trails for moving entities
 - [ ] Derez particle system
 - [ ] Stage 0 (blind worm) fully functional end-to-end
-- [ ] **Phase 10 complete — AI avatar integration**
+- [ ] **Phase 11 complete — AI avatar integration**
 
 ---
 
-## Phase 12 — Multiplayer
+## Phase 12 — Cyberpunk HUD + Human Player Mode
 
-**Goal:** Extract world state to a separate authoritative server.
-Multiple human and AI players share a persistent world. See
-`docs/VISION.md` § Future: Multiplayer for the architecture.
+**Goal:** Human player mode UI — a sleek cyberpunk heads-up display
+rendered as a GPU-driven 2D overlay. Not shown in bot mode — the
+brain has no HUD, just like a biological creature has no HUD.
 
 ### Planned Features
 
-- **Authoritative server** — separate process/repository that owns
-  the canonical world state. TronGrid client sends inputs, receives
-  state updates.
-- **Network replication** — client-server protocol with prediction
-  and reconciliation. Multiple AI brains with different DLLs appear
-  as ordinary players.
-- **Persistent world** — world state survives server restarts.
-  Programmes, data structures, and energy fields persist.
+- **SDF text rendering** — in-house signed distance field font atlas
+  generator and GPU text renderer. Crisp text at any scale.
+- **Energy bar** — the player's energy level, styled as a neon-glow
+  horizontal bar with scan line artifacts.
+- **Compass / heading indicator** — current facing direction, sector
+  name. Minimal — just enough to orient.
+- **Threat indicators** — directional damage flash on screen edges
+  when hit. No enemy radar — the player uses their eyes and ears.
+- **Scan line overlay** — faint CRT-style overlay that intensifies
+  during low energy or damage. Sells the "inside a digital display"
+  aesthetic.
 
 ### Acceptance Criteria
 
-- [ ] Authoritative server with canonical world state
-- [ ] Client-server network protocol
-- [ ] Prediction and reconciliation
-- [ ] Multiple concurrent players (human + AI)
-- [ ] **Phase 12 complete — multiplayer**
+- [ ] SDF font atlas generation + GPU text rendering
+- [ ] Energy bar with neon-glow styling
+- [ ] Compass / heading indicator
+- [ ] Directional damage flash
+- [ ] Scan line overlay (intensity varies with player state)
+- [ ] HUD hidden in bot mode
+- [ ] **Phase 12 complete — cyberpunk HUD**
 
 ---
 
 ## Backlog
 
-- **Cyberpunk HUD** — human player mode UI: energy bar, compass, sector
-  name, threat indicators, scan line overlay. Rendered as GPU-driven 2D
-  overlay in the post-process pass. In-house text rendering (SDF font
-  atlas). Not shown in bot mode — the brain has no HUD.
+- **Multiplayer** — extract world state to authoritative server, network
+  replication, prediction + reconciliation, multiple concurrent players.
+  See `docs/VISION.md` § Future: Multiplayer. Deferred until single-player
+  is fully polished.
 - **Memory budget** — VMA budget tracking, streaming eviction policy,
   residency management for large scenes.
 
