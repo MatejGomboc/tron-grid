@@ -86,6 +86,12 @@ public:
         return m_as_scratch_alignment;
     }
 
+    //! Maximum MSAA sample count supported by both colour and depth framebuffers.
+    [[nodiscard]] vk::SampleCountFlagBits maxMsaaSamples() const
+    {
+        return m_max_msaa_samples;
+    }
+
 private:
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
     vk::raii::PhysicalDevice m_physical_device{nullptr}; //!< Selected physical device.
@@ -96,4 +102,5 @@ private:
     uint32_t m_present_family_index{UINT32_MAX}; //!< Present queue family index (sentinel until assigned).
     std::string m_device_name; //!< Human-readable GPU name.
     uint32_t m_as_scratch_alignment{128}; //!< AS scratch buffer alignment (queried at device creation).
+    vk::SampleCountFlagBits m_max_msaa_samples{vk::SampleCountFlagBits::e1}; //!< Maximum MSAA sample count for colour + depth.
 };

@@ -216,10 +216,12 @@ public:
         \param height Image height in pixels.
         \param format Vulkan image format.
         \param usage Vulkan image usage flags.
+        \param sample_count Number of MSAA samples (default: single-sample).
         \param mip_levels Number of mip levels (1 = no mip chain).
         \return An RAII wrapper owning the image and its allocation.
     */
-    [[nodiscard]] AllocatedImage createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, uint32_t mip_levels = 1) const;
+    [[nodiscard]] AllocatedImage createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
+        VkSampleCountFlagBits sample_count = VK_SAMPLE_COUNT_1_BIT, uint32_t mip_levels = 1) const;
 
     //! Raw VmaAllocator handle.
     [[nodiscard]] VmaAllocator handle() const

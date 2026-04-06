@@ -88,12 +88,13 @@ public:
         \param device The logical device.
         \param colour_format The swapchain colour attachment format.
         \param depth_format The depth attachment format.
+        \param sample_count MSAA sample count for rasterisation (enables full sample-rate shading).
         \param task_spirv Task shader SPIR-V binary.
         \param mesh_frag_spirv Mesh + fragment shader SPIR-V binary (combined module).
         \param frames_in_flight Number of frames in flight (for per-frame descriptor sets).
         \param logger Logger reference.
     */
-    Pipeline(const Device& device, vk::Format colour_format, vk::Format depth_format, const std::vector<uint32_t>& task_spirv,
+    Pipeline(const Device& device, vk::Format colour_format, vk::Format depth_format, vk::SampleCountFlagBits sample_count, const std::vector<uint32_t>& task_spirv,
         const std::vector<uint32_t>& mesh_frag_spirv, uint32_t frames_in_flight, LoggingLib::Logger& logger);
 
     // Non-copyable, non-movable.
