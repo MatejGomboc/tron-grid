@@ -184,7 +184,7 @@ have no diffuse component (metallic = 1 zeroes out diffuse entirely).
 
 ## Combined BRDF Evaluation
 
-For a single point light with colour `L_c` and attenuation `a`:
+For a single light sample with radiance `L_c` and attenuation `a`:
 
 ```hlsl
 float3 H = normalize(V + L);

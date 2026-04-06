@@ -71,15 +71,30 @@ struct ObjectBounds {
     float radius{0.0f}; //!< Bounding sphere radius.
 };
 
-//! Camera uniform buffer — view and projection matrices + camera + light, uploaded once per frame.
+//! Camera uniform buffer — view/projection matrices + camera state, uploaded once per frame.
 struct CameraUBO {
     MathLib::Mat4 view{}; //!< View matrix.
     MathLib::Mat4 projection{}; //!< Projection matrix.
     MathLib::Mat4 inv_view_projection{}; //!< Inverse view-projection matrix (for skybox ray reconstruction).
-    MathLib::Vec3 light_pos{}; //!< Point light world-space position.
-    float light_intensity{1.0f}; //!< Point light intensity (pre-multiplier before inverse square falloff).
+    MathLib::Mat4 prev_view_projection{}; //!< Previous frame's view-projection (for motion vectors).
     MathLib::Vec3 camera_pos{}; //!< Camera world-space position (for view vector in PBR).
-    float camera_pad{0.0f}; //!< Padding to 16-byte alignment.
+    uint32_t frame_count{0}; //!< Frame counter (for pseudo-random sampling in emissive lighting).
+    uint32_t emissive_count{0}; //!< Number of emissive triangles in the emissive SSBO.
+    float total_emissive_power{0.0f}; //!< Sum of all emissive triangle powers (for PDF normalisation).
+    float ubo_pad0{0.0f}; //!< Padding to 16-byte alignment.
+    float ubo_pad1{0.0f}; //!< Padding to 16-byte alignment.
+};
+
+//! Emissive triangle for area light sampling — matches the Slang EmissiveTriangle struct.
+struct EmissiveTriangle {
+    MathLib::Vec3 v0{}; //!< Triangle vertex 0.
+    float area{0.0f}; //!< Triangle surface area.
+    MathLib::Vec3 v1{}; //!< Triangle vertex 1.
+    float cdf{0.0f}; //!< Cumulative distribution function value (power-weighted).
+    MathLib::Vec3 v2{}; //!< Triangle vertex 2.
+    float emissive_pad0{0.0f}; //!< Padding.
+    MathLib::Vec3 emissive{}; //!< Emissive radiance (colour × strength).
+    float emissive_pad1{0.0f}; //!< Padding.
 };
 
 //! Push constants for the task shader — frustum planes + object count.
@@ -148,6 +163,9 @@ public:
     //! Binds the material SSBO to descriptor binding 8 for the given frame index.
     void bindMaterialSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const;
 
+    //! Binds the emissive triangle SSBO to descriptor binding 9 for the given frame index.
+    void bindEmissiveSSBO(uint32_t frame_index, VkBuffer buffer, VkDeviceSize size) const;
+
     //! Updates the camera UBO for the given frame index via its mapped pointer.
     void updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const;
 
@@ -161,7 +179,7 @@ private:
     const Device* m_device{nullptr}; //!< Non-owning device reference.
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
 
-    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 8 bindings: UBO + 6 SSBOs + TLAS.
+    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 10 bindings: UBO + 8 SSBOs + TLAS.
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
     vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.

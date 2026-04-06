@@ -22,10 +22,13 @@ struct CameraData {
     float4x4 view;
     float4x4 projection;
     float4x4 inv_view_projection;
-    float3 light_pos;
-    float light_intensity;
+    float4x4 prev_view_projection;
     float3 camera_pos;
-    float camera_pad;
+    uint frame_count;
+    uint emissive_count;
+    float total_emissive_power;
+    float ubo_pad0;
+    float ubo_pad1;
 };
 
 [[vk::binding(0, 0)]]

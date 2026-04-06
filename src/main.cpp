@@ -518,9 +518,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline,
     camera state, input processing, and delta time.
 */
-static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t total_objects,
-    vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
-    LoggingLib::Logger& logger)
+static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t total_objects, uint32_t emissive_count,
+    float total_emissive_power, vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex,
+    std::condition_variable& render_cv, LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -1107,6 +1107,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     std::chrono::steady_clock::time_point last_time{start_time};
 
     uint32_t current_frame{0};
+    uint32_t frame_counter{0};
+    MathLib::Mat4 prev_view_projection{};
 
     // Pre-allocated scratch vector for bloom descriptor sets (avoids per-frame heap allocation).
     std::vector<vk::DescriptorSet> bloom_sets_for_frame;
@@ -1307,11 +1309,16 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             CameraUBO ubo{};
             ubo.view = camera.viewMatrix();
             ubo.projection = camera.projectionMatrix(aspect);
-            ubo.inv_view_projection = (ubo.projection * ubo.view).inversed();
-            ubo.light_pos = MathLib::Vec3{0.0f, 17.0f, 0.0f};
-            ubo.light_intensity = 150.0f;
+            MathLib::Mat4 current_vp{ubo.projection * ubo.view};
+            ubo.inv_view_projection = current_vp.inversed();
+            ubo.prev_view_projection = prev_view_projection;
             ubo.camera_pos = camera.position();
+            ubo.frame_count = frame_counter;
+            ubo.emissive_count = emissive_count;
+            ubo.total_emissive_power = total_emissive_power;
             pipeline.updateCameraUBO(current_frame, ubo);
+            prev_view_projection = current_vp;
+            ++frame_counter;
             frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
         }
 
@@ -1477,10 +1484,20 @@ int main()
         logger.logInfo("Terrain: " + std::to_string(terrain.vertices.size()) + " vertices, " + std::to_string(terrain.indices.size() / 3) + " triangles, "
             + std::to_string(terrain_meshlet_count) + " meshlets.");
 
+        // ── Neon tube geometry (thin emissive quads along grid edges) ──
+
+        NeonTubeMesh neon_tubes{generateNeonTubes(terrain_config)};
+
+        MeshData cyan_meshlets{buildMeshlets(neon_tubes.cyan.positions, neon_tubes.cyan.indices)};
+        MeshData orange_meshlets{buildMeshlets(neon_tubes.orange.positions, neon_tubes.orange.indices)};
+
+        logger.logInfo("Neon tubes: cyan " + std::to_string(neon_tubes.cyan.indices.size() / 3) + " tris, orange " + std::to_string(neon_tubes.orange.indices.size() / 3)
+            + " tris.");
+
         // ── Light orb sphere ──
 
         constexpr float LIGHT_ORB_RADIUS{3.0f};
-        MathLib::Vec3 light_pos{0.0f, 17.0f, 0.0f};
+        MathLib::Vec3 orb_pos{0.0f, 17.0f, 0.0f};
 
         std::vector<MathLib::Vec3> sphere_raw_positions;
         std::vector<uint32_t> sphere_raw_indices;
@@ -1530,11 +1547,51 @@ int main()
             m.triangle_offset += terrain_tri_idx_count;
         }
 
-        // Combined vertex data — terrain followed by sphere.
+        // Cyan neon tube meshlet offsets — after sphere.
+        uint32_t cyan_meshlet_offset{sphere_meshlet_offset + sphere_meshlet_count};
+        uint32_t cyan_meshlet_count{static_cast<uint32_t>(cyan_meshlets.meshlets.size())};
+
+        uint32_t sphere_vertex_count{static_cast<uint32_t>(sphere_vertices.size())};
+        uint32_t combined_vert_count_before_cyan{terrain_vertex_count + sphere_vertex_count};
+        for (uint32_t& idx : cyan_meshlets.vertex_indices) {
+            idx += combined_vert_count_before_cyan;
+        }
+
+        uint32_t sphere_vert_idx_count{static_cast<uint32_t>(sphere_meshlets.vertex_indices.size())};
+        uint32_t sphere_tri_idx_count{static_cast<uint32_t>(sphere_meshlets.triangle_indices.size())};
+        uint32_t cum_vert_idx{terrain_vert_idx_count + sphere_vert_idx_count};
+        uint32_t cum_tri_idx{terrain_tri_idx_count + sphere_tri_idx_count};
+        for (Meshlet& m : cyan_meshlets.meshlets) {
+            m.vertex_offset += cum_vert_idx;
+            m.triangle_offset += cum_tri_idx;
+        }
+
+        // Orange neon tube meshlet offsets — after cyan.
+        uint32_t orange_meshlet_offset{cyan_meshlet_offset + cyan_meshlet_count};
+        uint32_t orange_meshlet_count{static_cast<uint32_t>(orange_meshlets.meshlets.size())};
+
+        uint32_t cyan_vertex_count{static_cast<uint32_t>(neon_tubes.cyan.vertices.size())};
+        uint32_t combined_vert_count_before_orange{combined_vert_count_before_cyan + cyan_vertex_count};
+        for (uint32_t& idx : orange_meshlets.vertex_indices) {
+            idx += combined_vert_count_before_orange;
+        }
+
+        uint32_t cyan_vert_idx_count{static_cast<uint32_t>(cyan_meshlets.vertex_indices.size())};
+        uint32_t cyan_tri_idx_count{static_cast<uint32_t>(cyan_meshlets.triangle_indices.size())};
+        uint32_t cum_vert_idx_2{cum_vert_idx + cyan_vert_idx_count};
+        uint32_t cum_tri_idx_2{cum_tri_idx + cyan_tri_idx_count};
+        for (Meshlet& m : orange_meshlets.meshlets) {
+            m.vertex_offset += cum_vert_idx_2;
+            m.triangle_offset += cum_tri_idx_2;
+        }
+
+        // Combined vertex data — terrain + sphere + cyan neon + orange neon.
         std::vector<Vertex> all_vertices;
-        all_vertices.reserve(terrain.vertices.size() + sphere_vertices.size());
+        all_vertices.reserve(terrain.vertices.size() + sphere_vertices.size() + neon_tubes.cyan.vertices.size() + neon_tubes.orange.vertices.size());
         all_vertices.insert(all_vertices.end(), terrain.vertices.begin(), terrain.vertices.end());
         all_vertices.insert(all_vertices.end(), sphere_vertices.begin(), sphere_vertices.end());
+        all_vertices.insert(all_vertices.end(), neon_tubes.cyan.vertices.begin(), neon_tubes.cyan.vertices.end());
+        all_vertices.insert(all_vertices.end(), neon_tubes.orange.vertices.begin(), neon_tubes.orange.vertices.end());
 
         logger.logInfo("Light orb: " + std::to_string(sphere_vertices.size()) + " vertices, " + std::to_string(sphere_indices.size() / 3) + " triangles, "
             + std::to_string(sphere_meshlet_count) + " meshlets.");
@@ -1842,14 +1899,278 @@ int main()
 
         logger.logInfo("Sphere BLAS built: " + std::to_string(sphere_triangle_count) + " triangles.");
 
-        // Scene — terrain at origin + light orb sphere at light position.
+        // ── Cyan neon tube index buffer + BLAS ──
+
+        VkDeviceSize cyan_index_buffer_size{static_cast<VkDeviceSize>(neon_tubes.cyan.indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer cyan_index_buffer{allocator.createBuffer(cyan_index_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress
+                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer cyan_idx_staging{allocator.createBuffer(cyan_index_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(cyan_idx_staging.allocationInfo().pMappedData, neon_tubes.cyan.indices.data(), cyan_index_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = cyan_index_buffer_size;
+            copy_cmd.copyBuffer(cyan_idx_staging.buffer(), cyan_index_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        // Cyan BLAS — references cyan neon portion of combined vertex buffer.
+        vk::DeviceAddress cyan_vertex_address{vertex_device_address + static_cast<vk::DeviceSize>(combined_vert_count_before_cyan * sizeof(Vertex))};
+
+        vk::BufferDeviceAddressInfo cyan_index_addr_info{};
+        cyan_index_addr_info.buffer = cyan_index_buffer.buffer();
+        vk::DeviceAddress cyan_index_device_address{device.get().getBufferAddress(cyan_index_addr_info)};
+
+        vk::AccelerationStructureGeometryTrianglesDataKHR cyan_tri_data{};
+        cyan_tri_data.vertexFormat = vk::Format::eR32G32B32Sfloat;
+        cyan_tri_data.vertexData.deviceAddress = cyan_vertex_address;
+        cyan_tri_data.vertexStride = sizeof(Vertex);
+        cyan_tri_data.maxVertex = static_cast<uint32_t>(neon_tubes.cyan.vertices.size() - 1);
+        cyan_tri_data.indexType = vk::IndexType::eUint32;
+        cyan_tri_data.indexData.deviceAddress = cyan_index_device_address;
+
+        vk::AccelerationStructureGeometryKHR cyan_geometry{};
+        cyan_geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+        cyan_geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+        cyan_geometry.geometry.triangles = cyan_tri_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR cyan_build_info{};
+        cyan_build_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        cyan_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        cyan_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        cyan_build_info.geometryCount = 1;
+        cyan_build_info.setGeometries(cyan_geometry);
+
+        uint32_t cyan_triangle_count{static_cast<uint32_t>(neon_tubes.cyan.indices.size() / 3)};
+        vk::AccelerationStructureBuildSizesInfoKHR cyan_build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, cyan_build_info, {cyan_triangle_count})};
+
+        AllocatedBuffer cyan_blas_buffer{allocator.createBuffer(cyan_build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR cyan_as_create{};
+        cyan_as_create.buffer = cyan_blas_buffer.buffer();
+        cyan_as_create.size = cyan_build_sizes.accelerationStructureSize;
+        cyan_as_create.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        vk::raii::AccelerationStructureKHR cyan_blas{device.get(), cyan_as_create};
+
+        cyan_build_info.dstAccelerationStructure = *cyan_blas;
+
+        {
+            uint32_t scratch_align{device.asScratchAlignment()};
+            AllocatedBuffer scratch{allocator.createBuffer(cyan_build_sizes.buildScratchSize + scratch_align,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo scratch_addr_info{};
+            scratch_addr_info.buffer = scratch.buffer();
+            vk::DeviceAddress scratch_addr{device.get().getBufferAddress(scratch_addr_info)};
+            vk::DeviceAddress as_align_mask{static_cast<vk::DeviceAddress>(scratch_align) - 1};
+            cyan_build_info.scratchData.deviceAddress = (scratch_addr + as_align_mask) & ~as_align_mask;
+
+            vk::CommandBufferAllocateInfo cmd_alloc{};
+            cmd_alloc.commandPool = *command_pool;
+            cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
+            cmd_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers cmds(device.get(), cmd_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = cmds[0];
+            vk::CommandBufferBeginInfo begin_info{};
+            begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(begin_info);
+
+            vk::AccelerationStructureBuildRangeInfoKHR cyan_range{};
+            cyan_range.primitiveCount = cyan_triangle_count;
+            const vk::AccelerationStructureBuildRangeInfoKHR* cyan_range_ptr{&cyan_range};
+            build_cmd.buildAccelerationStructuresKHR({cyan_build_info}, {cyan_range_ptr});
+
+            vk::MemoryBarrier2 as_barrier{};
+            as_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            as_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            as_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo dep_info{};
+            dep_info.setMemoryBarriers(as_barrier);
+            build_cmd.pipelineBarrier2(dep_info);
+
+            build_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            vk::SubmitInfo build_submit{};
+            build_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Cyan neon BLAS built: " + std::to_string(cyan_triangle_count) + " triangles.");
+
+        // ── Orange neon tube index buffer + BLAS ──
+
+        VkDeviceSize orange_index_buffer_size{static_cast<VkDeviceSize>(neon_tubes.orange.indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer orange_index_buffer{allocator.createBuffer(orange_index_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress
+                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer orange_idx_staging{allocator.createBuffer(orange_index_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(orange_idx_staging.allocationInfo().pMappedData, neon_tubes.orange.indices.data(), orange_index_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = orange_index_buffer_size;
+            copy_cmd.copyBuffer(orange_idx_staging.buffer(), orange_index_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        // Orange BLAS — references orange neon portion of combined vertex buffer.
+        vk::DeviceAddress orange_vertex_address{vertex_device_address + static_cast<vk::DeviceSize>(combined_vert_count_before_orange * sizeof(Vertex))};
+
+        vk::BufferDeviceAddressInfo orange_index_addr_info{};
+        orange_index_addr_info.buffer = orange_index_buffer.buffer();
+        vk::DeviceAddress orange_index_device_address{device.get().getBufferAddress(orange_index_addr_info)};
+
+        vk::AccelerationStructureGeometryTrianglesDataKHR orange_tri_data{};
+        orange_tri_data.vertexFormat = vk::Format::eR32G32B32Sfloat;
+        orange_tri_data.vertexData.deviceAddress = orange_vertex_address;
+        orange_tri_data.vertexStride = sizeof(Vertex);
+        orange_tri_data.maxVertex = static_cast<uint32_t>(neon_tubes.orange.vertices.size() - 1);
+        orange_tri_data.indexType = vk::IndexType::eUint32;
+        orange_tri_data.indexData.deviceAddress = orange_index_device_address;
+
+        vk::AccelerationStructureGeometryKHR orange_geometry{};
+        orange_geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+        orange_geometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+        orange_geometry.geometry.triangles = orange_tri_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR orange_build_info{};
+        orange_build_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        orange_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        orange_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        orange_build_info.geometryCount = 1;
+        orange_build_info.setGeometries(orange_geometry);
+
+        uint32_t orange_triangle_count{static_cast<uint32_t>(neon_tubes.orange.indices.size() / 3)};
+        vk::AccelerationStructureBuildSizesInfoKHR orange_build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, orange_build_info, {orange_triangle_count})};
+
+        AllocatedBuffer orange_blas_buffer{allocator.createBuffer(orange_build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR orange_as_create{};
+        orange_as_create.buffer = orange_blas_buffer.buffer();
+        orange_as_create.size = orange_build_sizes.accelerationStructureSize;
+        orange_as_create.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        vk::raii::AccelerationStructureKHR orange_blas{device.get(), orange_as_create};
+
+        orange_build_info.dstAccelerationStructure = *orange_blas;
+
+        {
+            uint32_t scratch_align{device.asScratchAlignment()};
+            AllocatedBuffer scratch{allocator.createBuffer(orange_build_sizes.buildScratchSize + scratch_align,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo scratch_addr_info{};
+            scratch_addr_info.buffer = scratch.buffer();
+            vk::DeviceAddress scratch_addr{device.get().getBufferAddress(scratch_addr_info)};
+            vk::DeviceAddress as_align_mask{static_cast<vk::DeviceAddress>(scratch_align) - 1};
+            orange_build_info.scratchData.deviceAddress = (scratch_addr + as_align_mask) & ~as_align_mask;
+
+            vk::CommandBufferAllocateInfo cmd_alloc{};
+            cmd_alloc.commandPool = *command_pool;
+            cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
+            cmd_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers cmds(device.get(), cmd_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = cmds[0];
+            vk::CommandBufferBeginInfo begin_info{};
+            begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(begin_info);
+
+            vk::AccelerationStructureBuildRangeInfoKHR orange_range{};
+            orange_range.primitiveCount = orange_triangle_count;
+            const vk::AccelerationStructureBuildRangeInfoKHR* orange_range_ptr{&orange_range};
+            build_cmd.buildAccelerationStructuresKHR({orange_build_info}, {orange_range_ptr});
+
+            vk::MemoryBarrier2 as_barrier{};
+            as_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            as_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            as_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo dep_info{};
+            dep_info.setMemoryBarriers(as_barrier);
+            build_cmd.pipelineBarrier2(dep_info);
+
+            build_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            vk::SubmitInfo build_submit{};
+            build_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Orange neon BLAS built: " + std::to_string(orange_triangle_count) + " triangles.");
+
+        // Scene — terrain at origin, orb above, cyan and orange neon tubes at origin.
         Scene scene;
         Transform terrain_transform{};
         (void)scene.addEntity(terrain_transform, {0}, {{0.0f, 0.0f, 0.0f}, terrain.bounding_radius});
 
         Transform orb_transform{};
-        orb_transform.position = light_pos;
-        (void)scene.addEntity(orb_transform, {1}, {light_pos, LIGHT_ORB_RADIUS});
+        orb_transform.position = orb_pos;
+        (void)scene.addEntity(orb_transform, {1}, {orb_pos, LIGHT_ORB_RADIUS});
+
+        Transform cyan_neon_transform{};
+        (void)scene.addEntity(cyan_neon_transform, {2}, {{0.0f, 0.0f, 0.0f}, neon_tubes.bounding_radius});
+
+        Transform orange_neon_transform{};
+        (void)scene.addEntity(orange_neon_transform, {3}, {{0.0f, 0.0f, 0.0f}, neon_tubes.bounding_radius});
 
         uint32_t total_objects{scene.entityCount()};
 
@@ -1864,8 +2185,16 @@ int main()
         sphere_blas_addr_info.accelerationStructure = *sphere_blas;
         vk::DeviceAddress sphere_blas_address{device.get().getAccelerationStructureAddressKHR(sphere_blas_addr_info)};
 
-        // BLAS reference per mesh ID — mesh 0 = terrain, mesh 1 = sphere.
-        std::vector<vk::DeviceAddress> blas_per_mesh{terrain_blas_address, sphere_blas_address};
+        vk::AccelerationStructureDeviceAddressInfoKHR cyan_blas_addr_info{};
+        cyan_blas_addr_info.accelerationStructure = *cyan_blas;
+        vk::DeviceAddress cyan_blas_address{device.get().getAccelerationStructureAddressKHR(cyan_blas_addr_info)};
+
+        vk::AccelerationStructureDeviceAddressInfoKHR orange_blas_addr_info{};
+        orange_blas_addr_info.accelerationStructure = *orange_blas;
+        vk::DeviceAddress orange_blas_address{device.get().getAccelerationStructureAddressKHR(orange_blas_addr_info)};
+
+        // BLAS reference per mesh ID — 0=terrain, 1=sphere, 2=cyan neon, 3=orange neon.
+        std::vector<vk::DeviceAddress> blas_per_mesh{terrain_blas_address, sphere_blas_address, cyan_blas_address, orange_blas_address};
 
         // Build instance data — one per scene entity.
         std::vector<VkAccelerationStructureInstanceKHR> as_instances;
@@ -2038,6 +2367,28 @@ int main()
                 1.0f, // opacity.
                 0.0f, // pad.
             },
+            {
+                // Material 2: cyan neon tube.
+                {}, // base_colour — not used (pure emissive).
+                1.0f, // roughness.
+                {0.0f, 0.8f, 1.0f}, // emissive — cyan.
+                15.0f, // emissive_strength.
+                0.0f, // metallic.
+                1.5f, // ior.
+                1.0f, // opacity.
+                0.0f, // pad.
+            },
+            {
+                // Material 3: orange neon tube.
+                {}, // base_colour — not used (pure emissive).
+                1.0f, // roughness.
+                {1.0f, 0.03f, 0.0f}, // emissive — orange.
+                15.0f, // emissive_strength.
+                0.0f, // metallic.
+                1.5f, // ior.
+                1.0f, // opacity.
+                0.0f, // pad.
+            },
         };
 
         // Per-object data — meshlet offsets and material index.
@@ -2049,6 +2400,8 @@ int main()
         std::vector<MeshInfo> mesh_infos{
             {terrain_meshlet_offset, terrain_meshlet_count, 0},
             {sphere_meshlet_offset, sphere_meshlet_count, 1},
+            {cyan_meshlet_offset, cyan_meshlet_count, 2},
+            {orange_meshlet_offset, orange_meshlet_count, 3},
         };
 
         std::vector<ObjectData> object_data;
@@ -2150,18 +2503,24 @@ int main()
 
         // ── Combined meshlet SSBOs ──
 
-        // Combine meshlet data from terrain + sphere.
+        // Combine meshlet data from terrain + sphere + cyan neon + orange neon.
         std::vector<Meshlet> all_meshlets;
         all_meshlets.insert(all_meshlets.end(), terrain_meshlets.meshlets.begin(), terrain_meshlets.meshlets.end());
         all_meshlets.insert(all_meshlets.end(), sphere_meshlets.meshlets.begin(), sphere_meshlets.meshlets.end());
+        all_meshlets.insert(all_meshlets.end(), cyan_meshlets.meshlets.begin(), cyan_meshlets.meshlets.end());
+        all_meshlets.insert(all_meshlets.end(), orange_meshlets.meshlets.begin(), orange_meshlets.meshlets.end());
 
         std::vector<uint32_t> all_vert_indices;
         all_vert_indices.insert(all_vert_indices.end(), terrain_meshlets.vertex_indices.begin(), terrain_meshlets.vertex_indices.end());
         all_vert_indices.insert(all_vert_indices.end(), sphere_meshlets.vertex_indices.begin(), sphere_meshlets.vertex_indices.end());
+        all_vert_indices.insert(all_vert_indices.end(), cyan_meshlets.vertex_indices.begin(), cyan_meshlets.vertex_indices.end());
+        all_vert_indices.insert(all_vert_indices.end(), orange_meshlets.vertex_indices.begin(), orange_meshlets.vertex_indices.end());
 
         std::vector<uint8_t> all_tri_indices;
         all_tri_indices.insert(all_tri_indices.end(), terrain_meshlets.triangle_indices.begin(), terrain_meshlets.triangle_indices.end());
         all_tri_indices.insert(all_tri_indices.end(), sphere_meshlets.triangle_indices.begin(), sphere_meshlets.triangle_indices.end());
+        all_tri_indices.insert(all_tri_indices.end(), cyan_meshlets.triangle_indices.begin(), cyan_meshlets.triangle_indices.end());
+        all_tri_indices.insert(all_tri_indices.end(), orange_meshlets.triangle_indices.begin(), orange_meshlets.triangle_indices.end());
 
         VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(all_meshlets.size() * sizeof(Meshlet))};
         AllocatedBuffer meshlet_desc_ssbo{allocator.createBuffer(meshlet_desc_size,
@@ -2229,12 +2588,124 @@ int main()
 
         logger.logInfo("Bounds + meshlet SSBOs uploaded.");
 
+        // ── Emissive triangle list (for area light sampling) ──
+
+        // Collect all emissive triangles from neon tubes and orb.
+        std::vector<EmissiveTriangle> emissive_list;
+
+        // Helper: adds all triangles from a sub-mesh with given emissive radiance.
+        auto addEmissiveTriangles = [&emissive_list](const NeonSubMesh& mesh, const MathLib::Vec3& emissive_colour, float emissive_strength) {
+            MathLib::Vec3 emissive_radiance{emissive_colour.x * emissive_strength, emissive_colour.y * emissive_strength, emissive_colour.z * emissive_strength};
+            for (size_t t{0}; t < mesh.indices.size(); t += 3) {
+                MathLib::Vec3 v0{mesh.positions[mesh.indices[t + 0]]};
+                MathLib::Vec3 v1{mesh.positions[mesh.indices[t + 1]]};
+                MathLib::Vec3 v2{mesh.positions[mesh.indices[t + 2]]};
+
+                MathLib::Vec3 edge1{v1 - v0};
+                MathLib::Vec3 edge2{v2 - v0};
+                float area{edge1.cross(edge2).length() * 0.5f};
+
+                EmissiveTriangle etri{};
+                etri.v0 = v0;
+                etri.v1 = v1;
+                etri.v2 = v2;
+                etri.emissive = emissive_radiance;
+                etri.area = area;
+                emissive_list.push_back(etri);
+            }
+        };
+
+        // Cyan neon tubes.
+        addEmissiveTriangles(neon_tubes.cyan, {0.0f, 0.8f, 1.0f}, 15.0f);
+        // Orange neon tubes.
+        addEmissiveTriangles(neon_tubes.orange, {1.0f, 0.03f, 0.0f}, 15.0f);
+
+        // Orb emissive triangles.
+        {
+            MathLib::Vec3 orb_emissive{1.0f * 20.0f, 0.03f * 20.0f, 0.0f};
+            for (size_t t{0}; t < sphere_indices.size(); t += 3) {
+                MathLib::Vec3 v0{sphere_positions[sphere_indices[t + 0]] + orb_pos};
+                MathLib::Vec3 v1{sphere_positions[sphere_indices[t + 1]] + orb_pos};
+                MathLib::Vec3 v2{sphere_positions[sphere_indices[t + 2]] + orb_pos};
+
+                MathLib::Vec3 edge1{v1 - v0};
+                MathLib::Vec3 edge2{v2 - v0};
+                float area{edge1.cross(edge2).length() * 0.5f};
+
+                EmissiveTriangle etri{};
+                etri.v0 = v0;
+                etri.v1 = v1;
+                etri.v2 = v2;
+                etri.emissive = orb_emissive;
+                etri.area = area;
+                emissive_list.push_back(etri);
+            }
+        }
+
+        // Build power-weighted CDF.
+        float total_power{0.0f};
+        for (EmissiveTriangle& etri : emissive_list) {
+            float lum{0.2126f * etri.emissive.x + 0.7152f * etri.emissive.y + 0.0722f * etri.emissive.z};
+            total_power += etri.area * lum;
+        }
+
+        float running_cdf{0.0f};
+        for (EmissiveTriangle& etri : emissive_list) {
+            float lum{0.2126f * etri.emissive.x + 0.7152f * etri.emissive.y + 0.0722f * etri.emissive.z};
+            running_cdf += etri.area * lum / total_power;
+            etri.cdf = running_cdf;
+        }
+        // Ensure last CDF value is exactly 1.0.
+        if (!emissive_list.empty()) {
+            emissive_list.back().cdf = 1.0f;
+        }
+
+        uint32_t emissive_count{static_cast<uint32_t>(emissive_list.size())};
+        logger.logInfo("Emissive triangle list: " + std::to_string(emissive_count) + " triangles, total power " + std::to_string(total_power) + ".");
+
+        // Upload emissive SSBO.
+        VkDeviceSize emissive_ssbo_size{static_cast<VkDeviceSize>(emissive_list.size() * sizeof(EmissiveTriangle))};
+        AllocatedBuffer emissive_ssbo{allocator.createBuffer(emissive_ssbo_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst), 0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer emissive_staging{allocator.createBuffer(emissive_ssbo_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(emissive_staging.allocationInfo().pMappedData, emissive_list.data(), emissive_ssbo_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = emissive_ssbo_size;
+            copy_cmd.copyBuffer(emissive_staging.buffer(), emissive_ssbo.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Emissive SSBO uploaded (" + std::to_string(emissive_ssbo_size) + " bytes).");
+
         // Bind all descriptor sets — SSBOs + TLAS are static, UBOs are per-frame
         for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
             pipeline.bindSSBOs(i, object_ssbo.buffer(), ssbo_size, bounds_ssbo.buffer(), bounds_size, meshlet_desc_ssbo.buffer(), meshlet_desc_size,
                 vertex_buffer.buffer(), vertex_buffer_size, meshlet_vert_idx_ssbo.buffer(), meshlet_vert_idx_size, meshlet_tri_idx_ssbo.buffer(), meshlet_tri_idx_size);
             pipeline.bindTLAS(i, *tlas);
             pipeline.bindMaterialSSBO(i, material_ssbo.buffer(), material_ssbo_size);
+            pipeline.bindEmissiveSSBO(i, emissive_ssbo.buffer(), emissive_ssbo_size);
         }
 
         // Render event signal — main thread emits, render thread consumes
@@ -2244,7 +2715,7 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), static_cast<uint32_t>(total_objects),
-            std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+            emissive_count, total_power, std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {

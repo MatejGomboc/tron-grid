@@ -114,7 +114,7 @@ tron_grid/
 │   ├── postprocess.slang # Slang compute post-process (ACES tonemapping, sRGB encoding)
 │   ├── bloom_downsample.slang # Slang compute bloom (extraction + mip chain downsample)
 │   ├── skybox.slang       # Slang procedural cyberpunk skybox (value noise clouds)
-│   ├── terrain.hpp/cpp   # Procedural terrain generator (value noise, flat shading)
+│   ├── terrain.hpp/cpp   # Procedural terrain + neon tube geometry (value noise, flat shading)
 │   ├── triangle.slang    # Legacy vertex + fragment shader (kept for reference)
 │   ├── cull.slang        # Legacy compute cull shader (kept for reference)
 │   ├── volk.cpp          # Volk dynamic loader translation unit
@@ -182,19 +182,23 @@ Smith-GGX visibility, Schlick Fresnel) and dual-colour neon tube edges (cyan
 primary + orange accent on major grid lines). HDR framebuffer
 (`R16G16B16A16_SFLOAT`), compute post-process pass (ACES fitted RRT+ODT
 tonemapping with AP1 hue preservation, exact sRGB encoding, swapchain
-`B8G8R8A8_UNORM` with storage writes). Bloom with soft glow halos (Karis extraction, mip chain downsample, 3×3
-tent-filter upsample, HDR composite with tunable strength). 8× MSAA with
-full sample-rate shading, screen-space derivative wireframe antialiasing
-(fwidth-based smoothstep), automatic GPU capability fallback. Procedural
-cyberpunk skybox (value noise data fog clouds, horizon gradient, animated
-drift). Per-material PBR via material SSBO (binding 8, data-driven). Cinematic
-post-process (chromatic aberration, cool colour grade, vignette, scan lines).
-RT hard
-shadows and single-bounce reflections via inline ray query (`VK_KHR_ray_query`,
-BLAS/TLAS). Mesh shaders (task + mesh + fragment), per-object frustum culling,
-meshlet pipeline. Entity/component scene with SoA arrays. Code quality:
-Clang-Tidy, sanitisers, GPU validation, -Werror. See `docs/VISION.md` §
-Phased Roadmap for the full 14-phase plan (0–13).
+`B8G8R8A8_UNORM` with storage writes). Bloom with soft glow halos (Karis
+extraction, mip chain downsample, 3×3 tent-filter upsample, HDR composite
+with tunable strength). 8× MSAA with full sample-rate shading, screen-space
+derivative wireframe antialiasing (fwidth-based smoothstep), automatic GPU
+capability fallback. Procedural cyberpunk skybox (value noise data fog clouds,
+horizon gradient, animated drift). Per-material PBR via material SSBO
+(binding 8, data-driven). Cinematic post-process (chromatic aberration, cool
+colour grade, vignette, scan lines). Emissive area light sampling — real neon
+tube quad geometry (binding 9 emissive triangle SSBO) replaces the point light;
+Monte Carlo 1-spp with power-weighted CDF, PCG hash RNG, Cook-Torrance BRDF
+evaluation, shadow ray visibility. 4 BLASes (terrain, orb, cyan neon, orange
+neon). Motion vectors ready (`prev_view_projection` + `frame_count` in
+CameraUBO). RT single-bounce reflections with per-material hit lookup via
+`CommittedInstanceID()`. Mesh shaders (task + mesh + fragment), per-object
+frustum culling, meshlet pipeline. Entity/component scene with SoA arrays.
+Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror. See
+`docs/VISION.md` § Phased Roadmap for the full 14-phase plan (0–13).
 
 ## Off Limits
 

@@ -20,10 +20,13 @@ struct CameraData {
     float4x4 view;
     float4x4 projection;
     float4x4 inv_view_projection; // Inverse view-projection (for skybox ray reconstruction).
-    float3 light_pos; // Point light world-space position.
-    float light_intensity; // Point light intensity (pre-multiplier before inverse square falloff).
+    float4x4 prev_view_projection; // Previous frame's view-projection (for motion vectors).
     float3 camera_pos; // Camera world-space position (for view vector in PBR).
-    float camera_pad;
+    uint frame_count; // Frame counter (for pseudo-random sampling).
+    uint emissive_count; // Number of emissive triangles.
+    float total_emissive_power; // Sum of all emissive triangle powers.
+    float ubo_pad0;
+    float ubo_pad1;
 };
 
 // Must match C++ ObjectData struct layout (including padding).
@@ -100,6 +103,21 @@ RaytracingAccelerationStructure scene_tlas;
 [[vk::binding(8, 0)]]
 StructuredBuffer<MaterialData> materials;
 
+// Emissive triangle for area light sampling — must match C++ EmissiveTriangle struct.
+struct EmissiveTriangle {
+    float3 v0;
+    float area;
+    float3 v1;
+    float cdf;
+    float3 v2;
+    float pad0;
+    float3 emissive;
+    float pad1;
+};
+
+[[vk::binding(9, 0)]]
+StructuredBuffer<EmissiveTriangle> emissive_triangles;
+
 // ── Neon tube constants (per-fragment wireframe pattern, not per-object material) ──
 
 // Dual-colour palette: cyan primary grid with orange accents on major grid lines.
@@ -166,14 +184,53 @@ float3 neonEmissiveColour(float3 world_pos)
     return is_orange ? ORANGE_EMISSIVE_COLOUR : CYAN_EMISSIVE_COLOUR;
 }
 
-// Fragment shader — obsidian floor with neon tube edges, Cook-Torrance PBR, RT shadows.
+// ── Pseudo-random hash (PCG) ──
+
+// PCG hash — fast, high-quality 32-bit hash.
+uint pcgHash(uint input)
+{
+    uint state = input * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// Converts a uint hash to a float in [0, 1).
+float hashToFloat(uint hash)
+{
+    return float(hash) / 4294967296.0;
+}
+
+// Luminance of an HDR colour (BT.709 coefficients).
+float luminance(float3 c)
+{
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
+
+// Binary search the CDF to select an emissive triangle index.
+uint searchCDF(float r, uint count)
+{
+    uint lo = 0;
+    uint hi = count - 1;
+    while (lo < hi) {
+        uint mid = (lo + hi) / 2;
+        if (emissive_triangles[mid].cdf < r) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+// Fragment shader — obsidian floor with neon tube edges, Cook-Torrance PBR,
+// emissive area light sampling, RT shadows and reflections.
 [shader("fragment")]
 float4 fragMain(MeshOutput input) : SV_Target
 {
     // Load material from the SSBO.
     MaterialData mat = materials[input.material_index];
 
-    // Pure emissive objects (orb) — no wireframe or PBR, just emit light.
+    // Pure emissive objects (orb, neon tubes) — no wireframe or PBR, just emit light.
     if (mat.emissive_strength > 0.0) {
         return float4(mat.emissive * mat.emissive_strength, 1.0);
     }
@@ -201,50 +258,90 @@ float4 fragMain(MeshOutput input) : SV_Target
     if (dot(N, V) < 0.0) {
         N = -N;
     }
-    float3 to_light = camera.light_pos - input.world_position;
-    float dist_to_light = length(to_light);
-    float3 L = to_light / dist_to_light;
-    float3 H = normalize(V + L);
-
-    // Dot products with safety guards.
     float NdotV = abs(dot(N, V)) + 1e-5;
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotH = clamp(dot(N, H), 0.0, 1.0);
-    float VdotH = clamp(dot(V, H), 0.0, 1.0);
 
-    // Inverse square falloff.
-    float attenuation = camera.light_intensity / max(dist_to_light * dist_to_light, 0.0001);
-
-    // Cook-Torrance BRDF.
-    float  D = D_GGX(NdotH, roughness);
-    float  Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
-    float3 F = F_Schlick(VdotH, F0_DIELECTRIC);
-
-    float3 specular = D * Vis * F;
-    float3 diffuse = (1.0 - F) * base_colour / PI;
+    // ── Emissive area light sampling (Monte Carlo, 1 sample per pixel) ──
 
     float3 direct_lighting = float3(0.0, 0.0, 0.0);
 
-    if (NdotL > 0.0)
+    if (camera.emissive_count > 0)
     {
-        // Shadow ray — cast from surface toward the point light.
-        float3 origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
+        // Generate pseudo-random numbers from pixel position + frame count.
+        uint pixel_seed = uint(input.position.x) * 1973u + uint(input.position.y) * 9277u + camera.frame_count * 26699u;
+        uint hash0 = pcgHash(pixel_seed);
+        uint hash1 = pcgHash(hash0);
+        uint hash2 = pcgHash(hash1);
 
-        RayDesc ray;
-        ray.Origin = origin;
-        ray.Direction = L;
-        ray.TMin = RAY_T_MIN;
-        ray.TMax = dist_to_light;
+        float r0 = hashToFloat(hash0);
+        float r1 = hashToFloat(hash1);
+        float r2 = hashToFloat(hash2);
 
-        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
-        query.TraceRayInline(scene_tlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, ray);
-        query.Proceed();
+        // Select emissive triangle via power-weighted CDF.
+        uint tri_idx = searchCDF(r0, camera.emissive_count);
+        EmissiveTriangle etri = emissive_triangles[tri_idx];
 
-        bool in_shadow = (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
-        if (!in_shadow)
+        // Uniform barycentric sampling on the selected triangle.
+        float su = sqrt(r1);
+        float u = 1.0 - su;
+        float v = su * r2;
+        float w = 1.0 - u - v;
+
+        // Sample point on the emissive triangle.
+        float3 light_point = u * etri.v0 + v * etri.v1 + w * etri.v2;
+
+        // Direction and distance from shading point to light sample.
+        float3 to_light = light_point - input.world_position;
+        float dist_sq = dot(to_light, to_light);
+        float dist = sqrt(dist_sq);
+        float3 L = to_light / dist;
+
+        float NdotL = max(dot(N, L), 0.0);
+
+        if (NdotL > 0.0)
         {
-            float3 radiance = float3(1.0, 1.0, 1.0) * attenuation;
-            direct_lighting = (diffuse + specular) * radiance * NdotL;
+            // Light surface normal — double-sided for thin quads.
+            float3 light_normal = normalize(cross(etri.v1 - etri.v0, etri.v2 - etri.v0));
+            float cos_light = abs(dot(light_normal, -L));
+
+            // Geometry term: cos_surface × cos_light / distance².
+            float geometry = NdotL * cos_light / max(dist_sq, 0.0001);
+
+            // Sampling PDF = luminance(Le) / total_power.
+            float lum = luminance(etri.emissive);
+            float pdf = max(lum / camera.total_emissive_power, 1e-8);
+
+            // Shadow ray from surface toward the sampled light point.
+            float3 origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
+            float ray_tmax = max(dist - SELF_INTERSECTION_OFFSET, RAY_T_MIN + 0.001);
+
+            RayDesc ray;
+            ray.Origin = origin;
+            ray.Direction = L;
+            ray.TMin = RAY_T_MIN;
+            ray.TMax = ray_tmax;
+
+            RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> query;
+            query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, ray);
+            query.Proceed();
+
+            bool in_shadow = (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
+            if (!in_shadow)
+            {
+                // Cook-Torrance BRDF for the sampled light direction.
+                float3 H = normalize(V + L);
+                float NdotH = clamp(dot(N, H), 0.0, 1.0);
+                float VdotH = clamp(dot(V, H), 0.0, 1.0);
+
+                float D_val = D_GGX(NdotH, roughness);
+                float Vis = V_SmithGGXCorrelated(NdotV, NdotL, roughness);
+                float3 F = F_Schlick(VdotH, F0_DIELECTRIC);
+
+                float3 spec = D_val * Vis * F;
+                float3 diff = (1.0 - F) * base_colour / PI;
+
+                // Monte Carlo estimator: BRDF × Le × geometry / pdf.
+                direct_lighting = (diff + spec) * etri.emissive * geometry / pdf;
+            }
         }
     }
 
@@ -257,7 +354,7 @@ float4 fragMain(MeshOutput input) : SV_Target
 
     // Only trace reflections for obsidian-dominant fragments (wire > 0.5).
     // Neon tube edges are emissive light sources — they glow, they do not reflect.
-    if (wire > 0.5 && F_view.x > 0.01)
+    if ((wire > 0.5) && (F_view.x > 0.01))
     {
         float3 reflect_dir = reflect(-V, N);
         float3 reflect_origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
@@ -274,32 +371,28 @@ float4 fragMain(MeshOutput input) : SV_Target
 
         if (reflect_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
         {
-            // Evaluate wireframe edge detection at the reflected hit point.
-            // hit_bary = (u, v), with w = 1 - u - v.
-            // NOTE: these are raw hardware barycentrics — the diagonal suppression
-            // applied in the mesh shader output is not available here, so reflected
-            // wireframe may show quad diagonals that the direct view suppresses.
-            float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
-            float bary_w = 1.0 - hit_bary.x - hit_bary.y;
-            float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
-            // Fixed barycentric-space threshold for reflections — fwidth is unavailable
-            // in ray query code. The reflected wireframe is small and blurred by the
-            // reflection, so a fixed threshold is acceptable here.
-            float hit_wire = smoothstep(0.0, REFLECTED_WIRE_WIDTH, hit_edge);
+            // Look up the material of the reflected hit via instance custom index.
+            uint hit_instance = reflect_query.CommittedInstanceID();
+            uint hit_mat_idx = objects[hit_instance].material_index;
+            MaterialData hit_mat = materials[hit_mat_idx];
 
-            // Compute world-space position of the reflected hit for neon colour lookup.
-            float3 hit_pos = reflect_origin + reflect_dir * reflect_query.CommittedRayT();
-            float3 hit_tube_colour = neonEmissiveColour(hit_pos);
+            if (hit_mat.emissive_strength > 0.0) {
+                // Hit an emissive object (neon tube or orb) — return its glow directly.
+                reflected_colour = hit_mat.emissive * hit_mat.emissive_strength;
+            } else {
+                // Hit a non-emissive surface — evaluate wireframe blend.
+                float2 hit_bary = reflect_query.CommittedTriangleBarycentrics();
+                float bary_w = 1.0 - hit_bary.x - hit_bary.y;
+                float hit_edge = min(hit_bary.x, min(hit_bary.y, bary_w));
+                float hit_wire = smoothstep(0.0, REFLECTED_WIRE_WIDTH, hit_edge);
 
-            // Evaluate material at the reflected hit point.
-            float3 hit_emissive = lerp(hit_tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
-            // Reflected hits use the current object's material for the surface colour.
-            // This is approximate — ideally we would look up the hit object's material.
-            float3 hit_base = lerp(float3(0.0, 0.0, 0.0), mat.base_colour, hit_wire);
+                float3 hit_pos = reflect_origin + reflect_dir * reflect_query.CommittedRayT();
+                float3 hit_tube_colour = neonEmissiveColour(hit_pos);
 
-            // The reflected colour is primarily the emissive neon tubes.
-            // Obsidian faces reflect as near-black (which is correct — dark stone).
-            reflected_colour = hit_emissive + hit_base * AMBIENT;
+                float3 hit_emissive = lerp(hit_tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
+                float3 hit_base = lerp(float3(0.0, 0.0, 0.0), hit_mat.base_colour, hit_wire);
+                reflected_colour = hit_emissive + hit_base * AMBIENT;
+            }
         }
     }
 
