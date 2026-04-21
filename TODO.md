@@ -644,7 +644,7 @@ features that separate a tech demo from a published game.
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
 
-### 2026-04-06 — Phase 8 Etape 38: single-bounce indirect GI + RT bug hunt
+### 2026-04-21 — Phase 8 Etape 38: single-bounce indirect GI + RT bug hunt
 
 Etape 38 adds single-bounce indirect illumination and a thorough RT math audit.
 Indirect GI uses cosine-weighted hemisphere sampling (Frisvad orthonormal basis)

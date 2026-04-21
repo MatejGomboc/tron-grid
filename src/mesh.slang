@@ -555,9 +555,17 @@ float4 fragMain(MeshOutput input) : SV_Target
                     incoming = gi_hit_mat.emissive * gi_hit_mat.emissive_strength;
                 } else {
                     // Hit non-emissive surface (terrain) — evaluate direct illumination.
-                    // Read the hit surface normal from the vertex SSBO. Non-emissive hits
-                    // are always terrain (entity 0), whose sequential index buffer means
-                    // CommittedPrimitiveIndex() * 3 maps directly to the vertex SSBO.
+                    //
+                    // INVARIANT: non-emissive hits are always terrain (the only non-emissive
+                    // material in the scene). Terrain is entity 0, and terrain vertices
+                    // occupy the beginning of the combined vertex SSBO (offset 0). Terrain's
+                    // BLAS uses a sequential index buffer (indices[i] = i), so the primitive
+                    // index maps directly to the global vertex SSBO: triangle t reads
+                    // vertices at indices {t*3, t*3+1, t*3+2}. WARNING — if a second
+                    // non-emissive entity is ever added (or if terrain's vertex offset ever
+                    // shifts away from 0), this lookup silently reads the wrong normal.
+                    // A robust replacement would read a per-instance vertex base offset
+                    // from the ObjectData SSBO.
                     float3 gi_hit_pos = gi_origin + gi_dir * gi_query.CommittedRayT();
                     uint gi_prim = gi_query.CommittedPrimitiveIndex();
                     Vertex gi_hit_vtx = vertices[gi_prim * 3];
