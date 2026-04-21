@@ -193,15 +193,19 @@ colour grade, vignette, scan lines). Emissive area light sampling — real neon
 tube quad geometry (binding 9 emissive triangle SSBO) replaces the point light;
 power-weighted CDF, PCG hash RNG, Cook-Torrance BRDF evaluation, shadow ray
 visibility. ReSTIR DI temporal + spatial reuse (bindings 10/11 ping-pong reservoir
-SSBOs) — temporal accumulates up to 20 frames via motion vector
-reprojection (`prev_clip_pos` in MeshOutput), spatial merges 5 random
+SSBOs, 64-byte per-pixel) — temporal accumulates up to 20 frames via motion
+vector reprojection (`prev_clip_pos` in MeshOutput), spatial merges 5 random
 neighbours within 20-pixel radius for fast convergence. Single-bounce
-indirect GI via cosine-weighted hemisphere sampling with Russian roulette
-and temporal EMA accumulation in the reservoir (replaces flat ambient).
-4 BLASes (terrain, orb, cyan neon, orange neon).
-`fragmentStoresAndAtomics` enabled for fragment shader reservoir writes. RT
-single-bounce reflections with per-material hit lookup via
-`CommittedInstanceID()`. Mesh shaders (task + mesh + fragment), per-object
+indirect GI via cosine-weighted hemisphere sampling with Russian roulette,
+hit normal from vertex SSBO + bounce shadow ray, temporal EMA accumulation
+in the reservoir (replaces flat ambient). 4 BLASes (terrain, orb, cyan neon,
+orange neon). `fragmentStoresAndAtomics` enabled for fragment shader reservoir
+writes. RT single-bounce reflections with per-material hit lookup via
+`CommittedInstanceID()`. Shading-vs-reflection normal split: flat face normal
+for Cook-Torrance shading preserves the Tron terraced aesthetic, smooth
+normal computed from raw (un-quantised) noise gradient drives reflections
+for continuous mirror surfaces across terrace boundaries (standard normal-map
+technique). Per-material Fresnel F0 derived from `mat.ior` via Snell's law. Mesh shaders (task + mesh + fragment), per-object
 frustum culling, meshlet pipeline. Entity/component scene with SoA arrays.
 Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror. See
 `docs/VISION.md` § Phased Roadmap for the full 14-phase plan (0–13).
