@@ -46,6 +46,23 @@ Avoid duplicating information across files. Each piece of information should hav
 
 Use `.clang-format` (LLVM-based). CI does not currently enforce this, but all code should be formatted before committing.
 
+**IMPORTANT — clang-format scope:** run `clang-format -i` only on `.cpp` and `.hpp` files.
+**NEVER** pass `.slang` files to clang-format. Slang uses HLSL semantics
+(`[shader("fragment")]` attributes, `: SV_Target` semantics, `[numthreads(...)]`)
+that clang-format does not understand and will mangle into invalid syntax.
+
+Recommended commands:
+
+```bash
+# Format all changed C++ files (safe — globs exclude .slang)
+clang-format -i src/*.cpp src/*.hpp
+
+# Or for a specific set of files
+clang-format -i src/main.cpp src/pipeline.cpp src/pipeline.hpp
+```
+
+Slang files follow the conventions in § Slang Shaders by hand (Allman braces for functions, 4-space indent, 170 column limit).
+
 Key settings:
 
 | Setting | Value |

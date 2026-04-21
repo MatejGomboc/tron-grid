@@ -55,7 +55,8 @@ When implementing engine systems, consult the official Vulkan tutorial series:
 
 1. **Define `VK_NO_PROTOTYPES`** globally
 2. **Use CMake presets** (`cmake --preset <name>`)
-3. **Run `clang-format -i` on every changed C++ file before committing** — Allman braces for functions/namespaces, 4-space indent, 170 col
+3. **Run `clang-format -i` on every changed C++ file before committing** — Allman braces, 4-space indent, 170 col. Target `.cpp`/`.hpp` only.
+   NEVER pass `.slang` files (clang-format mangles HLSL attributes/semantics into invalid syntax — format Slang by hand per `STYLE.md` § Slang Shaders).
 4. **Use British spelling** in documentation, comments, and user-facing strings
 5. **Use GPL v3-or-later** licence headers
 6. **Use `vk::raii`** for all Vulkan object ownership
