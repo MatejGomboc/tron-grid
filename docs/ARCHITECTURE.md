@@ -216,42 +216,54 @@ auto* transform = entity.get_component<TransformComponent>(); // O(1) hash looku
 
 ## Signal-Based Communication
 
-Systems communicate through `Signal<T>` — a thread-safe, typed message queue. This avoids tight
-coupling between systems that don't need to know about each other.
+Systems communicate through `SignalsLib::Signal<T>` — a thread-safe, typed message queue. This
+avoids tight coupling between systems that don't need to know about each other.
 
 ```cpp
 // libs/signals/include/signal/signal.hpp
-template <typename T> struct Signal {
-    std::queue<T> pending;
-    mutable std::mutex mutex;
+namespace SignalsLib
+{
+    template <typename T> class Signal {
+    public:
+        //! Thread-safe enqueue.
+        void emit(const T& data);
 
-    void emit(const T& data);   // thread-safe enqueue
-    bool consume(T& out);       // thread-safe dequeue
-    bool empty() const;
-    std::size_t size() const;
-};
+        //! Thread-safe dequeue; returns true if a value was consumed.
+        [[nodiscard]] bool consume(T& out);
+
+        //! Returns true if the queue is empty.
+        [[nodiscard]] bool empty() const;
+
+        //! Returns the number of pending messages.
+        [[nodiscard]] std::size_t size() const;
+
+    private:
+        std::queue<T> m_pending; //!< Queued messages.
+        mutable std::mutex m_mutex; //!< Protects the queue.
+    };
+}
 ```
 
 ### Ownership Model
 
-- **Receiver owns** the signal: `std::shared_ptr<Signal<T>>`
-- **Sender holds** a weak reference: `std::weak_ptr<Signal<T>>`
+- **Receiver owns** the signal: `std::shared_ptr<SignalsLib::Signal<T>>`
+- **Sender holds** a weak reference: `std::weak_ptr<SignalsLib::Signal<T>>`
 
 When the receiver is destroyed, the `shared_ptr` dies, the `weak_ptr` expires, and the sender
 knows to stop — no dangling pointers, no manual unregistration.
 
 ```cpp
-// Window system (receiver) creates and owns the signal
-auto resize_signal = std::make_shared<Signal<ResizeEvent>>();
+// Window system (receiver) creates and owns the signal.
+std::shared_ptr<SignalsLib::Signal<ResizeEvent>> resize_signal{std::make_shared<SignalsLib::Signal<ResizeEvent>>()};
 
-// Renderer (sender) holds a weak reference
-std::weak_ptr<Signal<ResizeEvent>> resize_sink = resize_signal;
+// Renderer (sender) holds a weak reference.
+std::weak_ptr<SignalsLib::Signal<ResizeEvent>> resize_sink{resize_signal};
 
-// Window system emits
+// Window system emits.
 resize_signal->emit({new_width, new_height});
 
-// Renderer consumes
-if (auto signal = resize_sink.lock()) {
+// Renderer consumes.
+if (std::shared_ptr<SignalsLib::Signal<ResizeEvent>> signal{resize_sink.lock()}) {
     ResizeEvent ev;
     while (signal->consume(ev)) {
         handle_resize(ev.width, ev.height);

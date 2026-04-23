@@ -87,8 +87,8 @@ ctest --preset windows-msvc-debug
 build\windows-msvc\src\Debug\TronGrid.exe
 ```
 
-Use WASD + mouse (right-click to toggle mouse look) to fly through the cube grid.
-Press ESC to close.
+Use WASD + Space/Shift to fly across the procedural Tron terrain. Right-click
+toggles mouse look. Press ESC to close.
 
 ---
 

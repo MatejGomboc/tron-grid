@@ -275,7 +275,7 @@ and emote signals — but Stage 0 needs only locomotion.
 /// Passed to tg_brain_spawn() when the entity enters the world.
 struct TgSpawnInfo
 {
-    /// Tick rate in Hz (e.g. 1000 for 1 ms timestep).
+    /// Tick rate in Hz (e.g. 60 for 60 ticks/second). Matches TgBrainInterface.tick_rate_hz.
     uint32_t tick_rate_hz;
     /// Number of active signature channels.
     uint8_t num_signature_channels;

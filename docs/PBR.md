@@ -234,7 +234,12 @@ there is no crystal lattice or grain structure.
 | F0 | 0.038 – 0.04 | Standard dielectric (`((n-1)/(n+1))^2`) |
 | Metallic | 0.0 | Purely dielectric |
 | Base colour (linear) | (0.005, 0.005, 0.01) | Deep black with subtle cool tint |
-| Perceptual roughness | 0.03 – 0.08 | Polished obsidian; up to 0.5 for weathered |
+| Perceptual roughness | 0.03 – 0.15 | Polished obsidian; up to 0.5 for weathered |
+
+TronGrid uses 0.15 to soften residual step-edge discontinuities in the
+terraced terrain reflections (Phase 8 Etape 38). Pure polished values
+(0.03 – 0.08) produce a glassier mirror look but amplify reflection
+seams across terrace boundaries.
 
 **Visual behaviour:** At normal incidence, obsidian appears nearly black
 (F0 ~ 0.04, dark base colour = almost no reflected or diffuse light). At
@@ -281,12 +286,12 @@ points, ensuring reflected neon tubes display the correct colour.
 ### Why HDR?
 
 Neon tube edges emit light at intensities well above 1.0 (e.g., 15.0).
-The current SRGB swapchain clamps these values, making emissive surfaces
-look flat-bright instead of blindingly intense. An HDR framebuffer
-preserves the full dynamic range for:
+A non-HDR (sRGB) colour attachment would clamp these values, making
+emissive surfaces look flat-bright instead of blindingly intense. An HDR
+framebuffer preserves the full dynamic range for:
 
 - Accurate emissive material rendering.
-- Bloom extraction in Phase 7 (bright pixels above a threshold).
+- Bloom extraction (bright pixels above a threshold).
 - Correct specular highlights from PBR (can exceed 1.0).
 
 ### Format
@@ -298,61 +303,56 @@ Natively supported at full rate on all NVIDIA GPUs from Pascal onward.
 ### Rendering Pipeline
 
 ```text
-1. Transition HDR image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
-2. Transition swapchain: UNDEFINED → TRANSFER_DST_OPTIMAL
-3. Render scene to HDR image (mesh shader pass)
-4. Transition HDR image: COLOR_ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL
-5. Blit HDR image → swapchain image (format conversion, clamping)
-6. Transition swapchain: TRANSFER_DST_OPTIMAL → PRESENT_SRC_KHR
+1. Transition MSAA colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (transient)
+2. Transition HDR image:   UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
+3. Render scene to MSAA colour → resolve into HDR image (mesh shader pass)
+4. Transition HDR image:   COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
+5. Bloom: extract bright pixels → mip chain downsample → tent-filter upsample
+6. Transition swapchain:   UNDEFINED → GENERAL (for compute storage write)
+7. Post-process compute: composite bloom, apply ACES RRT+ODT, sRGB encode
+8. Transition swapchain:   GENERAL → PRESENT_SRC_KHR
 ```
 
-`vkCmdBlitImage` handles the `R16G16B16A16_SFLOAT` → `B8G8R8A8_SRGB`
-format conversion. Values above 1.0 are clamped during the blit. A
-tonemapping pass (ACES Filmic or Reinhard) will replace the clamping
-blit in Phase 7.
-
-### Swapchain Requirement
-
-The swapchain must have `VK_IMAGE_USAGE_TRANSFER_DST_BIT` to be a blit
-destination. Supported on all desktop GPUs. Verify at runtime via
-`VkSurfaceCapabilitiesKHR::supportedUsageFlags`.
+The post-process compute shader (`postprocess.slang`) writes directly to
+the swapchain via a storage image — no blit, no format-conversion hop.
+The swapchain uses `VK_FORMAT_B8G8R8A8_UNORM` with
+`VK_IMAGE_USAGE_STORAGE_BIT` so compute can write 8-bit post-tonemap
+values while the shader performs exact IEC 61966-2-1 sRGB encoding.
 
 ### Pipeline Colour Format
 
-The mesh shader pipeline's `VkPipelineRenderingCreateInfo` must specify
-`R16G16B16A16_SFLOAT` as the colour attachment format instead of the
-swapchain's `B8G8R8A8_SRGB`.
+The mesh shader pipeline's `VkPipelineRenderingCreateInfo` specifies
+`R16G16B16A16_SFLOAT` as the colour attachment format for the MSAA +
+HDR resolve pair, not the swapchain's 8-bit format.
 
 ---
 
-## Tonemapping (Phase 7 Preview)
+## Tonemapping
 
-Phase 7 will replace the clamping blit with a compute pass that applies
-tonemapping before writing to the swapchain. Two candidates:
+The post-process compute pass (`postprocess.slang`) applies the ACES
+**fitted RRT+ODT** with AP1 hue preservation, following the Hill / MJP
+BakingLab implementation. This is a more accurate ACES output transform
+than the Narkowicz analytic fit — it preserves the hue of saturated
+emissives (notably orange neon, which the Narkowicz fit shifts toward
+yellow).
 
-**ACES Filmic** (industry standard, used by Unreal Engine):
+Pipeline (HDR linear in, sRGB-encoded 8-bit out):
 
-```hlsl
-float3 ACESFilm(float3 x)
-{
-    float a = 2.51;
-    float b = 0.03;
-    float c = 2.43;
-    float d = 0.59;
-    float e = 0.14;
-    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
-}
+```text
+HDR linear RGB (Rec.709)
+  → transform to ACES AP1
+  → per-channel RRT+ODT curve
+  → transform back to Rec.709 (with AP1 hue-preservation correction)
+  → clamp to [0, 1]
+  → exact IEC 61966-2-1 sRGB encoding
 ```
 
-Good contrast, slight hue shift toward white for very bright values.
+Alternative fits considered and not used:
 
-**Reinhard** (simpler):
-
-```hlsl
-colour = colour / (colour + 1.0);
-```
-
-Less desaturation but no toe (blacks stay linear).
+- **ACES Filmic (Narkowicz 2016)** — analytic, fast, but hue-shifts
+  bright saturated colours toward white. Orange neon clamps to yellow.
+- **Reinhard** — simple `c / (1 + c)`. No toe, no hue preservation;
+  retained as a reference in the tonemapping literature.
 
 ---
 
@@ -452,4 +452,4 @@ Less desaturation but no toe (blacks stay linear).
 
 ---
 
-*Last updated: 2026-04-05*
+*Last updated: 2026-04-23*
