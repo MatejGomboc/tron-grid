@@ -211,9 +211,9 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 
 - [x] No point light abstraction — all lighting from emissive geometry
 - [x] ReSTIR DI for direct lighting from emissive surfaces
-- [ ] ReSTIR GI for multi-bounce indirect illumination
+- [x] ReSTIR GI for multi-bounce indirect illumination
 - [ ] World-space irradiance cache
-- [ ] Russian roulette path termination
+- [x] Russian roulette path termination
 - [x] Motion vectors for temporal reuse
 - [ ] Ray-traced ambient occlusion (RTAO)
 - [ ] Transparent materials with refraction (Snell's law, IOR)
@@ -643,6 +643,34 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-21 — Phase 8 Etape 38: single-bounce indirect GI + RT bug hunt
+
+Etape 38 adds single-bounce indirect illumination and a thorough RT math audit.
+Indirect GI uses cosine-weighted hemisphere sampling (Frisvad orthonormal basis)
+with Russian roulette (probability scaled by surface luminance × 10), two-bounce
+path tracing with hit normal from vertex SSBO and bounce shadow ray (no light
+leaking). Temporal EMA accumulation via reservoir's `indirect` field (alpha
+derived from pre-spatial-merge M, not post, to avoid dilution). Reservoir
+struct extended to 64 bytes. Vertex struct extended to 48 bytes with
+`smooth_normal` field. Shading-vs-reflection normal split: flat face normal
+for Cook-Torrance shading preserves the Tron terraced aesthetic, smooth
+normal computed from the raw (un-quantised) noise gradient drives reflections
+for continuous mirror surfaces across terrace steps — standard normal-map
+technique used for 20+ years. Per-material Fresnel F0 derived from `mat.ior`
+via Snell's law. Obsidian roughness tuned to 0.15 to soften residual step-edge
+discontinuities. Three bug-hunting sweeps found and fixed 13 RT issues:
+temporal reprojection Y-flip (slangc `-fvk-invert-y` only negates
+SV_Position), two-sided N leaking into reflections, back-facing reflection
+handling, emissive pixels leaving stale reservoir data, reflection back-face
+culling hiding tubes, GI bounce missing NdotL at hit, GI bounce light leaking
+(no shadow ray), indirect EMA alpha diluted by spatial M, reservoir buffers
+not zero-initialised (garbage first frame), reservoir bounds overflow above
+4K, reflected non-emissive surfaces using flat AMBIENT instead of per-pixel
+indirect GI, binding 4 needing eFragment stage flag, smooth normals initially
+computed from quantised heightmap (later fixed to raw noise). Bloom strength
+reduced from 0.19 to 0.095 (50% user request). Flat-grid reflection test
+verified mirror math is correct. 94 PRs merged.
 
 ### 2026-04-06 — Phase 8 Etape 37c: ReSTIR DI spatial reuse (Etape 37 complete)
 

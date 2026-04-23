@@ -108,13 +108,13 @@ static void emitEdgeQuad(NeonSubMesh& mesh, const MathLib::Vec3& a, const MathLi
 
     uint32_t base_index{static_cast<uint32_t>(mesh.vertices.size())};
 
-    // Triangle 1: p0, p1, p2.
+    // Triangle 1: p0, p1, p2. Smooth normal = face normal for flat quads.
     mesh.positions.push_back(p0);
     mesh.positions.push_back(p1);
     mesh.positions.push_back(p2);
-    mesh.vertices.push_back({{p0.x, p0.y, p0.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}});
-    mesh.vertices.push_back({{p1.x, p1.y, p1.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}});
-    mesh.vertices.push_back({{p2.x, p2.y, p2.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}});
+    mesh.vertices.push_back({{p0.x, p0.y, p0.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}, {face_normal.x, face_normal.y, face_normal.z}, 0.0f});
+    mesh.vertices.push_back({{p1.x, p1.y, p1.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}, {face_normal.x, face_normal.y, face_normal.z}, 0.0f});
+    mesh.vertices.push_back({{p2.x, p2.y, p2.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}, {face_normal.x, face_normal.y, face_normal.z}, 0.0f});
     mesh.indices.push_back(base_index);
     mesh.indices.push_back(base_index + 1);
     mesh.indices.push_back(base_index + 2);
@@ -123,9 +123,9 @@ static void emitEdgeQuad(NeonSubMesh& mesh, const MathLib::Vec3& a, const MathLi
     mesh.positions.push_back(p0);
     mesh.positions.push_back(p2);
     mesh.positions.push_back(p3);
-    mesh.vertices.push_back({{p0.x, p0.y, p0.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}});
-    mesh.vertices.push_back({{p2.x, p2.y, p2.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}});
-    mesh.vertices.push_back({{p3.x, p3.y, p3.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}});
+    mesh.vertices.push_back({{p0.x, p0.y, p0.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}, {face_normal.x, face_normal.y, face_normal.z}, 0.0f});
+    mesh.vertices.push_back({{p2.x, p2.y, p2.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}, {face_normal.x, face_normal.y, face_normal.z}, 0.0f});
+    mesh.vertices.push_back({{p3.x, p3.y, p3.z}, {face_normal.x, face_normal.y, face_normal.z}, {0.0f, 0.0f}, {face_normal.x, face_normal.y, face_normal.z}, 0.0f});
     mesh.indices.push_back(base_index + 3);
     mesh.indices.push_back(base_index + 4);
     mesh.indices.push_back(base_index + 5);
@@ -159,8 +159,35 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
         }
     }
 
+    // Compute per-vertex smooth normals from the RAW (un-quantised) heightmap gradient.
+    // The quantised heightmap has sharp step functions whose central differences produce
+    // large tilted normals at step boundaries. The raw noise surface is smooth — its
+    // gradient gives a continuous normal field that follows the "underlying terrain shape,"
+    // producing correct stretched reflections across terrace steps (like a car hood dent).
+    std::vector<MathLib::Vec3> smooth_normals(static_cast<size_t>(verts_per_side) * verts_per_side);
+    for (uint32_t z{0}; z < verts_per_side; ++z) {
+        for (uint32_t x{0}; x < verts_per_side; ++x) {
+            float wx{static_cast<float>(x) * config.tile_spacing - half_size};
+            float wz{static_cast<float>(z) * config.tile_spacing - half_size};
+
+            // Sample the raw noise (before quantisation) at offset positions for finite differences.
+            float eps{config.tile_spacing * 0.5f};
+            float h_xp{layeredNoise(wx + eps, wz, config.noise_octaves, config.noise_frequency, config.seed) * config.height_scale};
+            float h_xn{layeredNoise(wx - eps, wz, config.noise_octaves, config.noise_frequency, config.seed) * config.height_scale};
+            float h_zp{layeredNoise(wx, wz + eps, config.noise_octaves, config.noise_frequency, config.seed) * config.height_scale};
+            float h_zn{layeredNoise(wx, wz - eps, config.noise_octaves, config.noise_frequency, config.seed) * config.height_scale};
+
+            float dhdx{(h_xp - h_xn) / (2.0f * eps)};
+            float dhdz{(h_zp - h_zn) / (2.0f * eps)};
+
+            smooth_normals[z * verts_per_side + x] = MathLib::Vec3{-dhdx, 1.0f, -dhdz}.normalised();
+        }
+    }
+
     // Generate per-face vertices (flat shading — 3 unique vertices per triangle).
     // Each grid cell produces 2 triangles = 6 vertices.
+    // Each vertex stores both the flat face normal (for shading) and the smooth
+    // heightmap-gradient normal (for continuous reflections across tile boundaries).
     uint32_t total_triangles{config.grid_size * config.grid_size * 2};
     result.vertices.reserve(total_triangles * 3);
     result.positions.reserve(total_triangles * 3);
@@ -186,15 +213,21 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
             MathLib::Vec3 p01{x0, h01, z1};
             MathLib::Vec3 p11{x1, h11, z1};
 
+            // Smooth normals at each corner.
+            MathLib::Vec3 sn00{smooth_normals[z * verts_per_side + x]};
+            MathLib::Vec3 sn10{smooth_normals[z * verts_per_side + (x + 1)]};
+            MathLib::Vec3 sn01{smooth_normals[(z + 1) * verts_per_side + x]};
+            MathLib::Vec3 sn11{smooth_normals[(z + 1) * verts_per_side + (x + 1)]};
+
             // Triangle 1: p00, p10, p01.
             // p00 is opposite the diagonal (p10-p01) — flag with uv.x = 1.0.
             MathLib::Vec3 n1{(p01 - p00).cross(p10 - p00).normalised()};
             result.positions.push_back(p00);
             result.positions.push_back(p10);
             result.positions.push_back(p01);
-            result.vertices.push_back({{p00.x, p00.y, p00.z}, {n1.x, n1.y, n1.z}, {1.0f, 0.0f}});
-            result.vertices.push_back({{p10.x, p10.y, p10.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}});
-            result.vertices.push_back({{p01.x, p01.y, p01.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}});
+            result.vertices.push_back({{p00.x, p00.y, p00.z}, {n1.x, n1.y, n1.z}, {1.0f, 0.0f}, {sn00.x, sn00.y, sn00.z}, 0.0f});
+            result.vertices.push_back({{p10.x, p10.y, p10.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}, {sn10.x, sn10.y, sn10.z}, 0.0f});
+            result.vertices.push_back({{p01.x, p01.y, p01.z}, {n1.x, n1.y, n1.z}, {0.0f, 0.0f}, {sn01.x, sn01.y, sn01.z}, 0.0f});
             result.indices.push_back(vertex_index++);
             result.indices.push_back(vertex_index++);
             result.indices.push_back(vertex_index++);
@@ -205,9 +238,9 @@ TerrainMesh generateTerrain(const TerrainConfig& config)
             result.positions.push_back(p10);
             result.positions.push_back(p11);
             result.positions.push_back(p01);
-            result.vertices.push_back({{p10.x, p10.y, p10.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}});
-            result.vertices.push_back({{p11.x, p11.y, p11.z}, {n2.x, n2.y, n2.z}, {1.0f, 0.0f}});
-            result.vertices.push_back({{p01.x, p01.y, p01.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}});
+            result.vertices.push_back({{p10.x, p10.y, p10.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}, {sn10.x, sn10.y, sn10.z}, 0.0f});
+            result.vertices.push_back({{p11.x, p11.y, p11.z}, {n2.x, n2.y, n2.z}, {1.0f, 0.0f}, {sn11.x, sn11.y, sn11.z}, 0.0f});
+            result.vertices.push_back({{p01.x, p01.y, p01.z}, {n2.x, n2.y, n2.z}, {0.0f, 0.0f}, {sn01.x, sn01.y, sn01.z}, 0.0f});
             result.indices.push_back(vertex_index++);
             result.indices.push_back(vertex_index++);
             result.indices.push_back(vertex_index++);
