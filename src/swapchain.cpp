@@ -97,7 +97,12 @@ void Swapchain::recreate(uint32_t width, uint32_t height)
 void Swapchain::build(uint32_t width, uint32_t height)
 {
     // Guard against zero-extent (minimised window) — Vulkan requires imageExtent > 0.
+    // Set m_extent to zero so callers that check swapchain.extent() skip rendering;
+    // the previous behaviour kept a stale non-zero m_extent with empty m_images and
+    // m_views, which silently broke acquireNextImage + rebuildFrameBuffers on the
+    // next iteration.
     if ((width == 0) || (height == 0)) {
+        m_extent = vk::Extent2D{0, 0};
         return;
     }
 

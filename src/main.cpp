@@ -265,6 +265,12 @@ static void recordBloomUpsample(const vk::raii::CommandBuffer& cmd, vk::Image bl
     workgroups for visible objects. Bloom extraction, downsample, and upsample
     run between the scene render and the tonemap pass. The post-process shader
     composites bloom with the HDR image before tonemapping.
+
+    A cross-frame buffer memory barrier at the very top makes the previous
+    submission's reservoir writes visible to this frame's reservoir reads — without
+    it, the ping-pong ReSTIR reads tear/stale data across frames even though the
+    per-frame fence provides execution order, because Vulkan submission-order alone
+    does not guarantee memory availability across batches.
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image, vk::ImageView msaa_view, vk::Image hdr_image, vk::ImageView hdr_view,
     vk::ImageView depth_view, vk::Image depth_image, vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set,
@@ -277,6 +283,21 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
+
+    // ── Cross-frame reservoir memory barrier ──
+    // The previous submission's fragment shader wrote the ReSTIR reservoir ping-pong
+    // buffers; this submission's fragment shader will read them. Submission order
+    // provides execution ordering, but per the Vulkan memory model we still need an
+    // explicit memory barrier for the write-to-read hand-off to be visible.
+    vk::MemoryBarrier2 reservoir_cross_frame{};
+    reservoir_cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+    reservoir_cross_frame.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    reservoir_cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+    reservoir_cross_frame.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+
+    vk::DependencyInfo dep_reservoir{};
+    dep_reservoir.setMemoryBarriers(reservoir_cross_frame);
+    cmd.pipelineBarrier2(dep_reservoir);
 
     // ── Transition HDR + depth to render targets ──
 
@@ -297,9 +318,10 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     // Transition HDR image: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (discard prior content).
     // srcStage includes eColorAttachmentOutput because MSAA resolve writes to HDR during endRendering,
     // and eComputeShader because the previous frame's post-process reads HDR in GENERAL layout.
+    // srcAccess lists only writes — reads are covered by execution ordering via srcStage alone.
     vk::ImageMemoryBarrier2 hdr_to_render{};
     hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eColorAttachmentWrite;
+    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_render.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     hdr_to_render.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_render.oldLayout = vk::ImageLayout::eUndefined;
@@ -462,6 +484,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     recordBloomUpsample(cmd, bloom_image, bloom_mip_count, bloom_base_w, bloom_base_h, bloom_upsample_pipeline, bloom_layout, bloom_upsample_sets);
 
     // Barrier: bloom upsample writes must complete before tonemap reads bloom mip 0.
+    // Narrowed to mip 0 only (the only mip the post-process shader samples) so the
+    // driver can pipeline other work against the remaining mip chain.
     vk::ImageMemoryBarrier2 bloom_after{};
     bloom_after.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
     bloom_after.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
@@ -474,7 +498,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     bloom_after.image = bloom_image;
     bloom_after.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
     bloom_after.subresourceRange.baseMipLevel = 0;
-    bloom_after.subresourceRange.levelCount = bloom_mip_count;
+    bloom_after.subresourceRange.levelCount = 1;
     bloom_after.subresourceRange.baseArrayLayer = 0;
     bloom_after.subresourceRange.layerCount = 1;
 
@@ -494,10 +518,13 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     cmd.dispatch(group_x, group_y, 1);
 
     // Transition swapchain: GENERAL → PRESENT_SRC_KHR.
+    // dstStage uses eAllCommands to match the submit's signal-semaphore stage mask
+    // (render_finished is signalled at eAllCommands) — eBottomOfPipe is deprecated
+    // in sync2 and creates no memory-availability guarantee with the signal.
     vk::ImageMemoryBarrier2 swap_to_present{};
     swap_to_present.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
     swap_to_present.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
-    swap_to_present.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
+    swap_to_present.dstStageMask = vk::PipelineStageFlagBits2::eAllCommands;
     swap_to_present.dstAccessMask = vk::AccessFlagBits2::eNone;
     swap_to_present.oldLayout = vk::ImageLayout::eGeneral;
     swap_to_present.newLayout = vk::ImageLayout::ePresentSrcKHR;
@@ -519,8 +546,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     camera state, input processing, and delta time.
 */
 static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t total_objects, uint32_t emissive_count,
-    float total_emissive_power, vk::raii::CommandBuffers& command_buffers, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex,
-    std::condition_variable& render_cv, LoggingLib::Logger& logger)
+    float total_emissive_power, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers, VkBuffer reservoir_a_buf, VkBuffer reservoir_b_buf,
+    VkDeviceSize reservoir_buffer_size, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
+    LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -538,10 +566,20 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     // Per-swapchain-image semaphores for present
     std::vector<vk::raii::Semaphore> render_finished_semaphores;
 
+    // Rebuilds the present-side semaphores AND the per-frame acquire semaphores.
+    // Also rebuilding image_available_semaphores guarantees they return to the
+    // unsignalled state even if a prior acquire signalled the semaphore and then
+    // the swapchain went out-of-date before the signal was consumed — vkDeviceWaitIdle
+    // does NOT reset semaphore signal state, so without this rebuild the next
+    // acquireNextImage with the same semaphore violates the spec.
     auto rebuildPresentSemaphores = [&]() {
         render_finished_semaphores.clear();
         for (uint32_t i{0}; i < swapchain.imageCount(); ++i) {
             render_finished_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
+        }
+        image_available_semaphores.clear();
+        for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         }
     };
     rebuildPresentSemaphores();
@@ -642,6 +680,46 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     };
     rebuildBloomMipViews();
 
+    // Capacity check + zero-fill of the reservoir ping-pong buffers. Called from
+    // rebuildFrameBuffers so that each resize starts with a clean ReSTIR state —
+    // without this, the one-frame-after-resize sees reservoir indices that now
+    // map to different pixels than they did before (row stride changed), producing
+    // a brief "poison" frame of smeared lighting until temporal decay kicks in.
+    VkDeviceSize reservoir_pixel_capacity{reservoir_buffer_size / sizeof(Reservoir)};
+    auto resetReservoirs = [&]() {
+        VkDeviceSize required_pixels{static_cast<VkDeviceSize>(swapchain.extent().width) * swapchain.extent().height};
+        if (required_pixels > reservoir_pixel_capacity) {
+            logger.logFatal("Swapchain extent exceeds reservoir capacity (" + std::to_string(swapchain.extent().width) + "x"
+                + std::to_string(swapchain.extent().height) + " pixels, capacity " + std::to_string(reservoir_pixel_capacity)
+                + "). Resize beyond 4K is not supported.");
+            std::abort();
+            return;
+        }
+
+        // One-shot command buffer — reuses the existing command pool. Caller is
+        // responsible for draining GPU work before calling this (swapchain.recreate
+        // does waitIdle first), so it's safe to submit + waitIdle again here.
+        vk::CommandBufferAllocateInfo cmd_alloc{};
+        cmd_alloc.commandPool = *command_pool;
+        cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
+        cmd_alloc.commandBufferCount = 1;
+        vk::raii::CommandBuffers reset_cmds{device.get(), cmd_alloc};
+
+        const vk::raii::CommandBuffer& reset_cmd{reset_cmds[0]};
+        vk::CommandBufferBeginInfo begin_info{};
+        begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        reset_cmd.begin(begin_info);
+        reset_cmd.fillBuffer(reservoir_a_buf, 0, reservoir_buffer_size, 0);
+        reset_cmd.fillBuffer(reservoir_b_buf, 0, reservoir_buffer_size, 0);
+        reset_cmd.end();
+
+        vk::CommandBuffer raw_cmd{*reset_cmd};
+        vk::SubmitInfo submit{};
+        submit.setCommandBuffers(raw_cmd);
+        device.graphicsQueue().submit({submit});
+        device.graphicsQueue().waitIdle();
+    };
+
     // Rebuilds MSAA, depth, HDR, bloom, and swapchain storage views to match the current swapchain extent.
     auto rebuildFrameBuffers = [&]() {
         msaa_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
@@ -667,6 +745,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         rebuildBloomMipViews();
 
         rebuildSwapchainStorageViews();
+
+        // Reset the ReSTIR reservoirs — the row-stride changed with the extent so the
+        // pre-resize pixel indices now map to different pixels.
+        resetReservoirs();
     };
 
     // ── Post-process compute pipeline (inline — no class until second use case) ──
@@ -1108,7 +1190,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     uint32_t current_frame{0};
     uint32_t frame_counter{0};
-    MathLib::Mat4 prev_view_projection{};
+    // Initialise to identity so frame 0's motion-vector reprojection produces finite values —
+    // default Mat4{} is all zeros, which yields 0/0 = NaN in the shader's perspective divide.
+    MathLib::Mat4 prev_view_projection{MathLib::Mat4::identity()};
 
     // Pre-allocated scratch vector for bloom descriptor sets (avoids per-frame heap allocation).
     std::vector<vk::DescriptorSet> bloom_sets_for_frame;
@@ -1268,6 +1352,14 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             return;
         }
 
+        // Skip acquire when the swapchain is zero-extent (minimised). Previously we
+        // acquired and then "drained" with waitIdle — but waitIdle does not reset
+        // semaphore signal state, so the next iteration's acquire with the same
+        // semaphore violates the spec. Guarding before acquire avoids the leak.
+        if ((swapchain.extent().width == 0) || (swapchain.extent().height == 0)) {
+            continue;
+        }
+
         // Acquire next swapchain image
         uint32_t image_index{0};
         vk::Result acquire_result{vk::Result::eSuccess};
@@ -1276,8 +1368,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             acquire_result = acquire.result;
             image_index = acquire.value;
         } catch (const vk::OutOfDateKHRError&) {
-            // The semaphore may be in an undefined state after OutOfDateKHR.
-            // waitIdle drains all GPU work and resets semaphore signal state.
+            // Swapchain recreation also rebuilds image_available_semaphores, so any
+            // subtle "signalled on OUT_OF_DATE" driver behaviour can't leak to the
+            // next iteration.
             device.get().waitIdle();
             if ((swapchain.extent().width > 0) && (swapchain.extent().height > 0)) {
                 swapchain.recreate(swapchain.extent().width, swapchain.extent().height);
@@ -1285,6 +1378,16 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
                 rebuildFrameBuffers();
             }
             continue;
+        } catch (const vk::SurfaceLostKHRError&) {
+            // Display hotplug / suspend — drain GPU work and keep trying the event loop.
+            logger.logError("Surface lost during acquireNextImage — waiting for recovery.");
+            device.get().waitIdle();
+            continue;
+        } catch (const vk::SystemError& e) {
+            // Any other fatal Vulkan error (device lost, out of memory, etc.).
+            logger.logFatal(std::string{"acquireNextImage failed: "} + e.what());
+            std::abort();
+            return;
         }
 
         bool swapchain_suboptimal{acquire_result == vk::Result::eSuboptimalKHR};
@@ -1293,13 +1396,6 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         MathLib::Frustum frustum{};
         {
             uint32_t extent_height{swapchain.extent().height};
-            if (extent_height == 0) {
-                // The acquire succeeded and signalled image_available_semaphores.
-                // We must drain the semaphore before reusing it — waitIdle ensures
-                // all pending GPU work (including the acquire signal) completes.
-                device.get().waitIdle();
-                continue;
-            }
 
             // Only reset fence after we know we will submit work — resetting
             // then hitting `continue` above would leave the fence unsignalled,
@@ -2703,7 +2799,14 @@ int main()
 
         // ── Reservoir ping-pong buffers for ReSTIR temporal reuse ──
 
-        // Size based on initial swapchain extent — will be over-allocated for smaller resizes.
+        // The ping-pong binding pattern below requires exactly two in-flight frames
+        // (frame 0 writes A/reads B, frame 1 writes B/reads A). Any other value
+        // would map multiple frames to the same reservoir buffer, producing a
+        // genuine data race on the fragment-shader storage writes.
+        static_assert(MAX_FRAMES_IN_FLIGHT == 2, "Reservoir ping-pong requires exactly 2 frames in flight");
+
+        // Size for up to 4K resolution — any larger window will overflow the buffer.
+        // resizeReservoirsForExtent (below) asserts this on every resize.
         constexpr uint32_t RESERVOIR_MAX_WIDTH{3840};
         constexpr uint32_t RESERVOIR_MAX_HEIGHT{2160};
         VkDeviceSize reservoir_buffer_size{static_cast<VkDeviceSize>(RESERVOIR_MAX_WIDTH) * RESERVOIR_MAX_HEIGHT * sizeof(Reservoir)};
@@ -2761,7 +2864,8 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), static_cast<uint32_t>(total_objects),
-            emissive_count, total_power, std::ref(command_buffers), std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+            emissive_count, total_power, std::ref(command_pool), std::ref(command_buffers), reservoir_a.buffer(), reservoir_b.buffer(), reservoir_buffer_size,
+            std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {
