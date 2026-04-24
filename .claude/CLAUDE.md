@@ -181,34 +181,66 @@ cmake --build build/linux-x11-gcc --config Debug
 ## Current Status
 
 Procedural Tron terrain with PBR obsidian floor (Cook-Torrance BRDF: GGX NDF,
-Smith-GGX visibility, Schlick Fresnel) and dual-colour neon tube edges (cyan
-primary + orange accent on major grid lines). HDR framebuffer
-(`R16G16B16A16_SFLOAT`), compute post-process pass (ACES fitted RRT+ODT
-tonemapping with AP1 hue preservation, exact sRGB encoding, swapchain
+Smith-GGX visibility, Schlick Fresnel, metallic-aware F0) and dual-colour
+neon tube edges (cyan primary + orange accent on major grid lines). HDR
+framebuffer (`R16G16B16A16_SFLOAT`), compute post-process pass (ACES fitted
+RRT+ODT tonemapping with AP1 hue preservation, exact sRGB encoding, swapchain
 `B8G8R8A8_UNORM` with storage writes). Bloom with soft glow halos (Karis
 extraction, mip chain downsample, 3×3 tent-filter upsample, HDR composite
-with tunable strength). 8× MSAA with full sample-rate shading, screen-space
+with tunable strength). 8× MSAA with full sample-rate shading and
+`SV_SampleIndex`-guarded reservoir writes (only sample 0 stores — samples
+1..N still compute for coverage but skip the SSBO write), screen-space
 derivative wireframe antialiasing (fwidth-based smoothstep), automatic GPU
 capability fallback. Procedural cyberpunk skybox (value noise data fog clouds,
 horizon gradient, animated drift). Per-material PBR via material SSBO
-(binding 8, data-driven). Cinematic post-process (chromatic aberration, cool
-colour grade, vignette, scan lines). Emissive area light sampling — real neon
-tube quad geometry (binding 9 emissive triangle SSBO) replaces the point light;
-power-weighted CDF, PCG hash RNG, Cook-Torrance BRDF evaluation, shadow ray
-visibility. ReSTIR DI temporal + spatial reuse (bindings 10/11 ping-pong reservoir
-SSBOs, 64-byte per-pixel) — temporal accumulates up to 20 frames via motion
-vector reprojection (`prev_clip_pos` in MeshOutput), spatial merges 5 random
-neighbours within 20-pixel radius for fast convergence. Single-bounce
-indirect GI via cosine-weighted hemisphere sampling with Russian roulette,
-hit normal from vertex SSBO + bounce shadow ray, temporal EMA accumulation
-in the reservoir (replaces flat ambient). 4 BLASes (terrain, orb, cyan neon,
-orange neon). `fragmentStoresAndAtomics` enabled for fragment shader reservoir
-writes. RT single-bounce reflections with per-material hit lookup via
-`CommittedInstanceID()`. Shading-vs-reflection normal split: flat face normal
-for Cook-Torrance shading preserves the Tron terraced aesthetic, smooth
-normal computed from raw (un-quantised) noise gradient drives reflections
-for continuous mirror surfaces across terrace boundaries (standard normal-map
-technique). Per-material Fresnel F0 derived from `mat.ior` via Snell's law. Mesh shaders (task + mesh + fragment), per-object
+(binding 8, data-driven). Cinematic post-process (chromatic aberration with
+signed-int clamp, cool colour grade, vignette, 3-pixel-period scan lines).
+Emissive area light sampling — real neon tube quad geometry (binding 9
+emissive triangle SSBO) replaces the point light; power-weighted CDF, PCG
+hash RNG, Cook-Torrance BRDF evaluation, shadow ray visibility. ReSTIR DI
+temporal + spatial reuse (bindings 10/11 ping-pong reservoir SSBOs,
+**80-byte per-pixel** — adds `shading_pos` and octahedral-packed
+`shading_normal` for geometric rejection) — canonical Bitterli et al.
+M-clamp (20× current for temporal, 100 for spatial) with **proportional
+`w_sum` scaling** so the `W × M × p̂ = w_sum` invariant holds across frames.
+Temporal reprojection via `prev_clip_pos` in MeshOutput, spatial merges 5
+random neighbours within 20-pixel radius; both passes reject reservoirs
+whose stored shading surface differs from the current pixel (position delta
+≤ 1 m, normal dot ≥ 0.906 per RTXDI defaults). **Cross-frame `MemoryBarrier2`**
+at the top of `recordFrame` makes the previous submission's fragment-stage
+reservoir writes visible to this frame's reservoir reads — submission-order
+alone is insufficient under the Vulkan memory model. Single-bounce indirect
+GI via cosine-weighted hemisphere sampling (Malley's method) with Russian
+roulette (unbiased estimator: EMA updates every frame with zero on reject,
+not skipped), hit normal from vertex SSBO + bounce shadow ray, temporal EMA
+accumulation in the reservoir. Firefly clamp (per-sample max 30) and tighter
+GI-bounce distance floor (0.04 m²) bound the variance without breaking
+averaging. **RTAO** (Etape 39) — one cosine-weighted hemisphere ray per
+fragment, TMax 2 m for local contact shadows, temporal EMA into the
+reservoir's `ao` slot + spatial averaging across geometrically-similar
+neighbours; applied to diffuse terms only (indirect GI and the split
+`direct_diffuse` lobe), preserving specular and RT reflection at full
+brightness per canonical AO practice. 4 BLASes (terrain, orb, cyan neon,
+orange neon). `fragmentStoresAndAtomics` enabled for fragment shader
+reservoir writes. RT single-bounce reflections with per-material hit lookup
+via `CommittedInstanceID()`, front-facing guard, flat `N` for origin offset,
+and `prev_view_projection` reprojection when sampling the hit pixel's stored
+indirect radiance. Shading-vs-reflection normal split: flat face normal for
+Cook-Torrance shading preserves the Tron terraced aesthetic, smooth normal
+computed from raw (un-quantised) noise gradient drives reflections for
+continuous mirror surfaces across terrace boundaries (standard normal-map
+technique). Two-sided flip applied to both `N` and `N_smooth` together so
+reflections stay consistent on camera-facing back sides. Hybrid composite
+is additive per canonical PBR: `(indirect + direct_diffuse) × ao +
+direct_specular + emissive + reflected_colour × F_view`. Per-material
+Fresnel F0 derived from `mat.ior` via Snell's law, unified across direct
+and reflection paths, `lerp(F0_dielectric, base_colour, metallic)`.
+Swapchain lifecycle hardened: `image_available_semaphores` rebuilt on
+resize (symmetry with present semaphores), zero-extent guard BEFORE acquire
+(`waitIdle` doesn't reset semaphore state), `acquireNextImage` catches
+`SurfaceLostKHR` + generic `SystemError`, reservoir ping-pong zero-cleared
+and capacity-checked on resize (`static_assert(MAX_FRAMES_IN_FLIGHT == 2)`
+at the binding site). Mesh shaders (task + mesh + fragment), per-object
 frustum culling, meshlet pipeline. Entity/component scene with SoA arrays.
 Code quality: Clang-Tidy, sanitisers, GPU validation, -Werror. See
 `docs/VISION.md` § Phased Roadmap for the full 14-phase plan (0–13).

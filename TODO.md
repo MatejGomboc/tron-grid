@@ -216,7 +216,7 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 - [ ] World-space irradiance cache
 - [x] Russian roulette path termination
 - [x] Motion vectors for temporal reuse
-- [ ] Ray-traced ambient occlusion (RTAO)
+- [x] Ray-traced ambient occlusion (RTAO)
 - [ ] Transparent materials with refraction (Snell's law, IOR)
 - [ ] Weighted Blended OIT or equivalent
 - [ ] Per-material opacity in material SSBO
@@ -644,6 +644,53 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-24 — Phase 8 Etape 39: ray-traced ambient occlusion (RTAO)
+
+Etape 39 adds ray-traced ambient occlusion. One cosine-weighted hemisphere ray
+(Malley's method) per fragment per frame with TMax = 2 m captures local contact
+shadows — terrace corners, neon-tube bases, under overhangs. Visibility stored
+in the reservoir's repurposed `ao` slot (formerly `indirect_pad`, so the struct
+stays 80 bytes) and accumulated via the canonical two-stage denoiser: temporal
+EMA with alpha = 1/temporal_M, plus spatial averaging across geometrically-
+similar neighbours inside the existing spatial-reuse loop (no new pass, no new
+rays). Direct lighting is split into `direct_diffuse` and `direct_specular` so
+AO multiplies the Lambertian lobes only (indirect GI + direct diffuse);
+specular, RT reflection, and emissive stay at full brightness per canonical AO
+practice. TLAS is unchanged — all existing 4 BLASes serve as occluders.
+99 PRs merged.
+
+### 2026-04-24 — Phase 8 rendering audit pass + literature-guided correction
+
+Comprehensive 3-way parallel audit of the rendering code (Vulkan sync,
+shader math, resource layout) surfaced ~20 findings. Corrections applied
+in PR #97. The audit's initial "fixes" for four findings turned out to be
+canonically wrong on visual verification and were reverted after
+cross-checking Bitterli et al. (2020), LearnOpenGL IBL, Karis UE4 notes,
+and RTXDI source: (1) M-clamp belongs on READ with proportional w_sum
+scaling, not at write time — the W × M × p̂ = w_sum invariant is preserved
+exactly if you scale both; (2) RT reflection is ADDED to analytic
+Cook-Torrance spec, not a replacement — the two terms cover different
+integrands and "replace" blacks out every pixel whose reflection ray
+misses the TLAS; (3) skybox `ndc` reconstruction was already correct —
+`-fvk-invert-y` flips SV_Position which moves the vertex carrying UV=(0,0)
+to Vulkan-bottom, so the top pixel gets UV Y≈1 → ndc.y=+1 (math convention)
+without manual flipping; (4) RR estimator's zero-on-reject IS the unbiased
+term (`E[V] = p × (S/p) + (1-p) × 0 = S`), not a bias; skipping the EMA
+update on reject would converge to `S/p` and saturate. Genuine bugs that
+stuck: cross-frame reservoir `MemoryBarrier2` (the top suspect for the
+user's "something feels off" ghosting symptoms), `SV_SampleIndex` guard
+on MSAA reservoir writes, geometric similarity rejection via 80-byte
+reservoir extension (shading_pos + oct-packed normal), front-facing
+reflection guard + flat-N origin offset, GI ray flag unified to
+`RAY_FLAG_NONE`, firefly clamp, `neonEmissiveColour` origin symmetry,
+terrain OR-rule alignment with shader, swapchain lifecycle hardening
+(image_avail sem rebuild, zero-extent guard before acquire, m_extent=0,
+wider try/catch, reservoir clear + capacity assert on resize),
+`prev_view_projection = identity()` frame-0 init. New memory added:
+`feedback_audit_agent_verification.md` — verify audit-agent findings
+against canonical literature for any domain-math claim before applying.
+98 PRs merged.
 
 ### 2026-04-21 — Phase 8 Etape 38: single-bounce indirect GI + RT bug hunt
 

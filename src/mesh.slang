@@ -131,7 +131,7 @@ struct Reservoir {
     float3 y_normal; // Light surface normal at the selected sample.
     float W; // Final contribution weight: w_sum / (M × p_hat(y)).
     float3 indirect; // Accumulated indirect radiance (single-bounce GI).
-    float indirect_pad; // Reserved padding.
+    float ao; // Accumulated ambient-occlusion visibility in [0, 1] (1 = fully lit, 0 = fully occluded).
     float3 shading_pos; // Shading-surface world position of the pixel that wrote this reservoir.
     uint shading_normal_oct; // Shading-surface normal, octahedral-packed to 32 bits.
 };
@@ -180,6 +180,15 @@ static const float INDIRECT_FIREFLY_MAX = 30.0;
 // bounce hit can land extremely close to an emissive tube, and distances under
 // ~10 cm already produce fireflies faster than the EMA can smooth them.
 static const float GI_MIN_LIGHT_DIST_SQ = 0.04;
+
+// ── Ray-traced ambient occlusion (Etape 39) ──
+// 1 cosine-weighted hemisphere ray per fragment per frame, short TMax so the
+// AO captures local contact shadows (terrace corners, tube bases) without
+// darkening the scene globally. Visibility averaged across frames via the
+// reservoir's EMA and across neighbour pixels via the spatial reuse pass.
+// Physical meaning: (1/π) ∫_Ω V(ω) cos(θ) dω — the Lambertian AO integral;
+// cosine-weighted sampling is the unbiased estimator.
+static const float AO_MAX_DIST = 2.0; // Occluder search radius in metres.
 
 // ── Neon tube constants (per-fragment wireframe pattern, not per-object material) ──
 
@@ -387,7 +396,7 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
             empty.y_normal = float3(0.0, 0.0, 0.0);
             empty.W = 0.0;
             empty.indirect = float3(0.0, 0.0, 0.0);
-            empty.indirect_pad = 0.0;
+            empty.ao = 1.0; // Emissive pixels are self-lit; AO is meaningless here — store full visibility so nothing neighbouring can read a dark value.
             empty.shading_pos = input.world_position;
             empty.shading_normal_oct = 0u;
             reservoir_current[pixel_idx] = empty;
@@ -439,8 +448,14 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
 
     // ── ReSTIR DI temporal reuse (emissive area light sampling) ──
 
-    float3 direct_lighting = float3(0.0, 0.0, 0.0); // Cook-Torrance BRDF × Le × geometry × W for the ReSTIR-selected sample.
+    // Direct lighting is split into diffuse and specular lobes so that ambient
+    // occlusion can multiply the diffuse component only (canonical: AO darkens
+    // Lambertian interreflection, not specular). Reflection and direct spec
+    // survive AO untouched, matching the hybrid-rendering composite.
+    float3 direct_diffuse = float3(0.0, 0.0, 0.0);
+    float3 direct_specular = float3(0.0, 0.0, 0.0);
     float3 indirect_gi = base_colour * AMBIENT; // Fallback flat ambient if no emissive triangles.
+    float ao_factor = 1.0; // AO visibility in [0, 1]; defaults to fully lit when ReSTIR path is skipped.
 
     if (camera.emissive_count > 0)
     {
@@ -489,7 +504,7 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         r.M = 1;
         r.W = 0.0;
         r.indirect = float3(0.0, 0.0, 0.0);
-        r.indirect_pad = 0.0;
+        r.ao = 1.0; // Fully lit until proven otherwise by the AO trace below.
         r.shading_pos = input.world_position;
         r.shading_normal_oct = shading_normal_packed;
 
@@ -552,8 +567,9 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                     r.y_normal = prev_r.y_normal;
                 }
 
-                // Carry forward the previous frame's accumulated indirect GI.
+                // Carry forward the previous frame's accumulated indirect GI and AO.
                 r.indirect = prev_r.indirect;
+                r.ao = prev_r.ao;
             }
         }
 
@@ -562,6 +578,16 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         uint temporal_M = r.M;
 
         // ── Spatial reuse: merge with neighbouring pixels' reservoirs ──
+
+        // Spatial AO accumulator — averages AO across geometrically-similar
+        // neighbours after the spatial ReSTIR merge is done. Each accepted
+        // neighbour contributes one AO sample from its own reservoir; with
+        // 1 AO ray per pixel per frame and ~20 temporal frames × up to
+        // NUM_SPATIAL_NEIGHBOURS neighbours, effective AO sample count
+        // approaches ~100, denoising the single-ray RTAO without a separate
+        // filter pass.
+        float ao_spatial_sum = 0.0;
+        uint ao_spatial_count = 0u;
 
         uint spatial_hash = pcgHash(pixel_seed + 99991u);
         for (uint s = 0; s < NUM_SPATIAL_NEIGHBOURS; ++s)
@@ -589,6 +615,11 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
             if (!reservoirSurfaceMatches(neighbour_r, input.world_position, N)) {
                 continue;
             }
+
+            // Accumulate the neighbour's AO value — same surface-similarity test that
+            // gates the ReSTIR merge ensures we don't blur AO across silhouette edges.
+            ao_spatial_sum += neighbour_r.ao;
+            ++ao_spatial_count;
 
             // Same canonical proportional clamp as temporal, but with a more generous cap
             // because spatial neighbours bring in fresh spatial information that we want to
@@ -626,6 +657,14 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
             }
         }
 
+        // Blend accumulated neighbour AO with the current pixel's (temporal) AO.
+        // Weighted average where the current pixel counts as one sample alongside
+        // each accepted neighbour — cheaper and steadier than re-tracing AO rays
+        // at neighbour positions and biased toward the current pixel's own history.
+        if (ao_spatial_count > 0u) {
+            r.ao = (r.ao + ao_spatial_sum) / (1.0 + float(ao_spatial_count));
+        }
+
         // Compute final contribution weight W for the selected sample. The canonical
         // ReSTIR formula (Bitterli et al. 2020): W = (1/p_hat) × (w_sum / M), with M
         // being the combined count from candidate + temporal + spatial merges, and both
@@ -642,6 +681,45 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         float p_hat_sel = luminance(r.y_emissive) * geometry_sel;
 
         r.W = ((p_hat_sel > 0.0) && (r.M > 0)) ? (r.w_sum / (float(r.M) * p_hat_sel)) : 0.0;
+
+        // ── Ray-traced ambient occlusion (one cosine-weighted hemisphere ray) ──
+        // The AO integral (1/π) ∫_Ω V(ω) cos(θ) dω is the Lambertian visibility integral;
+        // cosine-weighted sampling is the unbiased Monte Carlo estimator. One ray per
+        // fragment per frame, averaged over time (EMA) and across geometrically-similar
+        // neighbours (spatial sum above) converges to noise-free AO without a separate
+        // filter pass. TMax is short (AO_MAX_DIST) so only local contact occlusion —
+        // terrace corners, tube bases — contributes.
+        uint hash_ao0 = pcgHash(pixel_seed + 13337u);
+        uint hash_ao1 = pcgHash(hash_ao0);
+        float ao_r1 = hashToFloat(hash_ao0);
+        float ao_r2 = hashToFloat(hash_ao1);
+
+        float ao_cos_theta = sqrt(ao_r2);
+        float ao_sin_theta = sqrt(1.0 - ao_r2);
+        float ao_phi = 2.0 * PI * ao_r1;
+
+        float3 ao_tangent;
+        float3 ao_bitangent;
+        buildOrthonormalBasis(N, ao_tangent, ao_bitangent);
+        float3 ao_dir = ao_tangent * (ao_sin_theta * cos(ao_phi)) + N * ao_cos_theta + ao_bitangent * (ao_sin_theta * sin(ao_phi));
+
+        RayDesc ao_ray;
+        ao_ray.Origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
+        ao_ray.Direction = ao_dir;
+        ao_ray.TMin = RAY_T_MIN;
+        ao_ray.TMax = AO_MAX_DIST;
+
+        RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER> ao_query;
+        ao_query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, ao_ray);
+        ao_query.Proceed();
+
+        float ao_sample = (ao_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0 : 1.0;
+
+        // Temporal EMA — same alpha derivation as the indirect-GI term (pre-spatial M
+        // so repeated merges don't dilute the update rate below a single fresh sample).
+        float ao_alpha = (temporal_M > 1) ? (1.0 / float(temporal_M)) : 1.0;
+        r.ao = lerp(r.ao, ao_sample, ao_alpha);
+        ao_factor = r.ao;
 
         // ── Single-bounce indirect GI (cosine-weighted hemisphere sampling) ──
 
@@ -832,9 +910,12 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                 float3 spec_brdf = D_val * Vis * F;
                 float3 diff_brdf = (1.0 - F) * (1.0 - mat.metallic) * base_colour / PI;
 
-                // ReSTIR estimator: BRDF × Le × geometry × W.
-                float3 Lo_unshadowed = (diff_brdf + spec_brdf) * r.y_emissive * geometry_sel;
-                direct_lighting = Lo_unshadowed * r.W;
+                // ReSTIR estimator split into diffuse and specular lobes — AO multiplies
+                // the diffuse (Lambertian) contribution only; specular and RT reflection
+                // stay at full brightness.
+                float3 Lo_common = r.y_emissive * geometry_sel * r.W;
+                direct_diffuse = diff_brdf * Lo_common;
+                direct_specular = spec_brdf * Lo_common;
             }
         }
     }
@@ -922,7 +1003,14 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
     // single light), while RT reflection captures scene radiance at the mirror direction.
     // Slight overlap in the perfect-mirror limit is accepted as the standard hybrid-rendering
     // compromise; replacing one with the other blacks out pixels whose reflection ray misses.
-    float3 colour = indirect_gi + direct_lighting + emissive + reflected_colour * F_view;
+    //
+    // RTAO (ao_factor ∈ [0, 1]) multiplies only the Lambertian lobes — the indirect GI
+    // diffuse bounce and the direct-lighting diffuse contribution. Specular (analytic and
+    // RT reflection) and emissive are not attenuated by AO because AO represents small-scale
+    // geometric occlusion of the diffuse irradiance integral, not of mirror reflections or
+    // self-emitted radiance.
+    float3 diffuse_term = (indirect_gi + direct_diffuse) * ao_factor;
+    float3 colour = diffuse_term + direct_specular + emissive + reflected_colour * F_view;
     return float4(colour, 1.0);
 }
 
