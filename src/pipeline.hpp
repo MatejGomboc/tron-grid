@@ -108,7 +108,7 @@ struct Reservoir {
     MathLib::Vec3 y_normal{}; //!< Light surface normal at the selected sample.
     float W{0.0f}; //!< Final contribution weight: w_sum / (M × p_hat(y)).
     MathLib::Vec3 indirect{}; //!< Accumulated indirect radiance (single-bounce GI).
-    float indirect_pad{0.0f}; //!< Reserved padding.
+    float ao{0.0f}; //!< Accumulated ambient-occlusion visibility in [0, 1] (1 = fully lit, 0 = fully occluded).
     MathLib::Vec3 shading_pos{}; //!< Shading-surface world position of the pixel that wrote this reservoir.
     uint32_t shading_normal_oct{0}; //!< Shading-surface normal, octahedral-packed to 32 bits.
 };
