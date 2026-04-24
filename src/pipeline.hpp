@@ -104,11 +104,13 @@ struct Reservoir {
     MathLib::Vec3 y_pos{}; //!< Selected light sample position.
     float w_sum{0.0f}; //!< Sum of RIS weights.
     MathLib::Vec3 y_emissive{}; //!< Emissive radiance at the selected sample.
-    uint32_t M{0}; //!< Number of candidates merged into this reservoir.
+    uint32_t M{0}; //!< Number of candidates merged into this reservoir, clamped at store time.
     MathLib::Vec3 y_normal{}; //!< Light surface normal at the selected sample.
     float W{0.0f}; //!< Final contribution weight: w_sum / (M × p_hat(y)).
     MathLib::Vec3 indirect{}; //!< Accumulated indirect radiance (single-bounce GI).
-    float indirect_pad{0.0f}; //!< Padding to 16-byte alignment (64 bytes total).
+    float indirect_pad{0.0f}; //!< Reserved padding.
+    MathLib::Vec3 shading_pos{}; //!< Shading-surface world position of the pixel that wrote this reservoir.
+    uint32_t shading_normal_oct{0}; //!< Shading-surface normal, octahedral-packed to 32 bits.
 };
 
 //! Push constants for the task shader — frustum planes + object count.

@@ -122,16 +122,18 @@ struct EmissiveTriangle {
 [[vk::binding(9, 0)]]
 StructuredBuffer<EmissiveTriangle> emissive_triangles;
 
-// Per-pixel reservoir for ReSTIR temporal reuse — must match C++ Reservoir struct.
+// Per-pixel reservoir for ReSTIR temporal reuse — must match C++ Reservoir struct (80 bytes).
 struct Reservoir {
     float3 y_pos; // Selected light sample position.
     float w_sum; // Sum of RIS weights.
     float3 y_emissive; // Emissive radiance at the selected sample.
-    uint M; // Number of candidates merged.
+    uint M; // Number of candidates merged, clamped at store time.
     float3 y_normal; // Light surface normal at the selected sample.
-    float W; // Final contribution weight.
+    float W; // Final contribution weight: w_sum / (M × p_hat(y)).
     float3 indirect; // Accumulated indirect radiance (single-bounce GI).
-    float indirect_pad;
+    float indirect_pad; // Reserved padding.
+    float3 shading_pos; // Shading-surface world position of the pixel that wrote this reservoir.
+    uint shading_normal_oct; // Shading-surface normal, octahedral-packed to 32 bits.
 };
 
 [[vk::binding(10, 0)]]
@@ -140,13 +142,20 @@ RWStructuredBuffer<Reservoir> reservoir_current; // Current frame — write.
 [[vk::binding(11, 0)]]
 StructuredBuffer<Reservoir> reservoir_previous; // Previous frame — read.
 
-// Maximum temporal M to prevent unbounded accumulation with stale data.
-static const uint MAX_TEMPORAL_M = 20;
+// Maximum M stored in a reservoir — applied at write time so that the invariant
+// W × M = w_sum / p_hat is preserved across frames. Temporal reuse caps prev_r.M at
+// this value implicitly because any stored reservoir already respects it.
+static const uint MAX_STORED_M = 200;
 
 // Spatial reuse — merge reservoirs from neighbouring pixels for faster convergence.
 static const uint NUM_SPATIAL_NEIGHBOURS = 5; // Number of random neighbours to merge.
 static const float SPATIAL_RADIUS = 20.0; // Pixel radius for neighbour sampling.
-static const uint MAX_SPATIAL_M = 100; // Per-neighbour M clamp for spatial reuse.
+
+// Geometric similarity thresholds for reprojection / neighbour rejection.
+// Rejects samples whose underlying shading surface differs too much from the current pixel —
+// prevents light-leaking across silhouettes and ghosting on disocclusion.
+static const float RESTIR_MAX_POS_DELTA = 0.30; // Reject if |Δposition| exceeds this (metres).
+static const float RESTIR_MIN_NORMAL_DOT = 0.90; // Reject if dot(n_current, n_neighbour) < this.
 
 // ── Neon tube constants (per-fragment wireframe pattern, not per-object material) ──
 
@@ -206,12 +215,63 @@ float3 F_Schlick(float cosTheta, float3 F0)
 // Selects the neon tube emissive colour based on world position.
 // Cells along every Nth row or column (major grid lines) glow orange;
 // all other cells glow cyan. Creates a coarse orange supergrid overlay.
+// Uses floor(abs(x)) (not abs(floor(x))) so classification is symmetric around
+// the origin — without this, negative x shifts the orange bands by one cell.
 float3 neonEmissiveColour(float3 world_pos)
 {
-    float mod_x = fmod(abs(floor(world_pos.x)), MAJOR_GRID_SPACING);
-    float mod_z = fmod(abs(floor(world_pos.z)), MAJOR_GRID_SPACING);
+    float mod_x = fmod(floor(abs(world_pos.x)), MAJOR_GRID_SPACING);
+    float mod_z = fmod(floor(abs(world_pos.z)), MAJOR_GRID_SPACING);
     bool is_orange = (mod_x < 0.5) || (mod_z < 0.5);
     return is_orange ? ORANGE_EMISSIVE_COLOUR : CYAN_EMISSIVE_COLOUR;
+}
+
+// Octahedral normal encoding — packs a unit vector into a single uint32 with
+// ~1° worst-case error. Used to store the shading-surface normal in the
+// 80-byte reservoir without growing the struct to 96 bytes. See Cigolle et al.
+// "A Survey of Efficient Representations for Independent Unit Vectors" (2014).
+uint packOctahedralNormal(float3 n)
+{
+    n = normalize(n);
+    float abs_sum = abs(n.x) + abs(n.y) + abs(n.z);
+    float2 p = n.xy / max(abs_sum, 1e-6);
+    if (n.z < 0.0) {
+        float2 snap = float2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+        p = (float2(1.0, 1.0) - abs(p.yx)) * snap;
+    }
+    // Quantise to 16 bits per axis, centred on [0, 1].
+    uint2 q = uint2(clamp(p * 0.5 + 0.5, 0.0, 1.0) * 65535.0 + 0.5);
+    return q.x | (q.y << 16);
+}
+
+float3 unpackOctahedralNormal(uint packed)
+{
+    float2 q = float2(packed & 0xFFFFu, (packed >> 16) & 0xFFFFu) / 65535.0;
+    float2 p = q * 2.0 - 1.0;
+    float3 n = float3(p.x, p.y, 1.0 - abs(p.x) - abs(p.y));
+    if (n.z < 0.0) {
+        float2 snap = float2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+        n.xy = (float2(1.0, 1.0) - abs(p.yx)) * snap;
+    }
+    return normalize(n);
+}
+
+// Geometric similarity test used to reject reprojected / neighbour reservoirs
+// whose underlying shading surface differs from the current pixel. Prevents
+// light bleeding across silhouette edges and ghosting on disocclusion.
+bool reservoirSurfaceMatches(Reservoir r, float3 current_pos, float3 current_normal)
+{
+    if (r.M == 0) {
+        return false;
+    }
+    float3 delta = r.shading_pos - current_pos;
+    if (dot(delta, delta) > RESTIR_MAX_POS_DELTA * RESTIR_MAX_POS_DELTA) {
+        return false;
+    }
+    float3 stored_normal = unpackOctahedralNormal(r.shading_normal_oct);
+    if (dot(stored_normal, current_normal) < RESTIR_MIN_NORMAL_DOT) {
+        return false;
+    }
+    return true;
 }
 
 // ── Pseudo-random hash (PCG) ──
@@ -251,8 +311,13 @@ void buildOrthonormalBasis(float3 n, out float3 t, out float3 b)
 }
 
 // Binary search the CDF to select an emissive triangle index.
+// Defensive: callers already guard on camera.emissive_count > 0, but without this
+// early-out count=0 would produce hi = UINT_MAX and loop ~32 times reading OOB.
 uint searchCDF(float r, uint count)
 {
+    if (count == 0) {
+        return 0;
+    }
     uint lo = 0;
     uint hi = count - 1;
     while (lo < hi) {
@@ -269,17 +334,27 @@ uint searchCDF(float r, uint count)
 // Fragment shader — obsidian floor with neon tube edges, Cook-Torrance PBR,
 // emissive area light sampling, RT shadows and reflections.
 [shader("fragment")]
-float4 fragMain(MeshOutput input) : SV_Target
+float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Target
 {
+    // With MSAA + full sample-rate shading the fragment shader runs once per
+    // covered sample. All samples of a given pixel share the same pixel_idx
+    // and would non-atomically race to write the same reservoir slot. Only
+    // sample 0 performs the reservoir write — samples 1..N still compute
+    // their own colour for per-sample coverage but skip the SSBO store.
+    bool write_reservoir = (sample_index == 0);
+
     // Load material from the SSBO.
     MaterialData mat = materials[input.material_index];
+
+    uint pixel_x = uint(input.position.x);
+    uint pixel_y = uint(input.position.y);
+    bool pixel_in_bounds = (pixel_x < camera.screen_width) && (pixel_y < camera.screen_height);
+    uint pixel_idx = pixel_y * camera.screen_width + pixel_x;
 
     // Pure emissive objects (orb, neon tubes) — no wireframe or PBR, just emit light.
     // Zero the reservoir slot so spatial reuse neighbours don't read stale data.
     if (mat.emissive_strength > 0.0) {
-        uint ex = uint(input.position.x);
-        uint ey = uint(input.position.y);
-        if ((ex < camera.screen_width) && (ey < camera.screen_height)) {
+        if (write_reservoir && pixel_in_bounds) {
             Reservoir empty;
             empty.y_pos = float3(0.0, 0.0, 0.0);
             empty.w_sum = 0.0;
@@ -289,7 +364,9 @@ float4 fragMain(MeshOutput input) : SV_Target
             empty.W = 0.0;
             empty.indirect = float3(0.0, 0.0, 0.0);
             empty.indirect_pad = 0.0;
-            reservoir_current[ey * camera.screen_width + ex] = empty;
+            empty.shading_pos = input.world_position;
+            empty.shading_normal_oct = 0u;
+            reservoir_current[pixel_idx] = empty;
         }
         return float4(mat.emissive * mat.emissive_strength, 1.0);
     }
@@ -314,22 +391,33 @@ float4 fragMain(MeshOutput input) : SV_Target
     float3 N_smooth = normalize(input.smooth_normal); // Smooth heightmap-gradient normal (for reflections).
     float3 V = normalize(camera.camera_pos - input.world_position);
 
-    // Flip normal to face the camera — two-sided lighting prevents steep terrain
-    // slopes from appearing invisible when their face normal points away from the viewer.
-    // The unflipped geometric normal (N_geo) is preserved for correct reflection directions.
-    float3 N = N_geo;
-    if (dot(N, V) < 0.0) {
-        N = -N;
-    }
+    // Two-sided lighting — if the geometric face points away from the camera
+    // (typical for the far side of a steep terrace), flip BOTH the shading
+    // normal and the smooth-normal so reflections, BRDF, and self-intersection
+    // offsets stay consistent. Previously only N (shading) was flipped, leaving
+    // N_smooth pointing into the surface and producing degenerate reflections.
+    bool front_facing = dot(N_geo, V) >= 0.0;
+    float3 N = front_facing ? N_geo : -N_geo;
+    float3 N_smooth_front = front_facing ? N_smooth : -N_smooth;
     float NdotV = abs(dot(N, V)) + 1e-5;
+
+    // Pre-compute the PBR Fresnel F0 from the material. Used by both direct
+    // lighting (via VdotH) and the reflection path (via NdotV). Metallic
+    // materials tint F0 with base_colour; dielectrics use the Snell-derived
+    // scalar F0 = ((n-1)/(n+1))^2.
+    float ior_ratio = (mat.ior - 1.0) / (mat.ior + 1.0);
+    float3 F0_dielectric = float3(ior_ratio * ior_ratio, ior_ratio * ior_ratio, ior_ratio * ior_ratio);
+    float3 F0_mat = lerp(F0_dielectric, mat.base_colour, mat.metallic);
+    float3 F_view = F_Schlick(max(dot(N, V), 0.0), F0_mat);
+
+    // Pack the shading-surface normal once — used when storing the reservoir.
+    uint shading_normal_packed = packOctahedralNormal(N);
 
     // ── ReSTIR DI temporal reuse (emissive area light sampling) ──
 
-    float3 direct_lighting = float3(0.0, 0.0, 0.0);
+    float3 direct_diffuse = float3(0.0, 0.0, 0.0); // Lambertian lobe — survives the RT-reflection composite.
+    float3 direct_specular = float3(0.0, 0.0, 0.0); // Cook-Torrance lobe — replaced by RT reflection when traced.
     float3 indirect_gi = base_colour * AMBIENT; // Fallback flat ambient if no emissive triangles.
-    uint pixel_x = uint(input.position.x);
-    uint pixel_y = uint(input.position.y);
-    uint pixel_idx = pixel_y * camera.screen_width + pixel_x;
 
     if (camera.emissive_count > 0)
     {
@@ -356,11 +444,11 @@ float4 fragMain(MeshOutput input) : SV_Target
         // Evaluate target function p_hat for the candidate at the current shading point.
         float3 to_light = light_point - input.world_position;
         float dist_sq = dot(to_light, to_light);
-        float dist = sqrt(dist_sq);
+        float dist = max(sqrt(dist_sq), 1e-4);
         float3 L = to_light / dist;
         float NdotL_cand = max(dot(N, L), 0.0);
         float cos_light = abs(dot(light_normal, -L));
-        float geometry = NdotL_cand * cos_light / max(dist_sq, 0.0001);
+        float geometry = NdotL_cand * cos_light / max(dist_sq, 1e-4);
         float p_hat_cand = luminance(etri.emissive) * geometry;
 
         // Source PDF from the power-weighted CDF.
@@ -379,6 +467,8 @@ float4 fragMain(MeshOutput input) : SV_Target
         r.W = 0.0;
         r.indirect = float3(0.0, 0.0, 0.0);
         r.indirect_pad = 0.0;
+        r.shading_pos = input.world_position;
+        r.shading_normal_oct = shading_normal_packed;
 
         // ── Temporal reuse: merge with previous frame's reservoir ──
 
@@ -386,50 +476,54 @@ float4 fragMain(MeshOutput input) : SV_Target
         // prev_clip_pos uses the raw projection matrix (math convention: Y+ = up),
         // but screen pixels use Vulkan convention (Y=0 at top). Negate NDC Y to match.
         float4 prev_clip = input.prev_clip_pos;
-        float2 prev_ndc = prev_clip.xy / prev_clip.w;
+        float2 prev_ndc = prev_clip.xy / max(prev_clip.w, 1e-6);
         float2 prev_uv = prev_ndc * float2(0.5, -0.5) + 0.5;
         int2 prev_pixel = int2(prev_uv * float2(camera.screen_width, camera.screen_height));
 
-        bool prev_valid = (prev_pixel.x >= 0) && (prev_pixel.x < int(camera.screen_width))
+        bool prev_in_screen = (prev_pixel.x >= 0) && (prev_pixel.x < int(camera.screen_width))
             && (prev_pixel.y >= 0) && (prev_pixel.y < int(camera.screen_height))
             && (prev_clip.w > 0.0);
 
-        if (prev_valid)
+        if (prev_in_screen)
         {
             uint prev_idx = uint(prev_pixel.y) * camera.screen_width + uint(prev_pixel.x);
             Reservoir prev_r = reservoir_previous[prev_idx];
 
-            // Clamp M to prevent unbounded temporal accumulation.
-            prev_r.M = min(prev_r.M, MAX_TEMPORAL_M);
-
-            // Evaluate p_hat at the current shading point for the temporal sample.
-            float3 to_temporal = prev_r.y_pos - input.world_position;
-            float temp_dist_sq = dot(to_temporal, to_temporal);
-            float temp_dist = sqrt(temp_dist_sq);
-            float3 L_temp = to_temporal / temp_dist;
-            float NdotL_temp = max(dot(N, L_temp), 0.0);
-            float cos_light_temp = abs(dot(prev_r.y_normal, -L_temp));
-            float geometry_temp = NdotL_temp * cos_light_temp / max(temp_dist_sq, 0.0001);
-            float p_hat_temp = luminance(prev_r.y_emissive) * geometry_temp;
-
-            // RIS weight for the temporal reservoir's contribution.
-            float w_temporal = p_hat_temp * prev_r.W * float(prev_r.M);
-
-            // Merge: add temporal weight and probabilistically select.
-            r.w_sum += w_temporal;
-            r.M += prev_r.M;
-
-            uint hash3 = pcgHash(hash2 + 54321u);
-            float select_r = hashToFloat(hash3);
-            if ((r.w_sum > 0.0) && (select_r < (w_temporal / r.w_sum)))
+            // Reject reprojected reservoirs whose shading surface differs — prevents ghosting
+            // on disocclusion and when a moving silhouette pulls a tube in front of terrain.
+            if (reservoirSurfaceMatches(prev_r, input.world_position, N))
             {
-                r.y_pos = prev_r.y_pos;
-                r.y_emissive = prev_r.y_emissive;
-                r.y_normal = prev_r.y_normal;
-            }
+                // Evaluate p_hat at the current shading point for the temporal sample.
+                float3 to_temporal = prev_r.y_pos - input.world_position;
+                float temp_dist_sq = dot(to_temporal, to_temporal);
+                float temp_dist = max(sqrt(temp_dist_sq), 1e-4);
+                float3 L_temp = to_temporal / temp_dist;
+                float NdotL_temp = max(dot(N, L_temp), 0.0);
+                float cos_light_temp = abs(dot(prev_r.y_normal, -L_temp));
+                float geometry_temp = NdotL_temp * cos_light_temp / max(temp_dist_sq, 1e-4);
+                float p_hat_temp = luminance(prev_r.y_emissive) * geometry_temp;
 
-            // Carry forward the previous frame's accumulated indirect GI.
-            r.indirect = prev_r.indirect;
+                // Standard RIS temporal weight: w_temporal = p_hat_new × W_prev × M_prev.
+                // M was clamped at write time (MAX_STORED_M) so W × M = w_sum / p_hat is
+                // preserved across frames — no need to re-clamp on read.
+                float w_temporal = p_hat_temp * prev_r.W * float(prev_r.M);
+
+                // Merge: add temporal weight and probabilistically select.
+                r.w_sum += w_temporal;
+                r.M += prev_r.M;
+
+                uint hash3 = pcgHash(hash2 + 54321u);
+                float select_r = hashToFloat(hash3);
+                if ((r.w_sum > 0.0) && (select_r < (w_temporal / r.w_sum)))
+                {
+                    r.y_pos = prev_r.y_pos;
+                    r.y_emissive = prev_r.y_emissive;
+                    r.y_normal = prev_r.y_normal;
+                }
+
+                // Carry forward the previous frame's accumulated indirect GI.
+                r.indirect = prev_r.indirect;
+            }
         }
 
         // Save M before spatial merge — used for indirect GI EMA alpha.
@@ -448,9 +542,10 @@ float4 fragMain(MeshOutput input) : SV_Target
             float radius = sqrt(hashToFloat(hash_y)) * SPATIAL_RADIUS;
             int2 neighbour_pixel = int2(pixel_x, pixel_y) + int2(int(cos(angle) * radius), int(sin(angle) * radius));
 
-            // Bounds check.
+            // Bounds check — also skip the current pixel (zero-radius sample self-matches).
             if ((neighbour_pixel.x < 0) || (neighbour_pixel.x >= int(camera.screen_width))
-                || (neighbour_pixel.y < 0) || (neighbour_pixel.y >= int(camera.screen_height)))
+                || (neighbour_pixel.y < 0) || (neighbour_pixel.y >= int(camera.screen_height))
+                || ((neighbour_pixel.x == int(pixel_x)) && (neighbour_pixel.y == int(pixel_y))))
             {
                 continue;
             }
@@ -458,22 +553,21 @@ float4 fragMain(MeshOutput input) : SV_Target
             uint neighbour_idx = uint(neighbour_pixel.y) * camera.screen_width + uint(neighbour_pixel.x);
             Reservoir neighbour_r = reservoir_previous[neighbour_idx];
 
-            // Skip empty reservoirs (sky pixels, uninitialised).
-            if (neighbour_r.M == 0) {
+            // Reject empty, sky, or geometrically-dissimilar neighbours — prevents light
+            // leaking across silhouettes where the neighbour pixel was a different surface.
+            if (!reservoirSurfaceMatches(neighbour_r, input.world_position, N)) {
                 continue;
             }
 
-            // Clamp M to prevent excessive spatial influence.
-            neighbour_r.M = min(neighbour_r.M, MAX_SPATIAL_M);
-
             // Evaluate p_hat at the current shading point for the spatial sample.
+            // M was clamped at write time, so W × M is preserved across frames.
             float3 to_spatial = neighbour_r.y_pos - input.world_position;
             float sp_dist_sq = dot(to_spatial, to_spatial);
-            float sp_dist = sqrt(sp_dist_sq);
+            float sp_dist = max(sqrt(sp_dist_sq), 1e-4);
             float3 L_sp = to_spatial / sp_dist;
             float NdotL_sp = max(dot(N, L_sp), 0.0);
             float cos_light_sp = abs(dot(neighbour_r.y_normal, -L_sp));
-            float geometry_sp = NdotL_sp * cos_light_sp / max(sp_dist_sq, 0.0001);
+            float geometry_sp = NdotL_sp * cos_light_sp / max(sp_dist_sq, 1e-4);
             float p_hat_sp = luminance(neighbour_r.y_emissive) * geometry_sp;
 
             // RIS weight for the spatial neighbour's contribution.
@@ -493,14 +587,20 @@ float4 fragMain(MeshOutput input) : SV_Target
             }
         }
 
+        // Clamp M at WRITE TIME so the invariant W × M = w_sum / p_hat is preserved
+        // when the reservoir is consumed by the next frame. Clamping M only on read
+        // (as the previous implementation did) silently under-weighted reservoirs
+        // whose accumulated M had exceeded the cap.
+        r.M = min(r.M, MAX_STORED_M);
+
         // Compute final contribution weight W for the selected sample.
         float3 to_selected = r.y_pos - input.world_position;
         float sel_dist_sq = dot(to_selected, to_selected);
-        float sel_dist = sqrt(sel_dist_sq);
+        float sel_dist = max(sqrt(sel_dist_sq), 1e-4);
         float3 L_sel = to_selected / sel_dist;
         float NdotL_sel = max(dot(N, L_sel), 0.0);
         float cos_light_sel = abs(dot(r.y_normal, -L_sel));
-        float geometry_sel = NdotL_sel * cos_light_sel / max(sel_dist_sq, 0.0001);
+        float geometry_sel = NdotL_sel * cos_light_sel / max(sel_dist_sq, 1e-4);
         float p_hat_sel = luminance(r.y_emissive) * geometry_sel;
 
         r.W = ((p_hat_sel > 0.0) && (r.M > 0)) ? (r.w_sum / (float(r.M) * p_hat_sel)) : 0.0;
@@ -510,11 +610,12 @@ float4 fragMain(MeshOutput input) : SV_Target
         // Russian roulette — terminate early for dark surfaces (most obsidian pixels).
         float rr_prob = clamp(luminance(base_colour) * 10.0, 0.0, 0.95);
         uint hash_rr = pcgHash(pixel_seed + 77777u);
+        bool gi_sample_valid = false; // Only update the EMA when we actually produced a sample.
         float3 new_indirect = float3(0.0, 0.0, 0.0);
 
         if (hashToFloat(hash_rr) < rr_prob)
         {
-            // Cosine-weighted hemisphere direction from the shading normal.
+            // Cosine-weighted hemisphere direction from the shading normal (Malley's method).
             uint hash_gi0 = pcgHash(hash_rr + 11111u);
             uint hash_gi1 = pcgHash(hash_gi0);
             float gi_r1 = hashToFloat(hash_gi0);
@@ -538,8 +639,11 @@ float4 fragMain(MeshOutput input) : SV_Target
             gi_ray.TMin = RAY_T_MIN;
             gi_ray.TMax = 200.0;
 
+            // RAY_FLAG_NONE — consistent with the reflection path. Neon tube quads are
+            // thin emitters; making GI rays cull back-faces would silently drop legitimate
+            // emissive contribution from tubes hit on the "far" side of a thin quad.
             RayQuery<RAY_FLAG_NONE> gi_query;
-            gi_query.TraceRayInline(scene_tlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, gi_ray);
+            gi_query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, gi_ray);
             gi_query.Proceed();
 
             if (gi_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
@@ -553,6 +657,7 @@ float4 fragMain(MeshOutput input) : SV_Target
                 if (gi_hit_mat.emissive_strength > 0.0) {
                     // Hit emissive geometry directly — use its radiance.
                     incoming = gi_hit_mat.emissive * gi_hit_mat.emissive_strength;
+                    gi_sample_valid = true;
                 } else {
                     // Hit non-emissive surface (terrain) — evaluate direct illumination.
                     //
@@ -572,6 +677,7 @@ float4 fragMain(MeshOutput input) : SV_Target
                     float3 gi_hit_normal = normalize(float3(gi_hit_vtx.norm_x, gi_hit_vtx.norm_y, gi_hit_vtx.norm_z));
 
                     // Flip hit normal to face the incoming GI ray (two-sided).
+                    // Now live code: GI rays no longer cull back-faces (see gi_query flags).
                     if (dot(gi_hit_normal, -gi_dir) < 0.0) {
                         gi_hit_normal = -gi_hit_normal;
                     }
@@ -590,14 +696,14 @@ float4 fragMain(MeshOutput input) : SV_Target
 
                     float3 gi_to_light = gi_light_pt - gi_hit_pos;
                     float gi_light_dist_sq = dot(gi_to_light, gi_to_light);
-                    float gi_light_dist = sqrt(gi_light_dist_sq);
+                    float gi_light_dist = max(sqrt(gi_light_dist_sq), 1e-4);
                     float3 gi_L = gi_to_light / gi_light_dist;
 
                     // Full geometry term: NdotL at hit surface × cos_light at emissive surface / distance².
                     float gi_NdotL_hit = max(dot(gi_hit_normal, gi_L), 0.0);
                     float3 gi_light_n = normalize(cross(gi_etri.v1 - gi_etri.v0, gi_etri.v2 - gi_etri.v0));
                     float gi_cos_light = abs(dot(gi_light_n, -gi_L));
-                    float gi_geometry = gi_NdotL_hit * gi_cos_light / max(gi_light_dist_sq, 0.0001);
+                    float gi_geometry = gi_NdotL_hit * gi_cos_light / max(gi_light_dist_sq, 1e-4);
                     float gi_pdf = max(luminance(gi_etri.emissive) / camera.total_emissive_power, 1e-8);
 
                     // Shadow ray from bounce hit point to the sampled light.
@@ -620,6 +726,10 @@ float4 fragMain(MeshOutput input) : SV_Target
                             incoming = gi_etri.emissive * gi_geometry / gi_pdf * gi_hit_mat.base_colour / PI;
                         }
                     }
+                    // Whether or not the shadow ray was occluded, the bounce produced a
+                    // sample from a surface that exists — record it so the EMA averages
+                    // shadowed zeroes correctly (unbiased estimator).
+                    gi_sample_valid = true;
                 }
 
                 // Cosine-weighted estimator: base_colour * incoming / rr_prob.
@@ -628,14 +738,18 @@ float4 fragMain(MeshOutput input) : SV_Target
             }
         }
 
-        // Blend indirect with temporal accumulation (exponential moving average).
-        // Use temporal_M (not post-spatial r.M) to avoid diluting the alpha.
-        float indirect_alpha = (temporal_M > 1) ? (1.0 / float(temporal_M)) : 1.0;
-        r.indirect = lerp(r.indirect, new_indirect, indirect_alpha);
+        // Only update the EMA when Russian roulette accepted AND the ray hit a surface.
+        // On reject, keep the previous indirect untouched — feeding zero into the EMA
+        // would bias the accumulator toward zero for dark surfaces (most obsidian pixels
+        // produce RR rejection more often than acceptance).
+        if (gi_sample_valid) {
+            float indirect_alpha = (temporal_M > 1) ? (1.0 / float(temporal_M)) : 1.0;
+            r.indirect = lerp(r.indirect, new_indirect, indirect_alpha);
+        }
         indirect_gi = r.indirect;
 
-        // Store reservoir for next frame's temporal reuse (with bounds guard).
-        if ((pixel_x < camera.screen_width) && (pixel_y < camera.screen_height)) {
+        // Store reservoir for next frame's temporal reuse — sample 0 only.
+        if (write_reservoir && pixel_in_bounds) {
             reservoir_current[pixel_idx] = r;
         }
 
@@ -659,21 +773,24 @@ float4 fragMain(MeshOutput input) : SV_Target
             bool in_shadow = (query.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
             if (!in_shadow)
             {
-                // Cook-Torrance BRDF for the selected light direction.
+                // Cook-Torrance BRDF for the selected light direction — unified F0
+                // (metallic-aware, shared with the reflection path's F_view).
                 float3 H = normalize(V + L_sel);
                 float NdotH = clamp(dot(N, H), 0.0, 1.0);
                 float VdotH = clamp(dot(V, H), 0.0, 1.0);
 
                 float D_val = D_GGX(NdotH, roughness);
                 float Vis = V_SmithGGXCorrelated(NdotV, NdotL_sel, roughness);
-                float3 F = F_Schlick(VdotH, F0_DIELECTRIC);
+                float3 F = F_Schlick(VdotH, F0_mat);
 
-                float3 spec = D_val * Vis * F;
-                float3 diff = (1.0 - F) * base_colour / PI;
+                float3 spec_brdf = D_val * Vis * F;
+                float3 diff_brdf = (1.0 - F) * (1.0 - mat.metallic) * base_colour / PI;
 
-                // ReSTIR estimator: BRDF × Le × geometry × W.
-                float3 Lo_unshadowed = (diff + spec) * r.y_emissive * geometry_sel;
-                direct_lighting = Lo_unshadowed * r.W;
+                // Split Lo into diffuse and specular contributions — the composite below
+                // replaces the specular with RT reflection when one is traced.
+                float3 Lo_common = r.y_emissive * geometry_sel * r.W;
+                direct_diffuse = diff_brdf * Lo_common;
+                direct_specular = spec_brdf * Lo_common;
             }
         }
     }
@@ -681,20 +798,18 @@ float4 fragMain(MeshOutput input) : SV_Target
     // ── RT reflection for obsidian surface ──
 
     float3 reflected_colour = float3(0.0, 0.0, 0.0);
+    bool reflection_traced = false;
 
-    // Fresnel at the primary surface — controls reflection strength.
-    // Compute F0 from the material's index of refraction (Fresnel's law for dielectrics).
-    float ior_ratio = (mat.ior - 1.0) / (mat.ior + 1.0);
-    float3 F0_mat = float3(ior_ratio * ior_ratio, ior_ratio * ior_ratio, ior_ratio * ior_ratio);
-    float3 F_view = F_Schlick(max(dot(N, V), 0.0), F0_mat);
-
-    // Only trace reflections for obsidian-dominant fragments (wire > 0.5).
-    // Use the smooth interpolated normal for continuous reflections across tile boundaries
-    // — prevents the "cut in half" artefact where flat and steep tiles meet.
-    if ((wire > 0.5) && (F_view.x > 0.01))
+    // Only trace reflections for obsidian-dominant fragments (wire > 0.5) that
+    // front-face the camera (guard eliminates self-intersecting "into the surface"
+    // rays at back-facing terrace sidewalls). Use the smooth-normal for the
+    // reflection direction (continuous across terraces) but the geometric normal
+    // for the origin offset (avoids placing the ray inside the sidewall when
+    // N_smooth and N_geo disagree by ~90°).
+    if ((wire > 0.5) && (F_view.x > 0.01) && front_facing)
     {
-        float3 reflect_dir = reflect(-V, N_smooth);
-        float3 reflect_origin = input.world_position + N_smooth * SELF_INTERSECTION_OFFSET;
+        float3 reflect_dir = reflect(-V, N_smooth_front);
+        float3 reflect_origin = input.world_position + N * SELF_INTERSECTION_OFFSET;
 
         RayDesc reflect_ray;
         reflect_ray.Origin = reflect_origin;
@@ -709,6 +824,8 @@ float4 fragMain(MeshOutput input) : SV_Target
 
         if (reflect_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
         {
+            reflection_traced = true;
+
             // Look up the material of the reflected hit via instance custom index.
             uint hit_instance = reflect_query.CommittedInstanceID();
             uint hit_mat_idx = objects[hit_instance].material_index;
@@ -731,8 +848,12 @@ float4 fragMain(MeshOutput input) : SV_Target
                 float3 hit_base = lerp(float3(0.0, 0.0, 0.0), hit_mat.base_colour, hit_wire);
 
                 // Look up the reflected hit's indirect GI from its reservoir (one frame latent).
+                // reservoir_previous stores last frame's data, so reproject through last
+                // frame's view-projection to sample the correct pixel — using the current
+                // frame's VP (as the previous implementation did) misses the mark whenever
+                // the camera moves.
                 float3 hit_indirect = hit_base * AMBIENT; // Fallback.
-                float4 hit_clip = mul(camera.projection, mul(camera.view, float4(hit_pos, 1.0)));
+                float4 hit_clip = mul(camera.prev_view_projection, float4(hit_pos, 1.0));
                 if (hit_clip.w > 0.0) {
                     float2 hit_ndc = hit_clip.xy / hit_clip.w;
                     float2 hit_uv = hit_ndc * float2(0.5, -0.5) + 0.5;
@@ -753,9 +874,15 @@ float4 fragMain(MeshOutput input) : SV_Target
         }
     }
 
-    // Indirect GI + direct lighting + emissive + reflection.
-    // The indirect term replaces the flat ambient constant — spatially varying, physically correct.
-    float3 colour = indirect_gi + direct_lighting + emissive + reflected_colour * F_view;
+    // Energy-conserving composite. The RT reflection is the physical specular for
+    // this pixel at the mirror direction; when it's traced, drop the analytic
+    // Cook-Torrance specular (they would double-count the specular lobe). Diffuse
+    // and indirect are unaffected.
+    float3 spec_contribution = reflection_traced
+        ? (reflected_colour * F_view)
+        : direct_specular;
+
+    float3 colour = indirect_gi + direct_diffuse + spec_contribution + emissive;
     return float4(colour, 1.0);
 }
 

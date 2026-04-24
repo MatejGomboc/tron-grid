@@ -64,6 +64,7 @@ static const float CA_STRENGTH = 0.003; // Chromatic aberration — RGB fringe i
 static const float COLOUR_GRADE_STRENGTH = 0.15; // Cool colour grade — lerp toward desaturated cool tint.
 static const float VIGNETTE_STRENGTH = 1.5; // Vignette — radial darkening at screen corners.
 static const float SCAN_LINE_STRENGTH = 0.04; // Scan lines — faint horizontal line pattern intensity.
+static const float SCAN_LINE_PERIOD = 3.0; // Pixels per scan-line cycle — 1 is invisible at 4K, 3 stays visible.
 
 // Rec. 709 luminance weights (for colour grading desaturation).
 static const float3 LUMINANCE_WEIGHTS = float3(0.2126, 0.7152, 0.0722);
@@ -124,16 +125,25 @@ void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
 
     // ── Chromatic aberration (HDR space) ──
     // Per-channel UV offset that increases toward screen edges — subtle RGB fringe.
+    // Offsets must be clamped to [0, extent-1] as signed int *before* casting to uint —
+    // otherwise negative offsets near the top-left corner wrap to huge uint values and
+    // the internal min() in sampleHdrWithBloom ends up sampling the bottom-right of
+    // the frame, producing a bright red fringe at the top-left edge.
     float2 uv = (float2(thread_id.xy) + 0.5) / float2(width, height);
     float2 centre_offset = uv - 0.5;
     float dist_sq = dot(centre_offset, centre_offset);
     float2 aberration = centre_offset * dist_sq * CA_STRENGTH;
     int2 pixel_offset = int2(aberration * float2(width, height));
 
+    int2 centre_coord = int2(thread_id.xy);
+    int2 max_coord = int2(int(width) - 1, int(height) - 1);
+    int2 coord_r = clamp(centre_coord + pixel_offset, int2(0, 0), max_coord);
+    int2 coord_b = clamp(centre_coord - pixel_offset, int2(0, 0), max_coord);
+
     float3 colour;
-    colour.r = sampleHdrWithBloom(uint2(int2(thread_id.xy) + pixel_offset), width, height, bloom_w, bloom_h).r;
+    colour.r = sampleHdrWithBloom(uint2(coord_r), width, height, bloom_w, bloom_h).r;
     colour.g = sampleHdrWithBloom(thread_id.xy, width, height, bloom_w, bloom_h).g;
-    colour.b = sampleHdrWithBloom(uint2(int2(thread_id.xy) - pixel_offset), width, height, bloom_w, bloom_h).b;
+    colour.b = sampleHdrWithBloom(uint2(coord_b), width, height, bloom_w, bloom_h).b;
 
     // ── ACES fitted RRT+ODT ──
     // Transforms to AP1 colour space, applies the tone curve, transforms back.
@@ -159,8 +169,10 @@ void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
     colour *= vignette;
 
     // ── Scan lines ──
-    // Faint horizontal line pattern — sells the "digital display" aesthetic.
-    float scan = 1.0 - SCAN_LINE_STRENGTH * step(0.5, frac(float(thread_id.y) * 0.5));
+    // Faint horizontal line pattern — sells the "digital display" aesthetic. Period of
+    // one pixel is effectively a uniform darken at 4K; SCAN_LINE_PERIOD spreads the
+    // pattern across several pixels so it stays a visible scan line rather than aliasing.
+    float scan = 1.0 - SCAN_LINE_STRENGTH * step(0.5, frac(float(thread_id.y) / SCAN_LINE_PERIOD));
     colour *= scan;
 
     swapchain_output[thread_id.xy] = float4(colour, 1.0);

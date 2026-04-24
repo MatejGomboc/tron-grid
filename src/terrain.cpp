@@ -296,8 +296,11 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
     };
 
     // Helper: check if a world-space coordinate lies on a major grid line.
+    // Uses floor(abs(x)) (not abs(floor(x))) so classification is symmetric around
+    // the origin — matches the shader's neonEmissiveColour() without this fix the
+    // bands shift by one cell on negative coordinates.
     auto isOnMajorGridLine = [](float world_coord) -> bool {
-        float mod_val{std::fmod(std::abs(std::floor(world_coord)), NEON_MAJOR_GRID_SPACING)};
+        float mod_val{std::fmod(std::floor(std::abs(world_coord)), NEON_MAJOR_GRID_SPACING)};
         return mod_val < 0.5f;
     };
 
@@ -312,6 +315,13 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
     result.orange.indices.reserve(static_cast<size_t>(total_edges));
     result.orange.positions.reserve(static_cast<size_t>(total_edges));
 
+    // Classify edges with the same OR-rule the shader uses when painting terrain
+    // wireframe overlays and reflections (neonEmissiveColour). An edge goes to the
+    // orange sub-mesh if its midpoint falls in orange territory — which is the case
+    // whenever EITHER axis is on a major grid line. Without this alignment the tube
+    // geometry is cyan while the surrounding shader-painted glow is orange at every
+    // cyan-row × orange-column crossing.
+
     // Generate horizontal edges (along X axis, at each Z row).
     for (uint32_t z{0}; z < verts_per_side; ++z) {
         float world_z{static_cast<float>(z) * config.tile_spacing - half_size};
@@ -320,7 +330,12 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
         for (uint32_t x{0}; x < config.grid_size; ++x) {
             MathLib::Vec3 a{vertexPos(x, z)};
             MathLib::Vec3 b{vertexPos(x + 1, z)};
-            NeonSubMesh& target{orange_row ? result.orange : result.cyan};
+            // Midpoint classifies the whole edge (edges are short enough that either
+            // endpoint's classification works). Use the starting vertex's x which
+            // lies in the same "cell" as the midpoint for tile_spacing >= 1.
+            float world_x_start{static_cast<float>(x) * config.tile_spacing - half_size};
+            bool orange_edge{orange_row || isOnMajorGridLine(world_x_start)};
+            NeonSubMesh& target{orange_edge ? result.orange : result.cyan};
             emitEdgeQuad(target, a, b);
         }
     }
@@ -333,7 +348,9 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
         for (uint32_t z{0}; z < config.grid_size; ++z) {
             MathLib::Vec3 a{vertexPos(x, z)};
             MathLib::Vec3 b{vertexPos(x, z + 1)};
-            NeonSubMesh& target{orange_col ? result.orange : result.cyan};
+            float world_z_start{static_cast<float>(z) * config.tile_spacing - half_size};
+            bool orange_edge{orange_col || isOnMajorGridLine(world_z_start)};
+            NeonSubMesh& target{orange_edge ? result.orange : result.cyan};
             emitEdgeQuad(target, a, b);
         }
     }
