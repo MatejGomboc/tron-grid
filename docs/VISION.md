@@ -73,10 +73,10 @@ The Tron aesthetic demands specific rendering capabilities:
 | Effect | Implementation |
 |--------|----------------|
 | **Neon glow** | Multi-pass bloom, HDR rendering |
-| **Grid lines** | Procedural geometry, anti-aliased lines |
-| **Data streams** | Particle systems, animated UVs |
-| **Reflections** | Screen-space reflections on grid floor |
-| **Light trails** | Motion blur, temporal effects |
+| **Grid lines** | Procedural geometry, screen-space derivative wireframe antialiasing |
+| **Data streams** | GPU particle systems, animated emissive tubes (Phase 10) |
+| **Reflections** | Ray-traced single-bounce reflections via inline ray query |
+| **Light trails** | Ribbon geometry with emissive HDR and bloom (Phase 11) |
 
 ### Colour Palette
 

@@ -19,12 +19,17 @@ Cook-Torrance BRDF, HDR framebuffer with compute post-process pass (ACES
 fitted RRT+ODT tonemapping with AP1 hue preservation, exact sRGB encoding),
 bloom with soft glow halos (extraction, mip chain downsample, tent-filter
 upsample, HDR composite), 8× MSAA with sample-rate shading and screen-space
-antialiased wireframe, procedural cyberpunk skybox (value noise data fog), per-material PBR via material SSBO, cinematic post-process
-(chromatic aberration, cool colour grade, vignette, scan lines), RT hard shadows
-and single-bounce reflections via inline ray query (`VK_KHR_ray_query`). Mesh
-shader rendering (task + mesh + fragment), procedural Tron terrain, per-object
-frustum culling, meshlet-based geometry, entity/component scene. Code quality:
-Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU validation.
+antialiased wireframe, procedural cyberpunk skybox (value noise data fog),
+per-material PBR via material SSBO, cinematic post-process (chromatic
+aberration, cool colour grade, vignette, scan lines). Physically-correct
+lighting from emissive neon tube geometry (no point-light abstraction) with
+ReSTIR DI — temporal + spatial reservoir reuse for direct illumination,
+single-bounce indirect GI via cosine-weighted hemisphere sampling with Russian
+roulette. RT hard shadows and single-bounce reflections via inline ray query
+(`VK_KHR_ray_query`). Mesh shader rendering (task + mesh + fragment),
+procedural Tron terrain, per-object frustum culling, meshlet-based geometry,
+entity/component scene. Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`,
+ASan/UBSan/TSan, GPU validation.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 
@@ -41,7 +46,8 @@ TronGrid always starts as a console application. Two launch-time modes:
 
 The AI brain is a DLL (Windows) or SO (Linux) — an independent project with its own architecture.
 TronGrid provides a standalone C-linkage interface header; the brain's internals are none of
-TronGrid's business. The AI interface specification will be documented in a future phase.
+TronGrid's business. See [docs/AI_INTERFACE.md](docs/AI_INTERFACE.md) for the interface
+specification (staged protocol, shared memory layout, brain lifecycle).
 
 ---
 
@@ -134,7 +140,8 @@ cmake --build build/linux-x11-gcc --config Debug
 | [docs/DEV_ENV_SETUP.md](docs/DEV_ENV_SETUP.md) | Development environment setup |
 | [docs/VISION.md](docs/VISION.md) | Project vision, phased roadmap |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture and engine design |
-| docs/AI_INTERFACE.md | AI brain plugin interface specification (future) |
+| [docs/AI_INTERFACE.md](docs/AI_INTERFACE.md) | AI brain plugin interface specification |
+| [docs/PBR.md](docs/PBR.md) | Physically-based rendering reference (microfacet theory, HDR pipeline, tonemapping) |
 | [STYLE.md](STYLE.md) | Code style conventions and quality tooling |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributor guidelines |
 | [TODO.md](TODO.md) | Active tasks and development journal |

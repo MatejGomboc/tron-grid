@@ -76,7 +76,7 @@ When submitting:
 - [ ] Code is formatted (`.clang-format`)
 - [ ] No Vulkan validation layer errors
 - [ ] Documentation is updated if needed
-- [ ] CHANGELOG.md is updated for user-facing changes
+- [ ] Journal entry added to `TODO.md` for non-trivial changes
 - [ ] Commit messages follow [conventional commits](#commit-messages)
 
 #### PR Process
@@ -225,14 +225,18 @@ chore: update Vulkan SDK to 1.4.335.0
 | `CHANGELOG.md` | User-facing change history |
 | `docs/ARCHITECTURE.md` | Technical architecture |
 | `docs/VISION.md` | Project vision and roadmap |
-| `docs/AI_INTERFACE.md` | AI brain plugin interface specification (future) |
+| `docs/AI_INTERFACE.md` | AI brain plugin interface specification |
+| `docs/PBR.md` | Physically-based rendering reference |
+| `docs/DEV_ENV_SETUP.md` | Development environment setup guide |
+| `TODO.md` | Active tasks and development journal |
 
 ### Updating Documentation
 
 - Update `README.md` for user-facing changes
-- Update `CHANGELOG.md` for all notable changes
+- Add a reverse-chronological entry to `TODO.md` § Journal for non-trivial work
 - Update code comments when changing public APIs
 - Keep examples up to date and working
+- `CHANGELOG.md` is reserved for the first stable release; skip it for pre-release work
 
 ---
 
