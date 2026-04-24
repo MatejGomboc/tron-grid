@@ -658,7 +658,7 @@ rays). Direct lighting is split into `direct_diffuse` and `direct_specular` so
 AO multiplies the Lambertian lobes only (indirect GI + direct diffuse);
 specular, RT reflection, and emissive stay at full brightness per canonical AO
 practice. TLAS is unchanged — all existing 4 BLASes serve as occluders.
-99 PRs merged.
+98 PRs merged.
 
 ### 2026-04-24 — Phase 8 rendering audit pass + literature-guided correction
 
@@ -690,7 +690,7 @@ wider try/catch, reservoir clear + capacity assert on resize),
 `prev_view_projection = identity()` frame-0 init. New memory added:
 `feedback_audit_agent_verification.md` — verify audit-agent findings
 against canonical literature for any domain-math claim before applying.
-98 PRs merged.
+97 PRs merged.
 
 ### 2026-04-21 — Phase 8 Etape 38: single-bounce indirect GI + RT bug hunt
 
