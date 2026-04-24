@@ -258,7 +258,7 @@ The canonical task checklist lives in `TODO.md`.
 | 1 | Solid foundation | Fly through cubes |
 | 2 | GPU-driven resources | 1000 objects, 1 draw call |
 | 3 | Mesh shaders | Meshlet rendering |
-| 4 | Procedural geometry | Tron-style CSG scene |
+| 4 | Procedural geometry | Value-noise Tron terrain with wireframe grid |
 | 5 | Acceleration structures | Hard shadows |
 | 6 | Physically-based RT | Full RT lighting |
 | 7 | Visual polish | Bloom, tonemapping, AA, skybox, per-material PBR |
