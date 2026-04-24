@@ -128,16 +128,14 @@ VSOutput skyVertMain(uint vertex_id : SV_VertexID)
 float4 skyFragMain(VSOutput input) : SV_Target
 {
     // Reconstruct world-space ray direction from screen UV.
-    // slangc -fvk-invert-y flips only SV_Position; the UV attribute passes through
-    // with its original (math-convention) Y-up orientation, so the fragment's UV at
-    // the top-left Vulkan screen pixel is (0, 0). Negate ndc.y so the reconstructed
-    // ray matches the actual viewing direction (top of frustum = camera's up direction).
-    // Without the negation, clouds at the top of the screen sample the bottom of the
-    // world and the sky appears vertically mirrored.
+    // No manual Y-flip — slangc -fvk-invert-y flips SV_Position, which causes the
+    // vertex whose original (math) pos was (-1, -1) to land at the Vulkan *bottom*
+    // screen pixel, carrying its original UV=(0,0). The UV at the *top* Vulkan pixel
+    // is therefore interpolated as (_, 1), so ndc = uv*2-1 already has Y=+1 at top,
+    // which is the math convention the CPU-computed inv_view_projection expects.
     float2 ndc = input.uv * 2.0 - 1.0;
-    float2 math_ndc = float2(ndc.x, -ndc.y);
 
-    float4 world_pos = mul(camera.inv_view_projection, float4(math_ndc, 1.0, 1.0));
+    float4 world_pos = mul(camera.inv_view_projection, float4(ndc, 1.0, 1.0));
     float3 ray_dir = normalize(world_pos.xyz / world_pos.w - camera.camera_pos);
 
     // Horizon density gradient — clouds concentrate at the horizon, sparse overhead.

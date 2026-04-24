@@ -142,10 +142,14 @@ RWStructuredBuffer<Reservoir> reservoir_current; // Current frame — write.
 [[vk::binding(11, 0)]]
 StructuredBuffer<Reservoir> reservoir_previous; // Previous frame — read.
 
-// Maximum M stored in a reservoir — applied at write time so that the invariant
-// W × M = w_sum / p_hat is preserved across frames. Temporal reuse caps prev_r.M at
-// this value implicitly because any stored reservoir already respects it.
-static const uint MAX_STORED_M = 200;
+// Canonical ReSTIR temporal M clamp: prev_r.M is capped at TEMPORAL_M_CAP × current M,
+// with prev_r.w_sum scaled by the same ratio so that the invariant W × M × p_hat = w_sum
+// is preserved (Bitterli et al. 2020). 20× is the value used in the original paper and
+// canonical implementations (RTXDI). Applied at READ time during temporal merge.
+static const uint TEMPORAL_M_CAP = 20;
+
+// Per-neighbour spatial M cap — same proportional-scaling pattern as temporal.
+static const uint SPATIAL_M_CAP = 100;
 
 // Spatial reuse — merge reservoirs from neighbouring pixels for faster convergence.
 static const uint NUM_SPATIAL_NEIGHBOURS = 5; // Number of random neighbours to merge.
@@ -153,9 +157,29 @@ static const float SPATIAL_RADIUS = 20.0; // Pixel radius for neighbour sampling
 
 // Geometric similarity thresholds for reprojection / neighbour rejection.
 // Rejects samples whose underlying shading surface differs too much from the current pixel —
-// prevents light-leaking across silhouettes and ghosting on disocclusion.
-static const float RESTIR_MAX_POS_DELTA = 0.30; // Reject if |Δposition| exceeds this (metres).
-static const float RESTIR_MIN_NORMAL_DOT = 0.90; // Reject if dot(n_current, n_neighbour) < this.
+// prevents light-leaking across silhouettes and ghosting on disocclusion. Thresholds are
+// permissive enough that typical inter-pixel world-space deltas on flat terrain pass; tight
+// enough that a reservoir from a tube silhouetted in front of terrain is rejected.
+// Per Bitterli et al. / RTXDI defaults: normal-dot ≥ 0.906 (~25° cone). Position delta
+// uses 1 metre as a generous cap for a Grid-scale scene (camera ~5–15 m up, tile spacing
+// ~1 m); tighter would reject legitimate inter-pixel parallax on distant terrain.
+static const float RESTIR_MAX_POS_DELTA = 1.0; // Reject if |Δposition| exceeds this (metres).
+static const float RESTIR_MIN_NORMAL_DOT = 0.906; // Reject if dot(n_current, n_neighbour) < this.
+
+// Firefly clamp on per-sample indirect contributions. The second-bounce emissive
+// sampling geometry term NdotL * cos_light / dist² can explode when a terrain hit
+// happens to land within centimetres of a neon tube and the random CDF picks that
+// tube as the bounce light. Without a clamp these fireflies persist in the EMA
+// forever and propagate visually via bloom. Value picked empirically — well above
+// plausible scene luminance (neon is 15, orb is 20) but below where a single bad
+// sample can dominate the accumulator.
+static const float INDIRECT_FIREFLY_MAX = 30.0;
+
+// Minimum GI-bounce light distance (squared). The primary candidate loop already
+// uses max(dist_sq, 1e-4); the GI bounce path takes a tighter floor because the
+// bounce hit can land extremely close to an emissive tube, and distances under
+// ~10 cm already produce fireflies faster than the EMA can smooth them.
+static const float GI_MIN_LIGHT_DIST_SQ = 0.04;
 
 // ── Neon tube constants (per-fragment wireframe pattern, not per-object material) ──
 
@@ -415,8 +439,7 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
 
     // ── ReSTIR DI temporal reuse (emissive area light sampling) ──
 
-    float3 direct_diffuse = float3(0.0, 0.0, 0.0); // Lambertian lobe — survives the RT-reflection composite.
-    float3 direct_specular = float3(0.0, 0.0, 0.0); // Cook-Torrance lobe — replaced by RT reflection when traced.
+    float3 direct_lighting = float3(0.0, 0.0, 0.0); // Cook-Torrance BRDF × Le × geometry × W for the ReSTIR-selected sample.
     float3 indirect_gi = base_colour * AMBIENT; // Fallback flat ambient if no emissive triangles.
 
     if (camera.emissive_count > 0)
@@ -493,6 +516,16 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
             // on disocclusion and when a moving silhouette pulls a tube in front of terrain.
             if (reservoirSurfaceMatches(prev_r, input.world_position, N))
             {
+                // Canonical ReSTIR temporal M clamp (Bitterli et al. 2020). Caps the
+                // historical reservoir at TEMPORAL_M_CAP × current M, scaling w_sum by
+                // the same ratio so that the invariant W × M × p_hat = w_sum is preserved.
+                // Prevents stale history from dominating fresh candidates.
+                if (prev_r.M > TEMPORAL_M_CAP * r.M) {
+                    float scale = float(TEMPORAL_M_CAP * r.M) / float(prev_r.M);
+                    prev_r.w_sum *= scale;
+                    prev_r.M = TEMPORAL_M_CAP * r.M;
+                }
+
                 // Evaluate p_hat at the current shading point for the temporal sample.
                 float3 to_temporal = prev_r.y_pos - input.world_position;
                 float temp_dist_sq = dot(to_temporal, to_temporal);
@@ -504,8 +537,6 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                 float p_hat_temp = luminance(prev_r.y_emissive) * geometry_temp;
 
                 // Standard RIS temporal weight: w_temporal = p_hat_new × W_prev × M_prev.
-                // M was clamped at write time (MAX_STORED_M) so W × M = w_sum / p_hat is
-                // preserved across frames — no need to re-clamp on read.
                 float w_temporal = p_hat_temp * prev_r.W * float(prev_r.M);
 
                 // Merge: add temporal weight and probabilistically select.
@@ -559,8 +590,16 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                 continue;
             }
 
+            // Same canonical proportional clamp as temporal, but with a more generous cap
+            // because spatial neighbours bring in fresh spatial information that we want to
+            // weight reasonably. Scaling w_sum keeps the W × M × p_hat invariant intact.
+            if (neighbour_r.M > SPATIAL_M_CAP) {
+                float scale = float(SPATIAL_M_CAP) / float(neighbour_r.M);
+                neighbour_r.w_sum *= scale;
+                neighbour_r.M = SPATIAL_M_CAP;
+            }
+
             // Evaluate p_hat at the current shading point for the spatial sample.
-            // M was clamped at write time, so W × M is preserved across frames.
             float3 to_spatial = neighbour_r.y_pos - input.world_position;
             float sp_dist_sq = dot(to_spatial, to_spatial);
             float sp_dist = max(sqrt(sp_dist_sq), 1e-4);
@@ -587,13 +626,12 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
             }
         }
 
-        // Clamp M at WRITE TIME so the invariant W × M = w_sum / p_hat is preserved
-        // when the reservoir is consumed by the next frame. Clamping M only on read
-        // (as the previous implementation did) silently under-weighted reservoirs
-        // whose accumulated M had exceeded the cap.
-        r.M = min(r.M, MAX_STORED_M);
-
-        // Compute final contribution weight W for the selected sample.
+        // Compute final contribution weight W for the selected sample. The canonical
+        // ReSTIR formula (Bitterli et al. 2020): W = (1/p_hat) × (w_sum / M), with M
+        // being the combined count from candidate + temporal + spatial merges, and both
+        // temporal and spatial contributions already having had w_sum scaled to match
+        // any M clamp applied during those merges — so the invariant W × M × p_hat = w_sum
+        // holds for the stored reservoir too.
         float3 to_selected = r.y_pos - input.world_position;
         float sel_dist_sq = dot(to_selected, to_selected);
         float sel_dist = max(sqrt(sel_dist_sq), 1e-4);
@@ -608,9 +646,16 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         // ── Single-bounce indirect GI (cosine-weighted hemisphere sampling) ──
 
         // Russian roulette — terminate early for dark surfaces (most obsidian pixels).
+        // The unbiased RR estimator is:
+        //   E[V] = rr_prob × (sample / rr_prob) + (1 − rr_prob) × 0 = sample.
+        // The zero contribution on rejection is essential — feeding it into the EMA
+        // averages accepted samples (scaled up by 1/rr_prob) with the balancing
+        // zeros from rejections. Skipping the update on rejection would collapse
+        // the estimator to E[V | accepted] = sample / rr_prob, which is 1/rr_prob
+        // too high (≈20× for dark surfaces) and produces a slow indirect saturation
+        // feedback loop over many frames.
         float rr_prob = clamp(luminance(base_colour) * 10.0, 0.0, 0.95);
         uint hash_rr = pcgHash(pixel_seed + 77777u);
-        bool gi_sample_valid = false; // Only update the EMA when we actually produced a sample.
         float3 new_indirect = float3(0.0, 0.0, 0.0);
 
         if (hashToFloat(hash_rr) < rr_prob)
@@ -657,7 +702,6 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                 if (gi_hit_mat.emissive_strength > 0.0) {
                     // Hit emissive geometry directly — use its radiance.
                     incoming = gi_hit_mat.emissive * gi_hit_mat.emissive_strength;
-                    gi_sample_valid = true;
                 } else {
                     // Hit non-emissive surface (terrain) — evaluate direct illumination.
                     //
@@ -695,15 +739,17 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                     float3 gi_light_pt = gi_bu * gi_etri.v0 + gi_bv * gi_etri.v1 + (1.0 - gi_bu - gi_bv) * gi_etri.v2;
 
                     float3 gi_to_light = gi_light_pt - gi_hit_pos;
-                    float gi_light_dist_sq = dot(gi_to_light, gi_to_light);
-                    float gi_light_dist = max(sqrt(gi_light_dist_sq), 1e-4);
+                    float gi_light_dist_sq_raw = dot(gi_to_light, gi_to_light);
+                    // Tighter floor than the primary loop — see GI_MIN_LIGHT_DIST_SQ.
+                    float gi_light_dist_sq = max(gi_light_dist_sq_raw, GI_MIN_LIGHT_DIST_SQ);
+                    float gi_light_dist = sqrt(gi_light_dist_sq);
                     float3 gi_L = gi_to_light / gi_light_dist;
 
                     // Full geometry term: NdotL at hit surface × cos_light at emissive surface / distance².
                     float gi_NdotL_hit = max(dot(gi_hit_normal, gi_L), 0.0);
                     float3 gi_light_n = normalize(cross(gi_etri.v1 - gi_etri.v0, gi_etri.v2 - gi_etri.v0));
                     float gi_cos_light = abs(dot(gi_light_n, -gi_L));
-                    float gi_geometry = gi_NdotL_hit * gi_cos_light / max(gi_light_dist_sq, 1e-4);
+                    float gi_geometry = gi_NdotL_hit * gi_cos_light / gi_light_dist_sq;
                     float gi_pdf = max(luminance(gi_etri.emissive) / camera.total_emissive_power, 1e-8);
 
                     // Shadow ray from bounce hit point to the sampled light.
@@ -726,26 +772,26 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                             incoming = gi_etri.emissive * gi_geometry / gi_pdf * gi_hit_mat.base_colour / PI;
                         }
                     }
-                    // Whether or not the shadow ray was occluded, the bounce produced a
-                    // sample from a surface that exists — record it so the EMA averages
-                    // shadowed zeroes correctly (unbiased estimator).
-                    gi_sample_valid = true;
                 }
 
                 // Cosine-weighted estimator: base_colour * incoming / rr_prob.
                 // (cos_theta and PI cancel between BRDF and hemisphere PDF.)
                 new_indirect = base_colour * incoming / rr_prob;
+
+                // Firefly clamp. The bounce geometry term + per-triangle PDF division
+                // can still spike individual samples beyond the distance floor — clamp
+                // them before feeding the EMA so a single bad sample can't pin the
+                // accumulator at a huge value for the rest of the session.
+                new_indirect = min(new_indirect, float3(INDIRECT_FIREFLY_MAX, INDIRECT_FIREFLY_MAX, INDIRECT_FIREFLY_MAX));
             }
         }
 
-        // Only update the EMA when Russian roulette accepted AND the ray hit a surface.
-        // On reject, keep the previous indirect untouched — feeding zero into the EMA
-        // would bias the accumulator toward zero for dark surfaces (most obsidian pixels
-        // produce RR rejection more often than acceptance).
-        if (gi_sample_valid) {
-            float indirect_alpha = (temporal_M > 1) ? (1.0 / float(temporal_M)) : 1.0;
-            r.indirect = lerp(r.indirect, new_indirect, indirect_alpha);
-        }
+        // EMA update runs every frame — new_indirect is 0 when Russian roulette
+        // rejected or the ray missed, which is the unbiased zero contribution the
+        // RR estimator requires. Skipping the update would make the accumulator
+        // converge to sample/rr_prob (1/rr_prob too high) instead of sample.
+        float indirect_alpha = (temporal_M > 1) ? (1.0 / float(temporal_M)) : 1.0;
+        r.indirect = lerp(r.indirect, new_indirect, indirect_alpha);
         indirect_gi = r.indirect;
 
         // Store reservoir for next frame's temporal reuse — sample 0 only.
@@ -786,11 +832,9 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                 float3 spec_brdf = D_val * Vis * F;
                 float3 diff_brdf = (1.0 - F) * (1.0 - mat.metallic) * base_colour / PI;
 
-                // Split Lo into diffuse and specular contributions — the composite below
-                // replaces the specular with RT reflection when one is traced.
-                float3 Lo_common = r.y_emissive * geometry_sel * r.W;
-                direct_diffuse = diff_brdf * Lo_common;
-                direct_specular = spec_brdf * Lo_common;
+                // ReSTIR estimator: BRDF × Le × geometry × W.
+                float3 Lo_unshadowed = (diff_brdf + spec_brdf) * r.y_emissive * geometry_sel;
+                direct_lighting = Lo_unshadowed * r.W;
             }
         }
     }
@@ -798,7 +842,6 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
     // ── RT reflection for obsidian surface ──
 
     float3 reflected_colour = float3(0.0, 0.0, 0.0);
-    bool reflection_traced = false;
 
     // Only trace reflections for obsidian-dominant fragments (wire > 0.5) that
     // front-face the camera (guard eliminates self-intersecting "into the surface"
@@ -824,8 +867,6 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
 
         if (reflect_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
         {
-            reflection_traced = true;
-
             // Look up the material of the reflected hit via instance custom index.
             uint hit_instance = reflect_query.CommittedInstanceID();
             uint hit_mat_idx = objects[hit_instance].material_index;
@@ -874,15 +915,14 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         }
     }
 
-    // Energy-conserving composite. The RT reflection is the physical specular for
-    // this pixel at the mirror direction; when it's traced, drop the analytic
-    // Cook-Torrance specular (they would double-count the specular lobe). Diffuse
-    // and indirect are unaffected.
-    float3 spec_contribution = reflection_traced
-        ? (reflected_colour * F_view)
-        : direct_specular;
-
-    float3 colour = indirect_gi + direct_diffuse + spec_contribution + emissive;
+    // Canonical hybrid composite (per Bitterli et al. / Karis UE4 notes / LearnOpenGL IBL):
+    // direct analytic lighting + Fresnel-weighted RT reflection + emissive + indirect. The
+    // two specular terms cover different things — analytic spec evaluates the Cook-Torrance
+    // BRDF at the selected emissive sample's direction (roughness-broadened lobe around that
+    // single light), while RT reflection captures scene radiance at the mirror direction.
+    // Slight overlap in the perfect-mirror limit is accepted as the standard hybrid-rendering
+    // compromise; replacing one with the other blacks out pixels whose reflection ray misses.
+    float3 colour = indirect_gi + direct_lighting + emissive + reflected_colour * F_view;
     return float4(colour, 1.0);
 }
 
