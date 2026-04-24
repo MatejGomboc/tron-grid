@@ -20,7 +20,7 @@ A Vulkan-based rendering engine (C++20) targeting 4K @ 60+ FPS with full ray tra
 | Vision | `docs/VISION.md` |
 | Architecture | `docs/ARCHITECTURE.md` |
 | PBR reference | `docs/PBR.md` |
-| AI interface spec | `docs/AI_INTERFACE.md` (future) |
+| AI interface spec | `docs/AI_INTERFACE.md` |
 | Style guide | `STYLE.md` |
 | Contributing | `CONTRIBUTING.md` |
 
@@ -88,7 +88,9 @@ tron_grid/
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── .vscode/              # Editor settings, extensions, debug configs
 ├── docs/                 # Extended documentation
+│   ├── AI_INTERFACE.md   # AI brain plugin interface (staged protocol, shared memory)
 │   ├── ARCHITECTURE.md   # Technical architecture
+│   ├── DEV_ENV_SETUP.md  # Development environment setup guide
 │   ├── PBR.md            # PBR reference (microfacets, Cook-Torrance, obsidian, HDR)
 │   └── VISION.md         # Project vision and roadmap
 ├── libs/                 # Internal static libraries (LEGO bricks)

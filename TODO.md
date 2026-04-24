@@ -211,7 +211,8 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 
 - [x] No point light abstraction — all lighting from emissive geometry
 - [x] ReSTIR DI for direct lighting from emissive surfaces
-- [x] ReSTIR GI for multi-bounce indirect illumination
+- [x] Single-bounce indirect GI via cosine-weighted hemisphere sampling (Etape 38)
+- [ ] Full ReSTIR GI with path resampling and multi-bounce indirect
 - [ ] World-space irradiance cache
 - [x] Russian roulette path termination
 - [x] Motion vectors for temporal reuse
