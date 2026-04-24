@@ -127,7 +127,7 @@ struct Reservoir {
     float3 y_pos; // Selected light sample position.
     float w_sum; // Sum of RIS weights.
     float3 y_emissive; // Emissive radiance at the selected sample.
-    uint M; // Number of candidates merged, clamped at store time.
+    uint M; // Number of candidates merged; clamped proportionally (with w_sum) during temporal/spatial merges.
     float3 y_normal; // Light surface normal at the selected sample.
     float W; // Final contribution weight: w_sum / (M × p_hat(y)).
     float3 indirect; // Accumulated indirect radiance (single-bounce GI).

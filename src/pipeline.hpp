@@ -104,7 +104,7 @@ struct Reservoir {
     MathLib::Vec3 y_pos{}; //!< Selected light sample position.
     float w_sum{0.0f}; //!< Sum of RIS weights.
     MathLib::Vec3 y_emissive{}; //!< Emissive radiance at the selected sample.
-    uint32_t M{0}; //!< Number of candidates merged into this reservoir, clamped at store time.
+    uint32_t M{0}; //!< Number of candidates merged; clamped proportionally (with w_sum) during temporal/spatial merges.
     MathLib::Vec3 y_normal{}; //!< Light surface normal at the selected sample.
     float W{0.0f}; //!< Final contribution weight: w_sum / (M × p_hat(y)).
     MathLib::Vec3 indirect{}; //!< Accumulated indirect radiance (single-bounce GI).
