@@ -124,7 +124,7 @@ data from a buffer and writes actions to another. This boundary is strict and in
 | HDR range | 16-bit float | Emissive glow needs headroom beyond [0, 1] |
 | Meshlet size | 64 vertices, 84 triangles | Reduced from 124 for barycentric vertex duplication |
 | Shadow, reflection, refraction technique | Inline ray query (`VK_KHR_ray_query`) | Simple, no SBT; shadows + single-bounce reflections + Snell-law refraction in fragment shaders |
-| Volumetric scattering | Frustum-aligned voxel grid (160×90×64 froxels) + compute shaders | AAA-standard (Frostbite, UE, Unity HDRP); decouples cost from screen fillrate; fits naturally with the existing ReSTIR / RT compute infrastructure |
+| Volumetric scattering | Frustum-aligned voxel grid (320×180×64 froxels) + 3 compute passes (inject + filter + composite) | AAA-standard (Frostbite, UE, Unity HDRP); decouples cost from screen fillrate; fits naturally with the existing ReSTIR / RT compute infrastructure. Filter pass combines spatial 3×3 blur with temporal reprojection (ping-pong) for noise reduction |
 | Descriptor model | Fully bindless | No rebinding between draws; GPU-driven compatible |
 | Present mode | MAILBOX | Low latency, no tearing |
 | Engine subsystems | Tightly coupled (render, physics, audio) | Share Vulkan device, buffers, compute queues for efficiency |

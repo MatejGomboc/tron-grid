@@ -33,12 +33,14 @@ shadows and single-bounce reflections via inline ray query
 Beer-Lambert-lite tint) — glass tower and red energy-barrier pillar render
 through a dedicated transparent pipeline (premultiplied alpha, depth test
 only) that shares the descriptor set layout with the opaque pipeline.
-Volumetric fog foundation — 160×90×64 froxel grid with logarithmic depth
-slicing, height-falloff density injection, raymarch composite that
-accumulates per-slice transmittance and scattered radiance per Wronski
-2014 / Frostbite. Inserted before bloom extraction so the fog itself can
-bloom. Light shafts (per-froxel emissive sampling) and temporal
-reprojection are scoped for follow-up sub-etapes. Mesh shader rendering
+Volumetric fog with neon light shafts — 320×180×64 froxel grid with
+logarithmic depth slicing. Three compute passes per frame: density-injection
+(per-froxel emissive sampling via the same power-weighted CDF used by
+ReSTIR DI, 4 samples, TLAS shadow ray, Henyey-Greenstein phase function
+g=0.6), spatial 3×3 + temporal-reprojection filter (ping-pong filter
+images, EMA blend with α=0.1, ~10-frame effective sample count), and
+raymarch composite (Wronski 2014 / Frostbite recurrence with bilinear XY
+upsample). Inserted before bloom extraction so the fog itself can bloom. Mesh shader rendering
 (task + mesh + fragment), procedural Tron terrain, per-object frustum
 culling, meshlet-based geometry, entity/component scene.
 Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU

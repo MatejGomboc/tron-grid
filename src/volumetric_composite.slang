@@ -55,6 +55,36 @@ struct VolumetricPushConstants
 [[vk::push_constant]]
 VolumetricPushConstants push;
 
+// Manual bilinear interpolation in the X/Y froxel plane. The froxel grid is 160×90
+// while the screen is up to 4K; nearest-neighbour read produces ugly 8×8-pixel "90s game"
+// fog blocks. Bilinear smooths across froxel boundaries at the cost of 4 SSBO reads per
+// slice instead of 1 — composite is still well under 1 ms on the RTX 4090. Wronski 2014
+// and Frostbite both filter the froxel read; we replicate that here.
+//
+// (Z stays discrete because the slice integration is exactly the Frostbite recurrence
+// `T_slice = exp(-σ_t·dz); L += L_slice·T_accum; T_accum *= T_slice` — interpolating
+// between slices would change the integration model.)
+float4 sampleFroxelBilinear(float2 froxel_xy, uint z)
+{
+    int2 i0 = int2(floor(froxel_xy - 0.5));
+    int2 i1 = i0 + 1;
+    float2 frac_xy = (froxel_xy - 0.5) - float2(i0);
+
+    int max_x = int(push.froxel_width) - 1;
+    int max_y = int(push.froxel_height) - 1;
+    i0 = clamp(i0, int2(0, 0), int2(max_x, max_y));
+    i1 = clamp(i1, int2(0, 0), int2(max_x, max_y));
+
+    float4 c00 = froxel_grid[uint3(i0.x, i0.y, z)];
+    float4 c10 = froxel_grid[uint3(i1.x, i0.y, z)];
+    float4 c01 = froxel_grid[uint3(i0.x, i1.y, z)];
+    float4 c11 = froxel_grid[uint3(i1.x, i1.y, z)];
+
+    float4 c0 = lerp(c00, c10, frac_xy.x);
+    float4 c1 = lerp(c01, c11, frac_xy.x);
+    return lerp(c0, c1, frac_xy.y);
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void compositeMain(uint3 thread_id : SV_DispatchThreadID)
@@ -68,16 +98,13 @@ void compositeMain(uint3 thread_id : SV_DispatchThreadID)
     // March through the froxel grid along this pixel's column. The froxel grid is
     // frustum-aligned: the (x, y) tile for this pixel is the same x/y throughout the
     // depth slices.
-    uint froxel_x = uint((float(pixel.x) / float(push.screen_width)) * float(push.froxel_width));
-    uint froxel_y = uint((float(pixel.y) / float(push.screen_height)) * float(push.froxel_height));
-    froxel_x = min(froxel_x, push.froxel_width - 1);
-    froxel_y = min(froxel_y, push.froxel_height - 1);
+    float2 froxel_xy = (float2(pixel) + 0.5) / float2(push.screen_width, push.screen_height) * float2(push.froxel_width, push.froxel_height);
 
     float3 accumulated_radiance = float3(0.0, 0.0, 0.0);
     float accumulated_transmittance = 1.0;
 
     for (uint z = 0; z < push.froxel_depth; ++z) {
-        float4 slice = froxel_grid[uint3(froxel_x, froxel_y, z)];
+        float4 slice = sampleFroxelBilinear(froxel_xy, z);
         float3 in_scatter = slice.rgb;
         float extinction = slice.a;
 

@@ -259,25 +259,49 @@ is additive per canonical PBR: `(indirect + direct_diffuse) × ao +
 direct_specular + emissive + reflected_colour × F_view`. Per-material
 Fresnel F0 derived from `mat.ior` via Snell's law, unified across direct
 and reflection paths, `lerp(F0_dielectric, base_colour, metallic)`.
-**Volumetric fog foundation** (Phase 8 Etape 41 sub-etape 41a) — 160 ×
-90 × 64 froxel grid (`rgba16f`, ~7.4 MB) with logarithmic depth slicing
-(more resolution near the camera, less at the far plane), frustum-aligned
-x/y tiles. Two compute passes per frame: density-injection compute writes
-per-froxel extinction (height-falloff: full strength below `y = 4 m`,
-exponential attenuation with 6 m falloff above) and zero scattered
-radiance into the grid; raymarch composite per pixel marches the
-froxel column, accumulates `transmittance *= exp(-extinction_per_slice)`
-plus per-slice scattered radiance per Wronski 2014 / Frostbite, then
-blends `final = scene * transmittance + scattered` into HDR before
-bloom extraction so the fog itself can bloom. World-space froxel-centre
-reconstruction uses the inverse view-projection plus a shader-side
-`camera_forward` derived from `inv_view_projection` so off-axis
-pixels land at the correct view depth (parametric distance scaled by
-`1 / dot(ray_dir, camera_forward)`). Per-frame composite descriptor
-sets (×MAX_FRAMES_IN_FLIGHT) avoid the in-flight update race; inject
-descriptor set is bound once. Sub-etapes 41b (per-froxel emissive
-sampling via TLAS shadow rays → actual neon light shafts) and 41c
-(temporal reprojection via existing motion vectors) are queued.
+**Volumetric fog with neon light shafts + temporal reprojection** (Phase 8
+Etape 41, sub-etapes 41a/b/c) — 320 × 180 × 64 froxel grid (`rgba16f`,
+~30 MB per image; 3 images = ~90 MB total) with logarithmic depth slicing
+(more resolution near camera), frustum-aligned x/y tiles. Three compute
+passes per frame:
+(1) **Inject** writes per-froxel scattered radiance + extinction. Samples
+one emissive triangle per froxel via the same power-weighted CDF used for
+ReSTIR DI (4 samples per froxel, per-sample firefly clamp 3.0 before
+averaging), traces a `RAY_FLAG_CULL_NON_OPAQUE` shadow ray to the sample
+point so transparent surfaces don't block light shafts, modulates by the
+Henyey-Greenstein phase function (g = 0.6, moderate forward scatter for
+atmospheric haze), pre-multiplies by σ_s · slice_dz so the composite
+recurrence stays simple. Inject descriptor set: binding 0 = froxel image,
+binding 1 = TLAS, binding 2 = emissive triangle SSBO. Push constants
+(128 B) carry inv_view_projection, camera_pos, frame_count,
+emissive_count, total_emissive_power, hg_g, fog density / height
+parameters.
+(2) **Filter** does spatial 3×3 XY box blur of the inject output AND
+temporal reprojection of the previous frame's filter output (history) via
+`prev_view_projection`. Trilinear sample of the history at the reprojected
+coordinates; EMA blend with α = 0.1 (~10-frame effective sample count).
+History-validity flag gates the blend on the very first frame so the
+filter doesn't blend with garbage. Two ping-pong filter images alternate
+(history, output) roles each frame; per-frame descriptor sets are wired
+to the right ping-pong direction. One-shot startup `UNDEFINED → GENERAL`
+transition for both ping-pong images so per-frame barriers can use
+`eGeneral → eGeneral` and preserve the temporal accumulator. Filter push
+constants are 176 B (two mat4s plus camera_pos, alpha, dimensions, flags,
+and near/far) — exceeds Vulkan-spec-minimum 128 B but well within RTX
+4090's 256 B budget. Cross-frame compute memory barrier at the top of
+`recordFrame` (alongside the existing fragment-stage reservoir barrier)
+makes the previous submission's filter writes visible to this submission's
+filter reads.
+(3) **Composite** raymarches the froxel column per pixel, accumulates
+`transmittance *= exp(-optical_depth_per_slice)` and per-slice scattered
+radiance per Wronski 2014 / Frostbite, then blends `final = scene *
+transmittance + scattered` into HDR before bloom extraction so the fog
+itself can bloom. Reads from the *blurred + temporally-accumulated* filter
+output (not the raw inject), bilinearly interpolated in XY for smooth
+resampling from the 320×180 grid to screen.
+Combined effective sample count per froxel: 4 inject samples × 9 spatial
+neighbours × ~10 temporal frames ≈ 360 — visually reads as soft
+cyberpunk atmospheric haze rather than animated noise.
 Swapchain lifecycle hardened: `image_available_semaphores` rebuilt on
 resize (symmetry with present semaphores), zero-extent guard BEFORE acquire
 (`waitIdle` doesn't reset semaphore state), `acquireNextImage` catches
