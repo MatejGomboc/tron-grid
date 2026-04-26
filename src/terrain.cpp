@@ -82,7 +82,7 @@ constexpr float NEON_MAJOR_GRID_SPACING{8.0f};
 constexpr float CROSS_PRODUCT_EPSILON{0.000001f};
 
 //! Emits a thin quad along the edge from A to B, appending to the target sub-mesh.
-static void emitEdgeQuad(NeonSubMesh& mesh, const MathLib::Vec3& a, const MathLib::Vec3& b)
+static void emitEdgeQuad(Mesh& mesh, const MathLib::Vec3& a, const MathLib::Vec3& b)
 {
     MathLib::Vec3 edge{b - a};
     MathLib::Vec3 up{0.0f, 1.0f, 0.0f};
@@ -336,7 +336,7 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
             // lies in the same "cell" as the midpoint for tile_spacing >= 1.
             float world_x_start{static_cast<float>(x) * config.tile_spacing - half_size};
             bool orange_edge{orange_row || isOnMajorGridLine(world_x_start)};
-            NeonSubMesh& target{orange_edge ? result.orange : result.cyan};
+            Mesh& target{orange_edge ? result.orange : result.cyan};
             emitEdgeQuad(target, a, b);
         }
     }
@@ -351,7 +351,7 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
             MathLib::Vec3 b{vertexPos(x, z + 1)};
             float world_z_start{static_cast<float>(z) * config.tile_spacing - half_size};
             bool orange_edge{orange_col || isOnMajorGridLine(world_z_start)};
-            NeonSubMesh& target{orange_edge ? result.orange : result.cyan};
+            Mesh& target{orange_edge ? result.orange : result.cyan};
             emitEdgeQuad(target, a, b);
         }
     }
@@ -375,9 +375,9 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
     return result;
 }
 
-NeonSubMesh generateBox(const MathLib::Vec3& centre, const MathLib::Vec3& half_extents)
+Mesh generateBox(const MathLib::Vec3& centre, const MathLib::Vec3& half_extents)
 {
-    NeonSubMesh box;
+    Mesh box;
 
     // Eight corners of the axis-aligned box, derived from centre ± half_extents.
     MathLib::Vec3 c000{centre.x - half_extents.x, centre.y - half_extents.y, centre.z - half_extents.z};

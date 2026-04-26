@@ -127,14 +127,28 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     viewport_state.viewportCount = 1;
     viewport_state.scissorCount = 1;
 
-    vk::PipelineRasterizationStateCreateInfo rasterisation{};
-    rasterisation.depthClampEnable = vk::False;
-    rasterisation.rasterizerDiscardEnable = vk::False;
-    rasterisation.polygonMode = vk::PolygonMode::eFill;
-    rasterisation.cullMode = vk::CullModeFlagBits::eNone;
-    rasterisation.frontFace = vk::FrontFace::eCounterClockwise;
-    rasterisation.depthBiasEnable = vk::False;
-    rasterisation.lineWidth = 1.0f;
+    // Opaque rasterisation — no back-face culling, because the procedural Tron terrain
+    // depends on two-sided shading at steep slopes (camera below a quantised terrace
+    // ridge can see the underside of the terrace).
+    vk::PipelineRasterizationStateCreateInfo opaque_rasterisation{};
+    opaque_rasterisation.depthClampEnable = vk::False;
+    opaque_rasterisation.rasterizerDiscardEnable = vk::False;
+    opaque_rasterisation.polygonMode = vk::PolygonMode::eFill;
+    opaque_rasterisation.cullMode = vk::CullModeFlagBits::eNone;
+    opaque_rasterisation.frontFace = vk::FrontFace::eCounterClockwise;
+    opaque_rasterisation.depthBiasEnable = vk::False;
+    opaque_rasterisation.lineWidth = 1.0f;
+
+    // Transparent rasterisation — back-face culling enabled. Closed transparent boxes
+    // (glass tower, energy-barrier pillar) emit both front and back faces from the
+    // mesh shader; without culling, both would rasterise and the back face would pass
+    // the depth test (since the transparent pipeline does not write depth) and
+    // alpha-blend a second time over the front-face contribution, doubling the surface
+    // colour. The refraction ray query inside fragTransparent already accounts for
+    // "what's behind the box", so back-face fragments contribute nothing useful even
+    // when correctly composited — they are pure overdraw + double-blend artefact.
+    vk::PipelineRasterizationStateCreateInfo transparent_rasterisation{opaque_rasterisation};
+    transparent_rasterisation.cullMode = vk::CullModeFlagBits::eBack;
 
     // Opaque depth state — full read/write.
     vk::PipelineDepthStencilStateCreateInfo opaque_depth_stencil{};
@@ -276,7 +290,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     opaque_pipeline_info.setPVertexInputState(nullptr); // Mesh shaders don't use vertex input.
     opaque_pipeline_info.setPInputAssemblyState(nullptr); // Mesh shaders output primitives directly.
     opaque_pipeline_info.setPViewportState(&viewport_state);
-    opaque_pipeline_info.setPRasterizationState(&rasterisation);
+    opaque_pipeline_info.setPRasterizationState(&opaque_rasterisation);
     opaque_pipeline_info.setPMultisampleState(&multisample);
     opaque_pipeline_info.setPDepthStencilState(&opaque_depth_stencil);
     opaque_pipeline_info.setPColorBlendState(&opaque_colour_blend);
@@ -286,9 +300,11 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     m_opaque_pipeline = vk::raii::Pipeline{device.get(), nullptr, opaque_pipeline_info};
 
     // Transparent mesh shader pipeline — same as opaque but with the transparent fragment
-    // entry point, depth write disabled, and premultiplied-alpha blending enabled.
+    // entry point, depth write disabled, premultiplied-alpha blending enabled, and
+    // back-face culling enabled (see transparent_rasterisation comment for rationale).
     vk::GraphicsPipelineCreateInfo transparent_pipeline_info{opaque_pipeline_info};
     transparent_pipeline_info.setStages(transparent_shader_stages);
+    transparent_pipeline_info.setPRasterizationState(&transparent_rasterisation);
     transparent_pipeline_info.setPDepthStencilState(&transparent_depth_stencil);
     transparent_pipeline_info.setPColorBlendState(&transparent_colour_blend);
 

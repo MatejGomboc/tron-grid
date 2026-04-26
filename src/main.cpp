@@ -434,9 +434,12 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
 
     // ── Transparent pass: render entities [opaque_object_count, total_objects) ──
     // Premultiplied alpha blend over whatever the opaque pass + skybox wrote. Depth is
-    // tested but not written so transparent surfaces never occlude each other in a
-    // depth-order-dependent way — back-to-front sorting (added in 40c when overlap
-    // matters) instead controls compositing order.
+    // tested but not written, so multiple transparent surfaces stacked along the same
+    // ray would composite in arbitrary draw order rather than back-to-front. The
+    // current scene has only two transparent entities (glass tower + energy-barrier
+    // pillar) at well-separated world positions that do not overlap from any
+    // reasonable viewpoint, so CPU-side back-to-front sorting is unnecessary; it
+    // would be needed if future content added closely-stacked translucent geometry.
     if (transparent_object_count > 0) {
         // Re-bind the mesh-pipeline descriptor set: the skybox draw above bound a different
         // descriptor set with skybox_pipeline_layout, which invalidates set 0 for any
@@ -1725,8 +1728,8 @@ int main()
         constexpr MathLib::Vec3 ENERGY_PILLAR_CENTRE{15.0f, 4.0f, 15.0f};
         constexpr MathLib::Vec3 ENERGY_PILLAR_HALF_EXTENTS{0.5f, 4.0f, 0.5f};
 
-        NeonSubMesh glass_tower{generateBox(GLASS_TOWER_CENTRE, GLASS_TOWER_HALF_EXTENTS)};
-        NeonSubMesh energy_pillar{generateBox(ENERGY_PILLAR_CENTRE, ENERGY_PILLAR_HALF_EXTENTS)};
+        Mesh glass_tower{generateBox(GLASS_TOWER_CENTRE, GLASS_TOWER_HALF_EXTENTS)};
+        Mesh energy_pillar{generateBox(ENERGY_PILLAR_CENTRE, ENERGY_PILLAR_HALF_EXTENTS)};
 
         MeshData glass_meshlets{buildMeshlets(glass_tower.positions, glass_tower.indices)};
         MeshData pillar_meshlets{buildMeshlets(energy_pillar.positions, energy_pillar.indices)};
@@ -3133,7 +3136,7 @@ int main()
         std::vector<EmissiveTriangle> emissive_list;
 
         // Helper: adds all triangles from a sub-mesh with given emissive radiance.
-        auto addEmissiveTriangles = [&emissive_list](const NeonSubMesh& mesh, const MathLib::Vec3& emissive_colour, float emissive_strength) {
+        auto addEmissiveTriangles = [&emissive_list](const Mesh& mesh, const MathLib::Vec3& emissive_colour, float emissive_strength) {
             MathLib::Vec3 emissive_radiance{emissive_colour.x * emissive_strength, emissive_colour.y * emissive_strength, emissive_colour.z * emissive_strength};
             for (size_t t{0}; t < mesh.indices.size(); t += 3) {
                 MathLib::Vec3 v0{mesh.positions[mesh.indices[t + 0]]};

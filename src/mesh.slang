@@ -1196,9 +1196,11 @@ static const float TRANSPARENT_OUTPUT_ALPHA = 0.7;
 
 // Transparent fragment shader (Phase 8 Etape 40 sub-etape 40c). Real-time glass shader:
 // Schlick Fresnel from material IOR, ray-traced refraction via Snell's law (HLSL `refract()`
-// implements T = η·I + (η·c1 − c2)·N where c1 = N·I, c2 = √(1 − η²·(1 − c1²))), TIR fallback
-// to reflection when the discriminant goes negative (refract() returns the zero vector),
-// Fresnel-weighted blend of refraction + reflection plus the surface's own emissive radiance.
+// implements the canonical GLSL spec T = η·I − (η·(N·I) + √k)·N where
+// k = 1 − η²·(1 − (N·I)²); incident I points INTO the surface and N points TOWARD I's
+// origin so N·I is typically negative). TIR fallback to reflection when k < 0 (refract()
+// returns the zero vector). Fresnel-weighted blend of refraction + reflection plus the
+// surface's own emissive radiance.
 //
 // No reservoir reads or writes — transparents stay out of the ReSTIR temporal/spatial state
 // so the opaque pass keeps full ownership of per-pixel reservoir slots.
