@@ -114,11 +114,13 @@ constexpr float FROXEL_NEAR{0.1f};
 constexpr float FROXEL_FAR{120.0f};
 
 //! Base extinction coefficient (m^-1) at ground level. Started at 0.012 in 41a; reduced to
-//! 0.002 in 42c-0 (post-process modernisation pass) for a cleaner, less grainy modern look.
-//! The single-frame Monte Carlo variance from emissive sampling leaks through as visible
-//! film grain at the higher density even with 41c spatial + temporal filtering. The light-shaft
-//! effect is still produced — it's just much subtler atmospheric haze rather than dense fog.
-constexpr float FOG_DENSITY{0.002f};
+//! 0.002 in 42c-polish-1 (residual MC variance was reading as visible film grain); the
+//! Y-flip bug fix and the warm-up pre-fill in 42c-polish-2 made it safe to bring density
+//! back up. Iterated through 0.004 → 0.008 → 0.006 in user-driven visual tuning;
+//! 0.006 is 3× the polish-1 minimum and 2× less than the original 41a value — the
+//! sweet spot for cyberpunk mist that reads as proper atmospheric haze without going
+//! over into smokey/dense territory.
+constexpr float FOG_DENSITY{0.006f};
 
 //! World-space y where the height-falloff fog density starts to attenuate.
 constexpr float FOG_HEIGHT_BASE{4.0f};
@@ -1517,10 +1519,14 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     froxel_filter_b_view_info.image = froxel_image_filter_b.image();
     vk::raii::ImageView froxel_filter_b_view{device.get(), froxel_filter_b_view_info};
 
-    // One-shot startup transition: filter ping-pong images go UNDEFINED → GENERAL once.
-    // From then on per-frame barriers use eGeneral → eGeneral so contents survive (the
-    // history image IS the temporal accumulator). Without this initial transition, the
-    // per-frame eGeneral → eGeneral barrier would be invalid (image actually in UNDEFINED).
+    // One-shot startup transition: filter ping-pong images + raw inject target go
+    // UNDEFINED → GENERAL once. Filter ping-pong: per-frame barriers use eGeneral →
+    // eGeneral so contents survive (the history image IS the temporal accumulator);
+    // without this initial transition the per-frame eGeneral → eGeneral would be
+    // invalid. Raw inject: needs to start in GENERAL too because the volumetric
+    // warm-up pass (run later in this thread, before the main loop) writes to it,
+    // and warm-up runs *outside* the per-frame barrier sequence which would otherwise
+    // do the UNDEFINED → GENERAL transition.
     {
         vk::CommandBufferAllocateInfo init_alloc_info{};
         init_alloc_info.commandPool = *command_pool;
@@ -1533,8 +1539,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         init_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         init_cmd.begin(init_begin);
 
-        std::array<vk::ImageMemoryBarrier2, 2> init_barriers{};
-        for (uint32_t i{0}; i < 2; ++i) {
+        std::array<vk::ImageMemoryBarrier2, 3> init_barriers{};
+        for (uint32_t i{0}; i < 3; ++i) {
             init_barriers[i].srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
             init_barriers[i].srcAccessMask = vk::AccessFlagBits2::eNone;
             init_barriers[i].dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
@@ -1551,6 +1557,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
         init_barriers[0].image = froxel_image_filter_a.image();
         init_barriers[1].image = froxel_image_filter_b.image();
+        init_barriers[2].image = froxel_image.image();
 
         vk::DependencyInfo init_dep{};
         init_dep.setImageMemoryBarriers(init_barriers);
@@ -1999,11 +2006,161 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     std::chrono::steady_clock::time_point start_time{std::chrono::steady_clock::now()};
     std::chrono::steady_clock::time_point last_time{start_time};
 
+    // Compute the initial view-projection matrices once. Used by both the volumetric
+    // warm-up below AND seeded into prev_view_projection so the first real frame's
+    // filter-pass reprojection treats it as "no camera motion" and consumes the
+    // warmed-up history (otherwise an identity prev_VP would map every froxel centre
+    // to (large, large) NDC, fail the off-grid check, and discard the warm-up).
+    float initial_aspect{static_cast<float>(swapchain.extent().width) / static_cast<float>(swapchain.extent().height)};
+    MathLib::Mat4 initial_view{camera.viewMatrix()};
+    MathLib::Mat4 initial_projection{camera.projectionMatrix(initial_aspect)};
+    MathLib::Mat4 initial_vp{initial_projection * initial_view};
+    MathLib::Mat4 initial_inv_vp{initial_vp.inversed()};
+    MathLib::Vec3 initial_camera_pos{camera.position()};
+
     uint32_t current_frame{0};
-    uint32_t frame_counter{0};
-    // Initialise to identity so frame 0's motion-vector reprojection produces finite values —
-    // default Mat4{} is all zeros, which yields 0/0 = NaN in the shader's perspective divide.
-    MathLib::Mat4 prev_view_projection{MathLib::Mat4::identity()};
+    // Number of warm-up iterations the volumetric pre-fill does below. Both this constant
+    // and `frame_counter`'s initial value below feed the inject shader's PCG seed; starting
+    // frame_counter at WARMUP_ITERATIONS keeps the per-frame seed stream contiguous with
+    // the warm-up's seed stream and (more importantly) keeps `ubo.frame_count > 0` true
+    // from the very first frame so the filter reads the warmed-up history rather than
+    // discarding it on its `history_valid == 0` path.
+    constexpr uint32_t WARMUP_ITERATIONS{16};
+    uint32_t frame_counter{WARMUP_ITERATIONS};
+    // Seeded with the initial view-projection (not identity) so the first real frame's
+    // filter reprojection lands on the same froxel-centre mapping the warm-up used —
+    // making the first frame's history blend valid.
+    MathLib::Mat4 prev_view_projection{initial_vp};
+
+    // ── Volumetric warm-up: pre-fill the temporal accumulator (Phase 8 Etape 42c-polish-2) ──
+    //
+    // Without this, the first ~10 rendered frames show visible "confetti" Monte Carlo
+    // variance because the filter pass's history image is empty — only spatial smoothing
+    // is active until the temporal accumulator builds up. Pre-running the inject + filter
+    // pipelines for WARMUP_ITERATIONS iterations with varying PCG seeds at the camera's
+    // initial pose effectively buys ~16 frames of temporal accumulation before the first
+    // present, so the first visible frame is already converged.
+    //
+    // Cost: one-shot ~50–70 ms hidden in the loading sequence. Subsequent frames are
+    // unaffected; the per-frame inject + filter cost is the same as before this warm-up.
+    {
+        VolumetricInjectPushConstants warmup_inject_push{};
+        warmup_inject_push.froxel_width = FROXEL_WIDTH;
+        warmup_inject_push.froxel_height = FROXEL_HEIGHT;
+        warmup_inject_push.froxel_depth = FROXEL_DEPTH;
+        warmup_inject_push.fog_density = FOG_DENSITY;
+        warmup_inject_push.fog_height_base = FOG_HEIGHT_BASE;
+        warmup_inject_push.fog_height_falloff = FOG_HEIGHT_FALLOFF;
+        warmup_inject_push.near_plane = FROXEL_NEAR;
+        warmup_inject_push.far_plane = FROXEL_FAR;
+        warmup_inject_push.inv_view_projection = initial_inv_vp;
+        warmup_inject_push.camera_pos = initial_camera_pos;
+        warmup_inject_push.emissive_count = emissive_count;
+        warmup_inject_push.total_emissive_power = total_emissive_power;
+
+        VolumetricFilterPushConstants warmup_filter_push{};
+        warmup_filter_push.alpha = FOG_TEMPORAL_ALPHA;
+        warmup_filter_push.froxel_width = FROXEL_WIDTH;
+        warmup_filter_push.froxel_height = FROXEL_HEIGHT;
+        warmup_filter_push.froxel_depth = FROXEL_DEPTH;
+        warmup_filter_push.near_plane = FROXEL_NEAR;
+        warmup_filter_push.far_plane = FROXEL_FAR;
+        warmup_filter_push.inv_view_projection = initial_inv_vp;
+        warmup_filter_push.prev_view_projection = initial_vp; // No camera motion during warm-up.
+        warmup_filter_push.camera_pos = initial_camera_pos;
+
+        vk::CommandBufferAllocateInfo warmup_alloc_info{};
+        warmup_alloc_info.commandPool = *command_pool;
+        warmup_alloc_info.level = vk::CommandBufferLevel::ePrimary;
+        warmup_alloc_info.commandBufferCount = 1;
+        vk::raii::CommandBuffers warmup_cmds{device.get(), warmup_alloc_info};
+        const vk::raii::CommandBuffer& warmup_cmd = warmup_cmds[0];
+
+        vk::CommandBufferBeginInfo warmup_begin{};
+        warmup_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        warmup_cmd.begin(warmup_begin);
+
+        constexpr uint32_t WARMUP_INJECT_GROUP_SIZE{8};
+        uint32_t warmup_groups_x{(FROXEL_WIDTH + WARMUP_INJECT_GROUP_SIZE - 1) / WARMUP_INJECT_GROUP_SIZE};
+        uint32_t warmup_groups_y{(FROXEL_HEIGHT + WARMUP_INJECT_GROUP_SIZE - 1) / WARMUP_INJECT_GROUP_SIZE};
+
+        for (uint32_t i{0}; i < WARMUP_ITERATIONS; ++i) {
+            // Each iteration draws independent random emissive samples by varying the PCG seed.
+            warmup_inject_push.frame_count = i;
+            warmup_filter_push.history_valid = (i == 0u) ? 0u : 1u;
+
+            warmup_cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *inject_pipeline);
+            warmup_cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *inject_pipeline_layout, 0, {*inject_descriptor_sets[0]}, {});
+            warmup_cmd.pushConstants<VolumetricInjectPushConstants>(*inject_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, warmup_inject_push);
+            warmup_cmd.dispatch(warmup_groups_x, warmup_groups_y, FROXEL_DEPTH);
+
+            // Inject write → filter read on the raw froxel image.
+            vk::ImageMemoryBarrier2 inject_to_filter{};
+            inject_to_filter.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            inject_to_filter.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+            inject_to_filter.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            inject_to_filter.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+            inject_to_filter.oldLayout = vk::ImageLayout::eGeneral;
+            inject_to_filter.newLayout = vk::ImageLayout::eGeneral;
+            inject_to_filter.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+            inject_to_filter.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+            inject_to_filter.image = froxel_image.image();
+            inject_to_filter.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            inject_to_filter.subresourceRange.baseMipLevel = 0;
+            inject_to_filter.subresourceRange.levelCount = 1;
+            inject_to_filter.subresourceRange.baseArrayLayer = 0;
+            inject_to_filter.subresourceRange.layerCount = 1;
+
+            vk::DependencyInfo dep_inject{};
+            dep_inject.setImageMemoryBarriers(inject_to_filter);
+            warmup_cmd.pipelineBarrier2(dep_inject);
+
+            // Alternate filter ping-pong direction. Set 0 reads B writes A; set 1 reads A
+            // writes B. After 16 iterations both A and B carry roughly 8 samples worth of
+            // accumulation each — the next-frame filter (set 0 since current_frame == 0)
+            // will read B (8 samples) and write A.
+            uint32_t filter_set_idx{i % 2u};
+            warmup_cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *filter_pipeline);
+            warmup_cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *filter_pipeline_layout, 0, {*filter_descriptor_sets[filter_set_idx]}, {});
+            warmup_cmd.pushConstants<VolumetricFilterPushConstants>(*filter_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, warmup_filter_push);
+            warmup_cmd.dispatch(warmup_groups_x, warmup_groups_y, FROXEL_DEPTH);
+
+            // Inter-iteration barrier covering ALL compute storage accesses on ALL three
+            // fog images. Three distinct hazards across the iteration boundary:
+            //   (a) iteration N's filter wrote to one ping-pong image; iteration N+1's
+            //       filter reads it as history (RAW on the just-written image).
+            //   (b) iteration N's filter wrote to one ping-pong image; iteration N+1's
+            //       filter writes the OTHER ping-pong image as output (no direct RAW but
+            //       the images all stay in eGeneral; covered for consistency).
+            //   (c) iteration N's filter READ raw froxel; iteration N+1's inject WRITES
+            //       raw froxel (RAW dependency on raw — the missing-piece bug if we used
+            //       only image barriers on the ping-pong pair).
+            // A single MemoryBarrier2 with both read and write masks on src and dst
+            // serialises the whole compute pipeline between iterations, which is fine for
+            // a 16-iteration one-shot at startup. Per-frame code handles the same hazards
+            // via the cross-submission MemoryBarrier2 at the top of recordFrame.
+            vk::MemoryBarrier2 inter_iter_barrier{};
+            inter_iter_barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            inter_iter_barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+            inter_iter_barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            inter_iter_barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+
+            vk::DependencyInfo dep_iter{};
+            dep_iter.setMemoryBarriers(inter_iter_barrier);
+            warmup_cmd.pipelineBarrier2(dep_iter);
+        }
+
+        warmup_cmd.end();
+
+        vk::CommandBufferSubmitInfo warmup_cmd_submit{};
+        warmup_cmd_submit.commandBuffer = *warmup_cmd;
+        vk::SubmitInfo2 warmup_submit{};
+        warmup_submit.setCommandBufferInfos(warmup_cmd_submit);
+        device.graphicsQueue().submit2({warmup_submit});
+        device.graphicsQueue().waitIdle();
+
+        logger.logInfo("Volumetric temporal accumulator pre-warmed (" + std::to_string(WARMUP_ITERATIONS) + " iterations).");
+    }
 
     // Pre-allocated scratch vector for bloom descriptor sets (avoids per-frame heap allocation).
     std::vector<vk::DescriptorSet> bloom_sets_for_frame;
