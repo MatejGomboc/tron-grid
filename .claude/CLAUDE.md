@@ -309,6 +309,29 @@ Combined effective sample count per froxel: 4 inject samples × 9 spatial
 neighbours × ~10 temporal frames ≈ 360 — visually reads as soft
 cyberpunk atmospheric haze rather than animated noise.
 
+Etape 42c-polish-2 fixed two issues with the fog implementation: (a) a
+**Y-flip bug** in inject's and filter's `froxelToWorld` — the formula
+`ndc.y = (froxel_y + 0.5) / froxel_h * 2 - 1` was producing math-NDC y=-1
+for froxel index y=0 (bottom of math frustum), but the composite mapped
+froxel index y=0 to Vulkan pixel.y=0 (top of screen), so the fog data
+displayed vertically mirrored; fixed to `ndc.y = 1 - uv.y * 2` in both
+shaders' `froxelToWorld`. The bug was hidden since 41a by the orb being
+far above the camera and the height-falloff curve being similar at two
+symmetric world heights. (b) A **temporal warm-up pre-fill** — the
+filter's history image starts empty, so the first ~10 rendered frames
+showed visible MC variance ("confetti" grain) before the temporal
+accumulator converged. A one-shot startup pass now runs 16 inject +
+filter cycles with varying PCG seeds at the camera's initial pose
+(~50–70 ms hidden in the loading sequence), pre-filling the history so
+the first present is already converged. `frame_counter` initial value
+is now `WARMUP_ITERATIONS` (= 16) so the first real frame's filter sees
+`history_valid == 1` and reads the warmed history; `prev_view_projection`
+is seeded with the initial view-projection (not identity) so the first
+frame's reprojection lands on the same froxel-centre mapping the
+warm-up used. With both fixes shipped, FOG_DENSITY was iterated by
+visual tuning to 0.006 (the "sweet spot" for cyberpunk mist — half the
+original 41a value of 0.012, three times the polish-1 minimum of 0.002).
+
 **GPU profiler** (Phase 8 Etape 42 sub-etape 42a) — `vk::raii::QueryPool`
 with `MAX_FRAMES_IN_FLIGHT × (8 passes × 2 timestamps)` = 32 timestamp
 queries. Each pass writes a paired `(start, end)` timestamp via

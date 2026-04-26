@@ -1063,6 +1063,63 @@ features that separate a tech demo from a published game.
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
 
+### 2026-04-26 — Phase 8 Etape 42c-polish-2: fog Y-flip bug fix + temporal warm-up pre-fill + density tuning
+
+Three threads in one PR — the originally planned 2-line bug fix grew
+into a meaningful infrastructure addition once the user noted that the
+fog still warms up visibly over the first ~10 frames.
+
+**Y-flip bug fix (the originally planned scope).**
+`inject_density.slang::froxelToWorld` and
+`volumetric_filter.slang::froxelToWorld` were using
+`ndc.y = (froxel_y + 0.5) / froxel_h * 2 - 1`, which puts froxel index
+y=0 at math-NDC y=-1 (bottom of math frustum). The composite maps
+froxel index y=0 to Vulkan pixel.y=0 (top of screen, math-NDC y=+1
+after the mesh shader's `-fvk-invert-y` flip) — so the fog data was
+**vertically mirrored**. Fixed with `ndc.y = 1 - uv.y * 2` in both
+shaders. Bug was hidden since 41a by the orb being far above the
+camera and the height-falloff density curve being similar at two
+symmetric world heights — the symptom the user spotted was a faint
+"something's off" intuition, not a glaringly obvious mirror.
+
+**Temporal warm-up pre-fill (new infrastructure addition).** The
+filter's history image starts empty, so the first ~10 rendered frames
+showed visible MC variance ("confetti" grain) before the temporal
+accumulator converged. New one-shot command buffer at renderer
+initialisation runs **16 inject + filter cycles** with varying PCG
+seeds at the camera's initial pose, before the main render loop opens.
+Each cycle alternates the filter ping-pong direction (`i % 2`) so
+both ping-pong images end up with roughly 8 samples worth of
+accumulation each. After the warm-up: `frame_counter` is initialised
+to `WARMUP_ITERATIONS` (=16) so the first real frame's filter has
+`history_valid == 1` and reads the warmed history; `prev_view_projection`
+is seeded with the initial view-projection (rather than identity) so
+the first frame's reprojection lands on the same froxel-centre mapping
+the warm-up used. Cost: ~50–70 ms one-shot, hidden in the loading
+sequence; subsequent frames are uncompromised.
+
+The initial layout transition was extended from 2 → 3 images to also
+pre-transition the raw `froxel_image` into `eGeneral`, so the warm-up
+pass can write into it (it runs outside the per-frame barrier sequence
+that would otherwise do the UNDEFINED → GENERAL transition).
+
+**Density tuning (user-driven visual iteration).** With both the
+Y-flip bug fixed and the warm-up making first-frame variance a
+non-issue, FOG_DENSITY was iterated through 0.002 → 0.004 → 0.008 →
+**0.006** in a tight back-and-forth with the user; 0.006 ended as the
+sweet spot for cyberpunk mist (3× the polish-1 minimum, half the
+original 41a value of 0.012). Tuning history preserved in the
+`FOG_DENSITY` constant's doxygen comment for future readers.
+
+**Documentation:** PBR.md gains a new "Startup Warm-Up" subsection
+under Volumetric Fog, plus a "Coordinate Convention Note (Y-flip)"
+subsection documenting the inject/filter vs composite asymmetry and
+the canonical fix. CLAUDE.md Current Status appended with both the
+warm-up infrastructure and the density tuning history. PBR.md last-
+updated footer bumped.
+
+111 PRs merged.
+
 ### 2026-04-26 — Phase 8 Etape 42c-polish-1: post-process modernisation + plan refresh into polish/perf phases
 
 Two threads in one PR:

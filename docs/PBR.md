@@ -751,6 +751,49 @@ Per-frame ordering inside `recordFrame`:
 11. Bloom downsample / upsample chain.
 12. Tonemap composite to swapchain.
 
+### Startup Warm-Up (Etape 42c-polish-2)
+
+The filter pass's history image is empty at startup; without
+intervention the first ~10 rendered frames show visible "confetti" MC
+variance because only spatial smoothing is active until the temporal
+accumulator builds up. To eliminate this warm-up phase, a one-shot
+command buffer at renderer initialisation runs **16 inject + filter
+cycles** with varying PCG seeds at the camera's initial pose, before
+the main render loop opens:
+
+- All three fog images (raw inject + both filter ping-pong) are
+  transitioned to `eGeneral` first.
+- Each cycle: `inject_push.frame_count = i` (varying seed for
+  independent samples) → inject dispatch → barrier → filter dispatch
+  with alternating ping-pong descriptor set (`i % 2`) → barrier.
+- After the warm-up: the host bumps `frame_counter` to
+  `WARMUP_ITERATIONS` so the first real frame's filter has
+  `history_valid == 1`, and seeds `prev_view_projection` with the
+  initial view-projection (rather than identity) so the first frame's
+  reprojection lands on the same froxel-centre mapping the warm-up
+  used.
+
+Cost: ~50–70 ms one-shot, hidden in the application loading sequence.
+Subsequent frames are uncompromised — the per-frame inject + filter
+cost is identical with or without warm-up.
+
+### Coordinate Convention Note (Y-flip)
+
+The project's projection matrix is **math-convention** (+Y = up). The
+mesh shader's `slangc -fvk-invert-y` flag flips `SV_Position` only at
+the rasterisation stage; **compute shaders never see this flip**. So
+inject's and filter's `froxelToWorld` must explicitly map froxel index
+y=0 to math-NDC y=+1 (top of math frustum, which after the mesh
+shader's flip becomes Vulkan top of screen) so the data inject writes
+at froxel index y=0 displays at the screen position the composite
+reads froxel index y=0 for. The straightforward
+`ndc.y = (froxel_y + 0.5) / froxel_h * 2 - 1` formula does the
+opposite (puts froxel index y=0 at math-NDC y=-1 = bottom of math
+frustum) and produces vertically-mirrored fog data. Etape 42c-polish-2
+fixed this with `ndc.y = 1 - uv.y * 2` in both shaders' `froxelToWorld`.
+Bug was hidden since 41a by the orb being far above the camera and the
+height-falloff curve being similar at two symmetric world heights.
+
 ### Limitations and Future Work
 
 - **Density injection ignores the depth buffer** — fog accumulates
@@ -870,4 +913,4 @@ Per-frame ordering inside `recordFrame`:
 
 ---
 
-*Last updated: 2026-04-26 (Etape 41b + 41c — emissive light shafts + temporal reprojection)*
+*Last updated: 2026-04-26 (Etape 42c-polish-2 — fog Y-flip bug fix + warm-up pre-fill + density tuning)*

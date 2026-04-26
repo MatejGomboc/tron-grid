@@ -82,7 +82,13 @@ float froxelSliceToDepth(uint z_index)
 // dot(ray_dir, camera_forward) to land at the slice's view-space depth on the ray).
 float3 froxelToWorld(uint3 froxel_id)
 {
-    float2 ndc_xy = (float2(froxel_id.xy) + 0.5) / float2(push.froxel_width, push.froxel_height) * 2.0 - 1.0;
+    // Same Y-flip as inject_density.slang's froxelToWorld (Etape 42c-polish-2). Compute
+    // shaders never see the mesh shader's `-fvk-invert-y` slangc flag; froxel index y=0
+    // must map to math NDC y=+1 to align with the composite's pixel.y=0 → froxel y=0
+    // (Vulkan top of screen) mapping. Filter's reprojection (`-prev_ndc.y`) already
+    // assumes this convention; only inject + filter's copy of froxelToWorld were wrong.
+    float2 uv = (float2(froxel_id.xy) + 0.5) / float2(push.froxel_width, push.froxel_height);
+    float2 ndc_xy = float2((uv.x * 2.0) - 1.0, 1.0 - (uv.y * 2.0));
     float view_z = froxelSliceToDepth(froxel_id.z);
 
     float4 near_clip = float4(ndc_xy, 0.0, 1.0);

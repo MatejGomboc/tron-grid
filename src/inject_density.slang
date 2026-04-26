@@ -114,7 +114,17 @@ float froxelSliceThickness(uint z_index)
 // dot(ray_dir, camera_forward)`.
 float3 froxelToWorld(uint3 froxel_id)
 {
-    float2 ndc_xy = (float2(froxel_id.xy) + 0.5) / float2(push.froxel_width, push.froxel_height) * 2.0 - 1.0;
+    // Map froxel xy index → math-convention NDC. Project's projection matrix is
+    // math-convention (+Y = up); the mesh shader's `-fvk-invert-y` slangc flag flips
+    // SV_Position only at the rasterisation stage. Compute shaders never see that flip.
+    // The composite reads froxel index y=0 for screen pixel y=0 (Vulkan top of screen),
+    // which in math NDC is +1 (top of math frustum). So froxel index y=0 must produce
+    // ndc.y = +1 (not -1, which would be bottom of math frustum and would display the
+    // sampled fog data at the bottom of the screen — vertically mirrored). Pre-Etape
+    // 42c-polish-2 the formula was `* 2.0 - 1.0` for both x and y; the Y flip was the
+    // missing fix. X is unchanged because there is no X-flip flag.
+    float2 uv = (float2(froxel_id.xy) + 0.5) / float2(push.froxel_width, push.froxel_height);
+    float2 ndc_xy = float2((uv.x * 2.0) - 1.0, 1.0 - (uv.y * 2.0));
     float view_z = froxelSliceToDepth(froxel_id.z);
 
     // Unproject the NDC point at the near plane to get a world-space ray direction.
