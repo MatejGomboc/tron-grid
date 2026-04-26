@@ -779,6 +779,39 @@ features that separate a tech demo from a published game.
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
 
+### 2026-04-26 — Documentation polish pass
+
+Cross-cutting documentation cleanup after the burst of merges in PRs #99–#104
+(Etape 40 transparency, Maintenance M1/M2/M3, Etape 41a volumetric fog, post-41a
+status refresh). Five files touched, no behavioural changes.
+
+- **PBR.md** — `neonEmissiveColour` snippet now matches the actual shader
+  (`fmod(floor(abs(...)))`, not `fmod(abs(floor(...)))`); the order is
+  load-bearing for symmetric orange bands across the world origin.
+  Added a sentence explaining why. Rendering Pipeline overview now
+  includes the skybox draw, the transparent pass, and both volumetric
+  compute steps; corrected the post-volumetric layout (HDR stays
+  GENERAL through bloom + tonemap rather than transitioning to
+  SHADER_READ_ONLY_OPTIMAL — bloom is compute, not sampled fragment).
+- **VISION.md** — Removed the orphan single-row "Mortality" table and
+  folded the entry into the surrounding bullet list. Replaced the
+  "AI_INTERFACE.md will be documented in a future phase" stub with a
+  proper link to the existing spec, summarising what it covers.
+- **ARCHITECTURE.md** — "Future Architecture" section was mis-tagged
+  with phase numbers 9 and 10 for AI off-screen rendering and
+  multiplayer (off-screen for AI is Phase 11; multiplayer is Backlog
+  per VISION.md § Future: Multiplayer). Heading bumped from
+  "(Phases 2+)" to "(Beyond Phase 8)" to reflect actual state — most
+  of the original bullet list described work that has already shipped
+  (mesh shaders, bindless, ray tracing). Replaced with a list of what's
+  genuinely still ahead.
+- **CLAUDE.md / README.md** — Fixed "the fog itself bloom" → "the fog
+  itself can bloom" typo introduced in #103/#104.
+
+`markdownlint-cli2` clean across all 16 tracked Markdown files.
+
+105 PRs merged.
+
 ### 2026-04-26 — Phase 8 Etape 41 sub-etape 41a: volumetric fog foundation
 
 First of four planned sub-etapes for Etape 41 (volumetric fog + light shafts). 41a
