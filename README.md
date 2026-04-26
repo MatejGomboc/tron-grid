@@ -20,8 +20,9 @@ fitted RRT+ODT tonemapping with AP1 hue preservation, exact sRGB encoding),
 bloom with soft glow halos (extraction, mip chain downsample, tent-filter
 upsample, HDR composite), 8× MSAA with sample-rate shading and screen-space
 antialiased wireframe, procedural cyberpunk skybox (value noise data fog),
-per-material PBR via material SSBO, cinematic post-process (chromatic
-aberration, cool colour grade, vignette, scan lines). Physically-correct
+per-material PBR via material SSBO, cinematic post-process (subtle chromatic
+aberration, cool colour grade, vignette — Etape 42c-polish-1 dropped the retro
+scan-line overlay and halved CA for a cleaner Tron Legacy / Ares look). Physically-correct
 lighting from emissive neon tube geometry (no point-light abstraction) with
 ReSTIR DI — temporal + spatial reservoir reuse for direct illumination,
 single-bounce indirect GI via cosine-weighted hemisphere sampling with Russian

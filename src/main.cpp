@@ -113,9 +113,12 @@ constexpr uint32_t FROXEL_DEPTH{64};
 constexpr float FROXEL_NEAR{0.1f};
 constexpr float FROXEL_FAR{120.0f};
 
-//! Base extinction coefficient (m^-1) at ground level. Subtle uniform fog for 41a; later
-//! sub-etapes will keep this as the baseline density underneath emissive light scattering.
-constexpr float FOG_DENSITY{0.012f};
+//! Base extinction coefficient (m^-1) at ground level. Started at 0.012 in 41a; reduced to
+//! 0.002 in 42c-0 (post-process modernisation pass) for a cleaner, less grainy modern look.
+//! The single-frame Monte Carlo variance from emissive sampling leaks through as visible
+//! film grain at the higher density even with 41c spatial + temporal filtering. The light-shaft
+//! effect is still produced — it's just much subtler atmospheric haze rather than dense fog.
+constexpr float FOG_DENSITY{0.002f};
 
 //! World-space y where the height-falloff fog density starts to attenuate.
 constexpr float FOG_HEIGHT_BASE{4.0f};

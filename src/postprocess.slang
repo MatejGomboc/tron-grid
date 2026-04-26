@@ -14,8 +14,15 @@
 
 // Post-process compute shader — reads from the HDR framebuffer, composites
 // bloom, applies cinematic effects, and writes the tonemapped result to the
-// swapchain image. Pipeline: chromatic aberration (HDR) → ACES fitted RRT+ODT
-// tonemapping → sRGB encoding → cool colour grade → vignette → scan lines.
+// swapchain image. Pipeline: subtle chromatic aberration (HDR) → ACES fitted
+// RRT+ODT tonemapping → sRGB encoding → cool colour grade → vignette.
+//
+// Phase 8 Etape 42c-0 modernisation: dropped the CRT scan-line overlay
+// (3-pixel-period horizontal stripes — the most overtly retro element) and
+// halved chromatic aberration. Modern Tron (Legacy 2010 / Ares 2025) doesn't
+// use scan lines; the cleaner geometric look reads more contemporary. Bonus:
+// removes a per-pixel high-frequency alternating brightness pattern that
+// would actively fight TAA history clamping in the upcoming 42c-ii work.
 
 [[vk::binding(0, 0)]]
 [[vk::image_format("rgba16f")]]
@@ -60,11 +67,9 @@ static const float SRGB_POWER_EXPONENT = 1.0 / 2.4;
 static const float SRGB_POWER_OFFSET = 0.055;
 
 // Cinematic post-process effect constants.
-static const float CA_STRENGTH = 0.003; // Chromatic aberration — RGB fringe intensity at screen edges.
+static const float CA_STRENGTH = 0.0015; // Chromatic aberration — RGB fringe intensity at screen edges (halved in Etape 42c-0 for a more modern look).
 static const float COLOUR_GRADE_STRENGTH = 0.15; // Cool colour grade — lerp toward desaturated cool tint.
 static const float VIGNETTE_STRENGTH = 1.5; // Vignette — radial darkening at screen corners.
-static const float SCAN_LINE_STRENGTH = 0.04; // Scan lines — faint horizontal line pattern intensity.
-static const float SCAN_LINE_PERIOD = 3.0; // Pixels per scan-line cycle — 1 is invisible at 4K, 3 stays visible.
 
 // Rec. 709 luminance weights (for colour grading desaturation).
 static const float3 LUMINANCE_WEIGHTS = float3(0.2126, 0.7152, 0.0722);
@@ -163,17 +168,12 @@ void postprocessMain(uint3 thread_id : SV_DispatchThreadID)
     colour = lerp(colour, cool_tint, COLOUR_GRADE_STRENGTH);
 
     // ── Vignette ──
-    // Radial falloff darkens screen corners, draws the eye inward.
+    // Radial falloff darkens screen corners, draws the eye inward. Subtle and
+    // photographic — kept after the Etape 42c-0 modernisation pass since it reads as
+    // timeless cinematic, not retro CRT.
     float vignette = 1.0 - dot(centre_offset, centre_offset) * VIGNETTE_STRENGTH;
     vignette = saturate(vignette);
     colour *= vignette;
-
-    // ── Scan lines ──
-    // Faint horizontal line pattern — sells the "digital display" aesthetic. Period of
-    // one pixel is effectively a uniform darken at 4K; SCAN_LINE_PERIOD spreads the
-    // pattern across several pixels so it stays a visible scan line rather than aliasing.
-    float scan = 1.0 - SCAN_LINE_STRENGTH * step(0.5, frac(float(thread_id.y) / SCAN_LINE_PERIOD));
-    colour *= scan;
 
     swapchain_output[thread_id.xy] = float4(colour, 1.0);
 }
