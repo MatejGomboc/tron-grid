@@ -601,6 +601,15 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         float ao_spatial_sum = 0.0;
         uint ao_spatial_count = 0u;
 
+        // Spatial accumulator for the single-bounce indirect GI term (Phase 8 Etape 42b).
+        // Indirect already gets temporal smoothing via EMA into r.indirect, but each
+        // pixel's hemisphere sample is independent — adjacent pixels can land on very
+        // different lighting contexts and the temporal-only signal flickers. Averaging
+        // accepted neighbours' indirect (gated by the same geometric reject as AO and the
+        // ReSTIR merge) reduces inter-pixel variance at zero new state cost.
+        float3 indirect_spatial_sum = float3(0.0, 0.0, 0.0);
+        uint indirect_spatial_count = 0u;
+
         uint spatial_hash = pcgHash(pixel_seed + 99991u);
         for (uint s = 0; s < NUM_SPATIAL_NEIGHBOURS; ++s)
         {
@@ -632,6 +641,12 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
             // gates the ReSTIR merge ensures we don't blur AO across silhouette edges.
             ao_spatial_sum += neighbour_r.ao;
             ++ao_spatial_count;
+
+            // Accumulate the neighbour's indirect GI for spatial smoothing (Etape 42b).
+            // Same gating — the geometric reject above prevents leaking radiance across
+            // silhouettes and discontinuities.
+            indirect_spatial_sum += neighbour_r.indirect;
+            ++indirect_spatial_count;
 
             // Same canonical proportional clamp as temporal, but with a more generous cap
             // because spatial neighbours bring in fresh spatial information that we want to
@@ -675,6 +690,16 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         // at neighbour positions and biased toward the current pixel's own history.
         if (ao_spatial_count > 0u) {
             r.ao = (r.ao + ao_spatial_sum) / (1.0 + float(ao_spatial_count));
+        }
+
+        // Same blend for the indirect GI term (Etape 42b). Order matters: spatial
+        // smoothing of the temporal history happens FIRST, then the new hemisphere
+        // bounce sample is EMA-blended into r.indirect at the end of this block.
+        // Effect: neighbours' temporally-smoothed indirect contribute to ours, the
+        // new bounce updates the now-smoothed value, and we write back. Reduces
+        // per-pixel hemisphere-sampling variance without re-tracing GI rays.
+        if (indirect_spatial_count > 0u) {
+            r.indirect = (r.indirect + indirect_spatial_sum) / (1.0 + float(indirect_spatial_count));
         }
 
         // Compute final contribution weight W for the selected sample. The canonical

@@ -220,24 +220,54 @@ the RTX 4090.
 of per-pass times matches the full-frame timestamp ± rasterisation
 overhead; no validation errors; release-build cost negligible.
 
-#### Sub-etape 42b — Temporal denoising for remaining noisy RT outputs
+#### Sub-etape 42b — Spatial denoising for the indirect GI term
 
-**Goal:** clean up the RT outputs that aren't yet temporally filtered.
-Volumetric fog already has spatial+temporal (Etape 41c); ReSTIR DI
-already has temporal+spatial reuse (Etape 37b/c); RTAO already has
-temporal EMA + spatial averaging (Etape 39). Remaining candidates for
-edge-aware filtering: indirect GI bounce term and the RT reflection
-hit colour. Likely an A-trous or simple bilateral filter; SVGF would
-be over-engineering for the current single-bounce setup.
+**Goal:** clean up the only remaining ReSTIR-output term that wasn't yet
+spatially filtered. Volumetric fog has spatial + temporal (Etape 41c);
+ReSTIR DI has temporal + spatial reuse (Etape 37b/c); RTAO has temporal
+EMA + spatial averaging (Etape 39). The indirect-GI bounce term
+(`r.indirect`) had only temporal EMA — the new bounce sample for each
+pixel is independent so per-pixel variance leaked through despite the
+temporal smoothing.
 
-#### Sub-etape 42c — Adaptive meshlet LOD (Nanite-style)
+42b adds a spatial accumulator alongside the existing AO accumulator in
+the spatial reuse loop. Same gating (geometric reject via
+`reservoirSurfaceMatches`) prevents leaking radiance across silhouettes.
+Five lines of code; benefits both the direct fragment-shader read of
+`r.indirect` and the reflection-path lookup of the reflected hit's
+indirect (which reads the same field via the previous-frame reservoir).
 
-**Goal:** hierarchical meshlet DAG with GPU-driven LOD selection based
-on screen-space error. Dense meshlets near the camera, coarse in the
-distance. Seamless transitions via morphing or dithered crossfade.
-Largest sub-etape; likely needs an offline mesh-decimation step in the
-build pipeline plus runtime DAG traversal in the task shader. Probably
-multiple PRs of its own.
+#### Sub-etape 42c — 4K performance pass (rescoped)
+
+**Original scope:** Nanite-style hierarchical meshlet LOD.
+
+**Why rescoped:** 42a profiling showed the dominant per-frame cost at
+4K projection isn't *geometric* mesh-shader work (vertex transforms,
+meshlet count) — it's **per-fragment ReSTIR + RT** (direct shadow ray,
+AO ray, reflection ray, indirect bounce). That cost scales with pixel
+count, not with mesh complexity. A Nanite-style LOD wouldn't move the
+needle on the 4K bottleneck. The current scene also has only 6 BLASes
+and ~25 k triangles — Nanite is genuinely over-engineering at that
+scale.
+
+**Rescoped goal:** hit the Phase 8 4K @ 60+ FPS target by reducing
+per-pixel RT cost where possible without sacrificing the polished
+look. Candidate techniques:
+
+- **Sub-resolution ReSTIR** — sample at half resolution, bilateral
+  upsample to full. ~4× speedup on the dominant cost.
+- **Variable-rate shading** (`VK_KHR_fragment_shading_rate`) — pixel
+  shader rate ½×½ in regions of low contrast.
+- **Temporal upscaling** (DLSS-style) — render at 1440p, upsample to
+  4K with motion vectors. Driver-agnostic FidelityFX implementation.
+
+Sequence will likely be: profile 4K → pick the lowest-hanging
+optimisation → measure → iterate. Possibly multiple PRs.
+
+Adaptive meshlet LOD work (the original 42c plan) moves to
+**Backlog** with explicit cross-reference to revisit during Phase 10
+(asset pipeline + procedural world) when the scene grows enough
+geometric variety to justify the implementation cost.
 
 **After this etape:** the world renders at the full Phase 8 quality
 target — noise-free RT, automatic detail scaling, instrumented
@@ -255,8 +285,8 @@ performance.
 - [x] Per-material opacity in material SSBO
 - [x] Froxel-based volumetric fog with neon light shafts
 - [x] Temporal reprojection for fog noise reduction
-- [ ] Adaptive meshlet LOD with seamless transitions (42c)
-- [ ] Temporal denoising for RT output (42b — additional cleanup beyond ReSTIR / RTAO / fog)
+- [x] Spatial denoising for indirect GI (42b)
+- [ ] 4K @ 60+ performance pass — sub-res ReSTIR / VRS / temporal upscaling (42c rescoped from Nanite)
 - [x] GPU profiling with per-pass timestamps (42a)
 - [ ] 4K @ 60+ FPS sustained on RTX 4090
 - [ ] Proper synchronisation barriers for all new passes
@@ -823,6 +853,20 @@ features that separate a tech demo from a published game.
   non-overlapping transparents (glass tower + energy pillar). WBOIT
   becomes worthwhile only once the scene grows enough overlapping
   translucent geometry that sorted blending fails.
+- **Nanite-style adaptive meshlet LOD** — originally Phase 8 Etape 42c;
+  rescoped to "4K performance pass" after 42a profiling showed the 4K
+  bottleneck is per-fragment ReSTIR/RT, not geometric mesh-shader work.
+  The LOD work itself is still valuable, just not for the immediate
+  performance target. Natural moment to revisit: **Phase 10 (asset
+  pipeline + procedural world)** — once the in-house glTF parser starts
+  pulling in authored creature meshes and procedural Grid architecture
+  (data towers, energy barriers, platforms) lifts triangle / draw-call
+  counts into Nanite-relevant territory. Until then the existing flat
+  meshlet pipeline is sufficient. Original technique notes: hierarchical
+  meshlet DAG, GPU-driven LOD selection by screen-space error, seamless
+  transitions via morphing or dithered crossfade; needs an offline
+  mesh-decimation step in the build pipeline plus runtime DAG traversal
+  in the task shader.
 - **Multiplayer** — extract world state to authoritative server, network
   replication, prediction + reconciliation, multiple concurrent players.
   See `docs/VISION.md` § Future: Multiplayer. Deferred until single-player
@@ -834,6 +878,56 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Phase 8 Etape 42 sub-etape 42b: spatial denoising for indirect GI; 42c rescoped
+
+The only ReSTIR-output term that didn't yet have spatial filtering was the
+indirect GI bounce stored in `r.indirect`. Temporal EMA (Etape 38) smooths
+it over time but each pixel's hemisphere sample is independent, so adjacent
+pixels can land on very different lighting contexts and visible per-pixel
+variance leaks through.
+
+**Implementation** — three small additions to `mesh.slang`:
+
+1. New `indirect_spatial_sum` (vec3) and `indirect_spatial_count` (uint)
+   accumulators next to the existing AO accumulators.
+2. Inside the spatial reuse loop, after the geometric reject
+   (`reservoirSurfaceMatches`), accumulate `neighbour_r.indirect` —
+   piggybacks on the same loop and same gating that already drives the
+   AO and ReSTIR merges.
+3. After the loop, blend `r.indirect` with the spatial mean using the
+   same weighted-average pattern as AO:
+   `r.indirect = (r.indirect + sum) / (1.0 + count)`.
+
+Order matters: spatial smoothing happens BEFORE the EMA blend with the
+new hemisphere bounce sample at line 884. Effect: neighbours'
+temporally-smoothed indirect contributes to ours, the new bounce sample
+updates the now-smoothed value, write back. Cost is essentially free —
+the 5 extra reservoir reads piggyback on the cache lines AO already
+loads (release profiling shows mesh pass unchanged within noise:
+~3 ms before, ~3 ms after).
+
+Benefits both consumers of the field: the direct fragment-shader read
+(`indirect_gi = r.indirect`) and the reflection-path lookup of the
+reflected hit's indirect via `reservoir_previous[hit_res_idx].indirect`.
+
+**42c rescoped from Nanite-LOD to "4K performance pass".** 42a
+profiling showed the dominant per-frame cost at 4K projection isn't
+*geometric* mesh-shader work — it's per-fragment ReSTIR + RT (direct
+shadow ray, AO ray, reflection ray, indirect bounce). That cost
+scales with pixel count, not with mesh complexity. A Nanite-style LOD
+wouldn't move the 4K needle, and the current scene only has 6 BLASes
+and ~25 k triangles anyway. New 42c scope: sub-resolution ReSTIR /
+variable-rate shading / temporal upscaling — directly attack the
+per-pixel cost.
+
+The Nanite work is **moved to Backlog** with explicit cross-reference
+to revisit during Phase 10 (asset pipeline + procedural world) when
+the in-house glTF parser brings in authored meshes and procedural Grid
+architecture lifts triangle counts into Nanite-relevant territory.
+Original technique notes preserved alongside.
+
+108 PRs merged.
 
 ### 2026-04-26 — Phase 8 Etape 42 sub-etape 42a: GPU profiling
 
