@@ -45,11 +45,11 @@ namespace LoggingLib
 
     Logger::~Logger()
     {
-        // Request stop and wake the worker. The jthread destructor
-        // joins automatically — the worker drains remaining messages
-        // before returning.
+        // Request stop. The std::condition_variable_any::wait overload that takes a
+        // stop_token wakes the worker on request_stop() automatically — no manual
+        // notify_one() needed. The jthread destructor then joins; the worker drains
+        // remaining messages before returning.
         m_worker.request_stop();
-        m_cv.notify_one();
     }
 
     void Logger::logDebug(std::string_view message)
@@ -81,7 +81,17 @@ namespace LoggingLib
 
     void Logger::enqueue(Severity severity, std::string_view message)
     {
-        m_queue.emit({severity, std::string(message)});
+        // The C++ memory model requires that any state read by the wait predicate be
+        // modified under the same mutex used by the wait. Without this, a notification
+        // emitted after the worker has checked the predicate (true → empty) but before
+        // the worker has registered as a waiter inside cv.wait() is lost — the worker
+        // would sleep indefinitely while messages pile up. Holding m_mutex around the
+        // emit closes the race; notify_one() is intentionally outside the lock so the
+        // woken worker doesn't immediately re-block on the mutex we just released.
+        {
+            std::lock_guard<std::mutex> lock{m_mutex};
+            m_queue.emit({severity, std::string(message)});
+        }
         m_cv.notify_one();
     }
 

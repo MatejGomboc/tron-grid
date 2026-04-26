@@ -37,9 +37,9 @@ static bool approxVec4(const MathLib::Vec4& a, const MathLib::Vec4& b, float eps
 
 static bool approxMat4(const MathLib::Mat4& a, const MathLib::Mat4& b, float epsilon = 1e-5f)
 {
-    for (int col{0}; col < 4; ++col) {
-        for (int row{0}; row < 4; ++row) {
-            if (!approx(a.m[col][row], b.m[col][row], epsilon)) {
+    for (uint32_t col{0}; col < 4; ++col) {
+        for (uint32_t row{0}; row < 4; ++row) {
+            if (!approx(a(col, row), b(col, row), epsilon)) {
                 return false;
             }
         }
@@ -241,10 +241,10 @@ TEST_CASE(mat4_rotate_z_90)
 TEST_CASE(mat4_transpose)
 {
     MathLib::Mat4 m{MathLib::Mat4::identity()};
-    m.m[3][0] = 5.0f; // Translation X in column-major
+    m(3, 0) = 5.0f; // Translation X in column-major
     MathLib::Mat4 t{m.transposed()};
-    TEST_CHECK(approx(t.m[0][3], 5.0f));
-    TEST_CHECK(approx(t.m[3][0], 0.0f));
+    TEST_CHECK(approx(t(0, 3), 5.0f));
+    TEST_CHECK(approx(t(3, 0), 0.0f));
 }
 
 TEST_CASE(mat4_multiply_associative)

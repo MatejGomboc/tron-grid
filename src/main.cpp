@@ -2682,7 +2682,7 @@ int main()
             VkTransformMatrixKHR transform{};
             for (uint32_t row{0}; row < 3; ++row) {
                 for (uint32_t col{0}; col < 4; ++col) {
-                    transform.matrix[row][col] = model.m[col][row];
+                    transform.matrix[row][col] = model(col, row);
                 }
             }
 

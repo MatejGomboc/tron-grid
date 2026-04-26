@@ -252,7 +252,7 @@ relies on logging or matrix data layout.
 
 **Scope:**
 
-- [ ] **Logger missed-wakeup race** (`libs/logging/src/logger.cpp:82-86`).
+- [x] **Logger missed-wakeup race** (`libs/logging/src/logger.cpp:82-86`).
   `enqueue` calls `m_queue.emit()` outside `m_mutex`, then `notify_one()`.
   The waiter at `:93-96` reads `m_queue.empty()` under `m_mutex`. Per the
   C++ memory model, state read by the predicate must be modified under
@@ -260,20 +260,20 @@ relies on logging or matrix data layout.
   `m_mutex` while calling `m_queue.emit(...)` in `enqueue`. (Alternative:
   drop the redundant CV/mutex and use a `Signal` wait directly — bigger
   change, defer.)
-- [ ] **Missing `<algorithm>` in quaternion**
+- [x] **Missing `<algorithm>` in quaternion**
   (`libs/math/include/math/quaternion.hpp:148`). Uses `std::min` but only
   includes `<cmath>` / `<array>`. Compiles by transitive include today —
   add `#include <algorithm>` to make it standard-conformant.
-- [ ] **`Mat4::data()` nested-array UB**
+- [x] **`Mat4::data()` nested-array UB**
   (`libs/math/include/math/matrix.hpp:179-182`). Returns `&m[0][0]` on a
   `std::array<std::array<float, 4>, 4>`; standard does not guarantee
   contiguity across inner arrays. Switch storage to `std::array<float, 16>`
   with `(col * 4 + row)` accessors. Update `math_tests.cpp:264-267` to
   match.
-- [ ] **Logger destructor redundant `notify_one()`** (`libs/logging/src/logger.cpp:53`).
+- [x] **Logger destructor redundant `notify_one()`** (`libs/logging/src/logger.cpp:53`).
   The `std::stop_token`-aware `cv.wait` overload already wakes on stop;
   the manual notify is harmless noise. Remove.
-- [ ] **`testing` library `toString` opaqueness** (`libs/testing/include/testing/testing.hpp:64`).
+- [x] **`testing` library `toString` opaqueness** (`libs/testing/include/testing/testing.hpp:64`).
   Returns `"<?>"` for non-arithmetic non-string types — failure messages
   for `Vec3`, `Mat4` etc. read as `<?> != <?>`. Add an ADL-detected
   `to_string(v)` hook so project types print useful diagnostics.
@@ -778,6 +778,40 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Maintenance Etape M1: logger race + math/quaternion hardening
+
+Five findings from the parallel `libs/` audit (PR #99 added the audit plan;
+this PR ships the M1 fixes).
+
+1. **Logger missed-wakeup race fixed.** `Logger::enqueue` now holds `m_mutex`
+   around the `m_queue.emit()` call so the wait predicate's state is published
+   under the same mutex used by `condition_variable_any::wait`. Without this
+   fix, a notification emitted between the worker's predicate evaluation
+   (returning `false`/empty) and the worker's registration as a waiter inside
+   `wait()` was lost — messages would pile up indefinitely while the worker
+   slept. `notify_one()` stays outside the lock so the woken worker doesn't
+   immediately re-block on the just-released mutex.
+2. **Logger destructor `notify_one()` removed.** The
+   `condition_variable_any::wait(lock, stop_token, predicate)` overload wakes
+   automatically on `request_stop()`; the manual notify was redundant.
+3. **`<algorithm>` added to `quaternion.hpp`** so `std::min` is no longer
+   reached by transitive include.
+4. **`Mat4` storage flattened to `std::array<float, 16>`** with
+   `operator()(col, row)` for column-major element access. The previous
+   nested `std::array<std::array<float, 4>, 4>` made `data() + n` for
+   `n >= 4` a strict-aliasing UB (pointer arithmetic across distinct array
+   objects); the flat storage makes indexing through `data()` well-defined
+   for the entire `[0, 16)` range. Touched `matrix.hpp`, `quaternion.hpp`,
+   `projection.hpp`, `math_tests.cpp`, and one call site in `main.cpp` (the
+   TLAS instance transform copy) — every `mat.m[col][row]` access changed
+   to `mat(col, row)`.
+5. **`testing::toString` extended with an ADL `to_string(v)` hook.** Project
+   types that provide a `to_string` overload (typically in their own
+   namespace) now get printable diagnostics from `TEST_CHECK_EQUAL` instead
+   of the previous `<?>` placeholder.
+
+100 PRs merged.
 
 ### 2026-04-26 — Phase 8 Etape 40: transparency + ray-traced refraction
 
