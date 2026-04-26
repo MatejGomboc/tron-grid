@@ -13,6 +13,7 @@
 */
 
 #include "terrain.hpp"
+#include <array>
 #include <cmath>
 
 //! Simple hash-based value noise (deterministic, no external dependencies).
@@ -372,4 +373,58 @@ NeonTubeMesh generateNeonTubes(const TerrainConfig& config)
     result.bounding_radius = max_dist;
 
     return result;
+}
+
+NeonSubMesh generateBox(const MathLib::Vec3& centre, const MathLib::Vec3& half_extents)
+{
+    NeonSubMesh box;
+
+    // Eight corners of the axis-aligned box, derived from centre ± half_extents.
+    MathLib::Vec3 c000{centre.x - half_extents.x, centre.y - half_extents.y, centre.z - half_extents.z};
+    MathLib::Vec3 c100{centre.x + half_extents.x, centre.y - half_extents.y, centre.z - half_extents.z};
+    MathLib::Vec3 c010{centre.x - half_extents.x, centre.y + half_extents.y, centre.z - half_extents.z};
+    MathLib::Vec3 c110{centre.x + half_extents.x, centre.y + half_extents.y, centre.z - half_extents.z};
+    MathLib::Vec3 c001{centre.x - half_extents.x, centre.y - half_extents.y, centre.z + half_extents.z};
+    MathLib::Vec3 c101{centre.x + half_extents.x, centre.y - half_extents.y, centre.z + half_extents.z};
+    MathLib::Vec3 c011{centre.x - half_extents.x, centre.y + half_extents.y, centre.z + half_extents.z};
+    MathLib::Vec3 c111{centre.x + half_extents.x, centre.y + half_extents.y, centre.z + half_extents.z};
+
+    // Six face quads, each split into two triangles. Per-face vertices keep flat
+    // shading correct (face normal == per-vertex normal). Winding is CCW from
+    // outside the box (right-handed Y-up world).
+    struct FaceQuad {
+        MathLib::Vec3 a;
+        MathLib::Vec3 b;
+        MathLib::Vec3 c;
+        MathLib::Vec3 d;
+        MathLib::Vec3 normal;
+    };
+
+    std::array<FaceQuad, 6> faces{{
+        {c001, c101, c111, c011, {0.0f, 0.0f, 1.0f}}, //!< +Z face.
+        {c100, c000, c010, c110, {0.0f, 0.0f, -1.0f}}, //!< -Z face.
+        {c101, c100, c110, c111, {1.0f, 0.0f, 0.0f}}, //!< +X face.
+        {c000, c001, c011, c010, {-1.0f, 0.0f, 0.0f}}, //!< -X face.
+        {c011, c111, c110, c010, {0.0f, 1.0f, 0.0f}}, //!< +Y face.
+        {c000, c100, c101, c001, {0.0f, -1.0f, 0.0f}}, //!< -Y face.
+    }};
+
+    box.vertices.reserve(36);
+    box.positions.reserve(36);
+    box.indices.reserve(36);
+
+    uint32_t vi{0};
+    for (const FaceQuad& face : faces) {
+        std::array<MathLib::Vec3, 4> corners{face.a, face.b, face.c, face.d};
+        std::array<uint32_t, 6> tri_order{0, 1, 2, 0, 2, 3};
+
+        for (uint32_t local_idx : tri_order) {
+            const MathLib::Vec3& p{corners[local_idx]};
+            box.positions.push_back(p);
+            box.vertices.push_back({{p.x, p.y, p.z}, {face.normal.x, face.normal.y, face.normal.z}, {0.0f, 0.0f}, {face.normal.x, face.normal.y, face.normal.z}, 0.0f});
+            box.indices.push_back(vi++);
+        }
+    }
+
+    return box;
 }

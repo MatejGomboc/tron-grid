@@ -220,8 +220,32 @@ fragment, TMax 2 m for local contact shadows, temporal EMA into the
 reservoir's `ao` slot + spatial averaging across geometrically-similar
 neighbours; applied to diffuse terms only (indirect GI and the split
 `direct_diffuse` lobe), preserving specular and RT reflection at full
-brightness per canonical AO practice. 4 BLASes (terrain, orb, cyan neon,
-orange neon). `fragmentStoresAndAtomics` enabled for fragment shader
+brightness per canonical AO practice. **Transparency + ray-traced
+refraction** (Etape 40) — two new transparent test entities (cyan-tinted
+glass tower, red energy-barrier pillar, materials 4–5 with opacity < 1)
+rendered through a dedicated transparent pipeline that shares the
+descriptor set layout + pipeline layout with the opaque pipeline (only
+fragment entry point, depth-write, and blend state differ). Premultiplied
+alpha blending (Porter-Duff "over": `srcA = ONE`, `dstA =
+ONE_MINUS_SRC_ALPHA`). Task shader gains a `base_object_index` push
+constant so a single dispatch covers any contiguous SSBO range; entities
+are sorted opaque-first transparent-last with a fail-fast partition assert
+at startup. `fragTransparent` does Snell-law refraction via HLSL
+`refract()` (η = 1/IOR entering, IOR exiting), TIR fallback to reflection
+on negative discriminant, Schlick Fresnel from `((n-1)/(n+1))²`, and a
+Beer-Lambert-lite `base_colour` tint on the refracted contribution.
+Composite is `F·reflect + (1−F)·(refract·base_colour) + emissive` with
+output alpha 0.7 (premultiplied) — the explicit ray query captures most
+of the background while a 30 % dst bleed-through softens the look toward
+glass-y. Glass + pillar BLAS geometries are flagged non-opaque so the
+inline `RayQuery` Proceed() loop can skip self-instance hits via
+`CandidateInstanceID()`; other BLASes stay `eOpaque` for traversal speed.
+ReSTIR reservoir state stays exclusively owned by the opaque pass —
+`fragTransparent` performs no reservoir reads or writes. Skybox is drawn
+between the opaque and transparent passes in the same render pass; the
+transparent dispatch rebinds the mesh-pipeline descriptor set after the
+skybox switches the bound pipeline layout. 6 BLASes total (terrain, orb,
+cyan neon, orange neon, glass tower, energy-barrier pillar). `fragmentStoresAndAtomics` enabled for fragment shader
 reservoir writes. RT single-bounce reflections with per-material hit lookup
 via `CommittedInstanceID()`, front-facing guard, flat `N` for origin offset,
 and `prev_view_projection` reprojection when sampling the hit pixel's stored

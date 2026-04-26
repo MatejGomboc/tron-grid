@@ -76,6 +76,7 @@ The Tron aesthetic demands specific rendering capabilities:
 | **Grid lines** | Procedural geometry, screen-space derivative wireframe antialiasing |
 | **Data streams** | GPU particle systems, animated emissive tubes (Phase 10) |
 | **Reflections** | Ray-traced single-bounce reflections via inline ray query |
+| **Refraction** | Ray-traced Snell's law refraction with TIR fallback and Schlick Fresnel (transparent materials) |
 | **Light trails** | Ribbon geometry with emissive HDR and bloom (Phase 11) |
 
 ### Colour Palette

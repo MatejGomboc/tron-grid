@@ -113,28 +113,38 @@ struct Reservoir {
     uint32_t shading_normal_oct{0}; //!< Shading-surface normal, octahedral-packed to 32 bits.
 };
 
-//! Push constants for the task shader — frustum planes + object count.
+//! Push constants for the task shader — frustum planes + object range.
 struct TaskPushConstants {
     std::array<MathLib::Vec4, 6> planes{}; //!< Frustum planes (normals point inward).
-    uint32_t object_count{0}; //!< Total number of objects.
+    uint32_t object_count{0}; //!< Number of objects in this dispatch (the dispatch covers entities [base, base + count)).
+    uint32_t base_object_index{0}; //!< First object SSBO index — lets the same pipeline render any contiguous range (opaque vs transparent partitioning).
 };
 
 /*!
-    Owns the mesh shader pipeline, layout, descriptor sets, and per-frame resources.
+    Owns the mesh shader pipelines, layout, descriptor sets, and per-frame resources.
     Uses dynamic rendering (no VkRenderPass). Task shader performs per-object frustum
     culling and dispatches mesh shader workgroups for visible objects.
+
+    Two pipeline variants share the same descriptor set layout, pipeline layout, and
+    task/mesh stages. Only the fragment stage and blend/depth-write state differ:
+
+    - Opaque pipeline (Phase 8 Etape 40): fragMain, depth write on, no blending.
+        Renders entities whose material has opacity == 1 in the first dispatch.
+    - Transparent pipeline (Phase 8 Etape 40): fragTransparent, depth write off,
+        premultiplied alpha blending. Renders entities whose material has opacity < 1
+        in the second dispatch.
 */
 class Pipeline {
 public:
     /*!
-        Creates the mesh shader pipeline (task + mesh + fragment).
+        Creates the mesh shader pipelines (opaque + transparent variants).
 
         \param device The logical device.
         \param colour_format The swapchain colour attachment format.
         \param depth_format The depth attachment format.
         \param sample_count MSAA sample count for rasterisation (enables full sample-rate shading).
         \param task_spirv Task shader SPIR-V binary.
-        \param mesh_frag_spirv Mesh + fragment shader SPIR-V binary (combined module).
+        \param mesh_frag_spirv Mesh + fragment shader SPIR-V binary (combined module containing meshMain, fragMain, fragTransparent entry points).
         \param frames_in_flight Number of frames in flight (for per-frame descriptor sets).
         \param logger Logger reference.
     */
@@ -147,10 +157,16 @@ public:
     Pipeline(Pipeline&&) = delete;
     Pipeline& operator=(Pipeline&&) = delete;
 
-    //! Mesh shader pipeline handle.
-    [[nodiscard]] const vk::raii::Pipeline& get() const
+    //! Opaque mesh shader pipeline handle (fragMain, depth write on, no blending).
+    [[nodiscard]] const vk::raii::Pipeline& opaquePipeline() const
     {
-        return m_pipeline;
+        return m_opaque_pipeline;
+    }
+
+    //! Transparent mesh shader pipeline handle (fragTransparent, depth test only, premultiplied alpha blending).
+    [[nodiscard]] const vk::raii::Pipeline& transparentPipeline() const
+    {
+        return m_transparent_pipeline;
     }
 
     //! Pipeline layout handle.
@@ -200,7 +216,8 @@ private:
 
     vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 12 bindings: UBO + 10 SSBOs + TLAS.
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
-    vk::raii::Pipeline m_pipeline{nullptr}; //!< Mesh shader pipeline handle.
+    vk::raii::Pipeline m_opaque_pipeline{nullptr}; //!< Opaque mesh shader pipeline (fragMain).
+    vk::raii::Pipeline m_transparent_pipeline{nullptr}; //!< Transparent mesh shader pipeline (fragTransparent, alpha blending).
     vk::raii::DescriptorPool m_descriptor_pool{nullptr}; //!< Descriptor pool.
     std::vector<vk::raii::DescriptorSet> m_descriptor_sets{}; //!< Per-frame descriptor sets.
 

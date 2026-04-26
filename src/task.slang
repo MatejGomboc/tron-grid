@@ -60,10 +60,16 @@ StructuredBuffer<ObjectData> objects;
 [[vk::binding(2, 0)]]
 StructuredBuffer<ObjectBounds> bounds;
 
-// Push constants — frustum planes + total object count.
+// Push constants — frustum planes + object range. The range [base_object_index,
+// base_object_index + object_count) lets a single dispatch render any contiguous
+// slice of the object SSBO. Used for opaque-vs-transparent partitioning: opaque
+// dispatch sets base = 0, count = N_opaque; transparent dispatch sets base =
+// N_opaque, count = N_transparent. Layout MUST match TaskPushConstants in
+// pipeline.hpp byte-for-byte.
 struct TaskPushConstants {
     float4 planes[6];
     uint object_count;
+    uint base_object_index;
 };
 
 [[vk::push_constant]]
@@ -85,10 +91,15 @@ bool isVisible(float3 centre, float radius)
 [numthreads(1, 1, 1)]
 void taskMain(uint3 dispatch_id : SV_DispatchThreadID)
 {
-    uint object_index = dispatch_id.x;
-    if (object_index >= push.object_count) {
+    if (dispatch_id.x >= push.object_count) {
         return;
     }
+
+    // Apply the dispatch base offset so that an opaque-only dispatch with
+    // base=0 / count=N_opaque processes entities [0, N_opaque), and a
+    // transparent dispatch with base=N_opaque / count=N_transparent processes
+    // entities [N_opaque, N_opaque + N_transparent).
+    uint object_index = push.base_object_index + dispatch_id.x;
 
     // Bounds are already in world space — no transform needed.
     ObjectBounds obj_bounds = bounds[object_index];

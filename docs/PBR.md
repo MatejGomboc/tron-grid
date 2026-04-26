@@ -356,6 +356,137 @@ Alternative fits considered and not used:
 
 ---
 
+## Transparency and Refraction
+
+TronGrid renders transparent surfaces through a dedicated mesh shader pipeline
+that shares its descriptor set layout, pipeline layout, and task / mesh stages
+with the opaque pipeline. Only the fragment entry point, depth-write state,
+and blend equations differ. Materials with `opacity < 1` route through the
+transparent dispatch (a contiguous slice of the object SSBO selected via the
+task shader's `base_object_index` push constant) and through `fragTransparent`
+in `mesh.slang`.
+
+### Snell's Law Refraction
+
+The refraction direction follows Snell's law:
+
+```text
+n_1 · sin(θ_1) = n_2 · sin(θ_2)
+```
+
+The closed-form vector formula (HLSL `refract(I, N, eta)` and the GLSL spec
+implement this exactly):
+
+```text
+k = 1 − η² · (1 − (N · I)²)
+T = η · I − (η · (N · I) + √k) · N        if k ≥ 0
+  = float3(0, 0, 0)                        if k < 0
+```
+
+Where:
+
+| Symbol | Meaning |
+|--------|---------|
+| `I` | Incident direction (camera → surface) |
+| `N` | Surface normal (oriented to face the incident ray) |
+| `η` | Ratio of indices of refraction `n_from / n_to` |
+| `k` | Discriminant — negative ⇒ total internal reflection (TIR) |
+| `T` | Refracted direction |
+
+The HLSL convention returns the zero vector on TIR; TronGrid's shader checks
+`dot(T, T) < 1e-6` and falls back to `reflect(I, N)`.
+
+For air → glass at IOR 1.5, `η = 1/1.5 ≈ 0.667`. For glass → air at the exit
+boundary, `η = 1.5`; this is where TIR can occur (above the critical angle
+`asin(1/1.5) ≈ 41.8°`).
+
+### Fresnel for Glass
+
+The same Schlick approximation used for opaque dielectric specular drives the
+reflection / refraction split at a transparent surface:
+
+```text
+F = F0 + (1 − F0) · (1 − cos(θ_v))^5
+F0 = ((n − 1) / (n + 1))²
+```
+
+For glass (IOR 1.5), `F0 ≈ 0.04`. At grazing angles `F → 1` so the surface
+behaves as a mirror; at normal incidence `F ≈ 0.04` so the surface behaves as
+a clear pane. The composite is:
+
+```text
+final = F · reflect_sample + (1 − F) · refract_sample · base_colour + emissive
+```
+
+The `base_colour` multiplier on the refracted contribution is a
+**Beer-Lambert-lite** approximation — full Beer-Lambert attenuates by
+`exp(-σ · d)` where `d` is the path length inside the medium, but for a thin
+glass slab the linear tint is visually adequate and avoids requiring a second
+ray hit to measure thickness.
+
+### Ray-Traced Sample, Not Screen-Space Refraction
+
+TronGrid traces an inline `RayQuery` along the refraction direction and
+samples the hit material's `base_colour + emissive · emissive_strength`
+directly (no recursive Cook-Torrance evaluation — that would require nested
+ReSTIR sampling, prohibitively expensive). The reflection ray is traced the
+same way. On miss, both rays return a low-intensity sky gradient.
+
+A practical detail: a refraction ray fired from the front face of a glass box
+would, by default, immediately re-hit the box's own back face and sample the
+glass material again — defeating the entire purpose. The fix is to flag the
+transparent BLAS geometries as **non-opaque** at acceleration-structure build
+time. Inline `RayQuery` then reports each hit on these surfaces as a candidate
+through `Proceed()`, letting the shader skip candidates whose
+`CandidateInstanceID()` matches the originating instance. Other BLASes
+(terrain, neon tubes, orb) keep `eOpaque` so their hits auto-commit at full
+traversal speed.
+
+### Premultiplied Alpha Blend
+
+The transparent pipeline's blend state is configured for premultiplied alpha
+"over" composition:
+
+| Factor | Value |
+|--------|-------|
+| `srcColorBlendFactor` | `ONE` |
+| `dstColorBlendFactor` | `ONE_MINUS_SRC_ALPHA` |
+| `srcAlphaBlendFactor` | `ONE` |
+| `dstAlphaBlendFactor` | `ONE_MINUS_SRC_ALPHA` |
+| `colorBlendOp` / `alphaBlendOp` | `ADD` |
+
+The shader outputs `(rgb · α, α)`; the blend equation then yields:
+
+```text
+final.rgb = src.rgb + (1 − src.α) · dst.rgb
+```
+
+Premultiplied (rather than non-premultiplied) is chosen so the composition
+stays mathematically correct through MSAA resolve and any downstream
+filtering — sampling a premultiplied texture through a bilinear filter
+produces correct interpolated values, while sampling a non-premultiplied
+texture introduces halo artefacts at edges.
+
+The output α is intentionally less than 1 (currently 0.7) even though the
+refraction ray query has explicitly sampled what's behind the surface. The
+small destination bleed-through (30 %) softens the visual from "explicit
+substitute" toward "tinted glass over a real background"; the slight
+double-counting of the world behind the glass is accepted as a tuning
+parameter rather than a strict-physics output.
+
+### Why Not WBOIT?
+
+The Etape 40 plan called out Weighted Blended Order-Independent Transparency
+(McGuire & Bavoil 2013) as the canonical OIT technique. The actual
+implementation deliberately uses simpler premultiplied-alpha blending
+because the test scene contains only two non-overlapping transparent
+entities — sorted alpha blending is equivalent to WBOIT for that case
+without the accumulation + revealage render targets and composite compute
+pass. WBOIT is queued for a future etape when the scene grows enough
+overlapping translucent geometry to justify the plumbing cost.
+
+---
+
 ## References
 
 ### PBR and Microfacet Theory
@@ -452,4 +583,4 @@ Alternative fits considered and not used:
 
 ---
 
-*Last updated: 2026-04-23*
+*Last updated: 2026-04-26*

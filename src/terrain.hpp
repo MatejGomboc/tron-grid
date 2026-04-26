@@ -77,3 +77,18 @@ struct NeonTubeMesh {
     \return NeonTubeMesh with cyan and orange sub-meshes.
 */
 [[nodiscard]] NeonTubeMesh generateNeonTubes(const TerrainConfig& config);
+
+/*!
+    Generates a flat-shaded axis-aligned box mesh — 12 triangles, 36 vertices
+    (per-face vertices, no indexed sharing so face normals are correct).
+
+    The output structure layout matches NeonSubMesh so the box can flow through
+    the same meshlet/BLAS/vertex-buffer plumbing used by the neon tube and
+    sphere meshes.
+
+    \param centre World-space centre of the box.
+    \param half_extents Half-size along each axis (so the box spans
+        centre - half_extents to centre + half_extents).
+    \return NeonSubMesh with vertices, indices, and positions populated.
+*/
+[[nodiscard]] NeonSubMesh generateBox(const MathLib::Vec3& centre, const MathLib::Vec3& half_extents);

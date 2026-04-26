@@ -100,17 +100,21 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     mesh_frag_module_info.setCode(mesh_frag_spirv);
     vk::raii::ShaderModule mesh_frag_module{device.get(), mesh_frag_module_info};
 
-    // Shader stages: task → mesh → fragment.
-    std::array<vk::PipelineShaderStageCreateInfo, 3> shader_stages{};
-    shader_stages[0].stage = vk::ShaderStageFlagBits::eTaskEXT;
-    shader_stages[0].module = *task_module;
-    shader_stages[0].setPName("taskMain");
-    shader_stages[1].stage = vk::ShaderStageFlagBits::eMeshEXT;
-    shader_stages[1].module = *mesh_frag_module;
-    shader_stages[1].setPName("meshMain");
-    shader_stages[2].stage = vk::ShaderStageFlagBits::eFragment;
-    shader_stages[2].module = *mesh_frag_module; // Same module, different entry point.
-    shader_stages[2].setPName("fragMain");
+    // Shader stages — opaque variant uses fragMain, transparent variant uses fragTransparent.
+    // Both variants share the task and mesh stages; only the fragment entry point differs.
+    std::array<vk::PipelineShaderStageCreateInfo, 3> opaque_shader_stages{};
+    opaque_shader_stages[0].stage = vk::ShaderStageFlagBits::eTaskEXT;
+    opaque_shader_stages[0].module = *task_module;
+    opaque_shader_stages[0].setPName("taskMain");
+    opaque_shader_stages[1].stage = vk::ShaderStageFlagBits::eMeshEXT;
+    opaque_shader_stages[1].module = *mesh_frag_module;
+    opaque_shader_stages[1].setPName("meshMain");
+    opaque_shader_stages[2].stage = vk::ShaderStageFlagBits::eFragment;
+    opaque_shader_stages[2].module = *mesh_frag_module; // Same module, different entry point.
+    opaque_shader_stages[2].setPName("fragMain");
+
+    std::array<vk::PipelineShaderStageCreateInfo, 3> transparent_shader_stages{opaque_shader_stages};
+    transparent_shader_stages[2].setPName("fragTransparent");
 
     // No vertex input — mesh shaders read from SSBOs.
     // No input assembly — mesh shaders output primitives directly.
@@ -132,26 +136,55 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     rasterisation.depthBiasEnable = vk::False;
     rasterisation.lineWidth = 1.0f;
 
-    vk::PipelineDepthStencilStateCreateInfo depth_stencil{};
-    depth_stencil.depthTestEnable = vk::True;
-    depth_stencil.depthWriteEnable = vk::True;
-    depth_stencil.depthCompareOp = vk::CompareOp::eLess;
-    depth_stencil.depthBoundsTestEnable = vk::False;
-    depth_stencil.stencilTestEnable = vk::False;
+    // Opaque depth state — full read/write.
+    vk::PipelineDepthStencilStateCreateInfo opaque_depth_stencil{};
+    opaque_depth_stencil.depthTestEnable = vk::True;
+    opaque_depth_stencil.depthWriteEnable = vk::True;
+    opaque_depth_stencil.depthCompareOp = vk::CompareOp::eLess;
+    opaque_depth_stencil.depthBoundsTestEnable = vk::False;
+    opaque_depth_stencil.stencilTestEnable = vk::False;
+
+    // Transparent depth state — test only, no write. Transparents must not write depth or
+    // they would occlude each other order-dependently and break alpha compositing.
+    vk::PipelineDepthStencilStateCreateInfo transparent_depth_stencil{opaque_depth_stencil};
+    transparent_depth_stencil.depthWriteEnable = vk::False;
 
     vk::PipelineMultisampleStateCreateInfo multisample{};
     multisample.rasterizationSamples = sample_count;
     multisample.sampleShadingEnable = vk::True;
     multisample.minSampleShading = 1.0f;
 
-    vk::PipelineColorBlendAttachmentState colour_blend_attachment{};
-    colour_blend_attachment.blendEnable = vk::False;
-    colour_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
+    // Opaque colour blend — no blending, write all four channels.
+    vk::PipelineColorBlendAttachmentState opaque_colour_blend_attachment{};
+    opaque_colour_blend_attachment.blendEnable = vk::False;
+    opaque_colour_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
         | vk::ColorComponentFlagBits::eA;
 
-    vk::PipelineColorBlendStateCreateInfo colour_blend{};
-    colour_blend.logicOpEnable = vk::False;
-    colour_blend.setAttachments(colour_blend_attachment);
+    vk::PipelineColorBlendStateCreateInfo opaque_colour_blend{};
+    opaque_colour_blend.logicOpEnable = vk::False;
+    opaque_colour_blend.setAttachments(opaque_colour_blend_attachment);
+
+    // Transparent colour blend — premultiplied alpha (Porter-Duff "over"). The shader is
+    // expected to output (rgb * alpha, alpha); the dst factor of (1 - srcAlpha) then composites
+    // the transparent fragment over the existing destination correctly. Premultiplied is
+    // chosen over non-premultiplied because it composes correctly through MSAA resolve and
+    // through future filtering passes (bilinear sampling on a premultiplied texture stays
+    // mathematically correct, while sampling a non-premultiplied texture would introduce
+    // halo artefacts at edges).
+    vk::PipelineColorBlendAttachmentState transparent_colour_blend_attachment{};
+    transparent_colour_blend_attachment.blendEnable = vk::True;
+    transparent_colour_blend_attachment.srcColorBlendFactor = vk::BlendFactor::eOne;
+    transparent_colour_blend_attachment.dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    transparent_colour_blend_attachment.colorBlendOp = vk::BlendOp::eAdd;
+    transparent_colour_blend_attachment.srcAlphaBlendFactor = vk::BlendFactor::eOne;
+    transparent_colour_blend_attachment.dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha;
+    transparent_colour_blend_attachment.alphaBlendOp = vk::BlendOp::eAdd;
+    transparent_colour_blend_attachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
+        | vk::ColorComponentFlagBits::eA;
+
+    vk::PipelineColorBlendStateCreateInfo transparent_colour_blend{};
+    transparent_colour_blend.logicOpEnable = vk::False;
+    transparent_colour_blend.setAttachments(transparent_colour_blend_attachment);
 
     // Descriptor set layout — 12 bindings for the mesh shader pipeline.
     // Binding 0:  camera UBO (task + mesh + fragment stages)
@@ -236,21 +269,30 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     rendering_info.setColorAttachmentFormats(colour_format);
     rendering_info.depthAttachmentFormat = depth_format;
 
-    // Mesh shader pipeline — no vertex input state, no input assembly state.
-    vk::GraphicsPipelineCreateInfo pipeline_info{};
-    pipeline_info.setPNext(&rendering_info);
-    pipeline_info.setStages(shader_stages);
-    pipeline_info.setPVertexInputState(nullptr); // Mesh shaders don't use vertex input.
-    pipeline_info.setPInputAssemblyState(nullptr); // Mesh shaders output primitives directly.
-    pipeline_info.setPViewportState(&viewport_state);
-    pipeline_info.setPRasterizationState(&rasterisation);
-    pipeline_info.setPMultisampleState(&multisample);
-    pipeline_info.setPDepthStencilState(&depth_stencil);
-    pipeline_info.setPColorBlendState(&colour_blend);
-    pipeline_info.setPDynamicState(&dynamic_state);
-    pipeline_info.layout = *m_layout;
+    // Opaque mesh shader pipeline — no vertex input state, no input assembly state.
+    vk::GraphicsPipelineCreateInfo opaque_pipeline_info{};
+    opaque_pipeline_info.setPNext(&rendering_info);
+    opaque_pipeline_info.setStages(opaque_shader_stages);
+    opaque_pipeline_info.setPVertexInputState(nullptr); // Mesh shaders don't use vertex input.
+    opaque_pipeline_info.setPInputAssemblyState(nullptr); // Mesh shaders output primitives directly.
+    opaque_pipeline_info.setPViewportState(&viewport_state);
+    opaque_pipeline_info.setPRasterizationState(&rasterisation);
+    opaque_pipeline_info.setPMultisampleState(&multisample);
+    opaque_pipeline_info.setPDepthStencilState(&opaque_depth_stencil);
+    opaque_pipeline_info.setPColorBlendState(&opaque_colour_blend);
+    opaque_pipeline_info.setPDynamicState(&dynamic_state);
+    opaque_pipeline_info.layout = *m_layout;
 
-    m_pipeline = vk::raii::Pipeline{device.get(), nullptr, pipeline_info};
+    m_opaque_pipeline = vk::raii::Pipeline{device.get(), nullptr, opaque_pipeline_info};
+
+    // Transparent mesh shader pipeline — same as opaque but with the transparent fragment
+    // entry point, depth write disabled, and premultiplied-alpha blending enabled.
+    vk::GraphicsPipelineCreateInfo transparent_pipeline_info{opaque_pipeline_info};
+    transparent_pipeline_info.setStages(transparent_shader_stages);
+    transparent_pipeline_info.setPDepthStencilState(&transparent_depth_stencil);
+    transparent_pipeline_info.setPColorBlendState(&transparent_colour_blend);
+
+    m_transparent_pipeline = vk::raii::Pipeline{device.get(), nullptr, transparent_pipeline_info};
 
     // Descriptor pool — UBO + 10 SSBOs + 1 TLAS per frame.
     std::array<vk::DescriptorPoolSize, 3> pool_sizes{};
@@ -278,7 +320,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
         m_ubo_mapped_ptrs[i] = nullptr;
     }
 
-    m_logger.logInfo("Mesh shader pipeline created (task + mesh + fragment).");
+    m_logger.logInfo("Mesh shader pipelines created — opaque (fragMain) + transparent (fragTransparent).");
 }
 
 void Pipeline::bindUBO(uint32_t frame_index, VkBuffer buffer) const
