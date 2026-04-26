@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <functional>
 #include <source_location>
@@ -51,13 +52,29 @@ namespace TestingLib
     // Template helpers — real logic lives here, not in macros
     // ---------------------------------------------------------------------------
 
-    //! Converts a value to a string for diagnostics.
+    //! Converts a value to a string for diagnostics. Resolution order:
+    //! - Anything convertible to std::string (so const char*, std::string_view, etc.).
+    //! - Built-in arithmetic types via std::to_string.
+    //! - Project / user types that provide an ADL-discoverable to_string overload —
+    //!   e.g. `std::string to_string(const MyType&)` in MyType's namespace lets
+    //!   TEST_CHECK_EQUAL print informative diagnostics for failed comparisons of
+    //!   project types instead of the previous "<?>" placeholder.
+    //! - Fallback: "<?>".
+    //!
+    //! The ADL lookup uses a `using std::to_string` declaration so it picks up both
+    //! standard-library overloads and any user-provided overload found through
+    //! argument-dependent lookup.
     template <typename T> [[nodiscard]] std::string toString(const T& v)
     {
         if constexpr (std::is_convertible_v<T, std::string>) {
             return std::string(v);
         } else if constexpr (std::is_arithmetic_v<std::decay_t<T>>) {
             return std::to_string(v);
+        } else if constexpr (requires(const T& x) {
+                                 { to_string(x) } -> std::convertible_to<std::string>;
+                             }) {
+            using std::to_string; // Brings std overloads into scope; ADL finds user ones.
+            return to_string(v);
         } else {
             return "<?>";
         }
@@ -104,36 +121,35 @@ namespace TestingLib
 #endif
 
 //! Fails with file, line, and stringified expression if `expr` is false.
-#define TEST_CHECK(expr)                              \
-    TEST_CHECK_SUPPRESS_BEGIN                          \
-    do {                                              \
-        if (!(expr)) {                                \
-            ::TestingLib::checkFailed(#expr);     \
-        }                                             \
-    } while (false)                                   \
-    TEST_CHECK_SUPPRESS_END
+#define TEST_CHECK(expr)                      \
+    TEST_CHECK_SUPPRESS_BEGIN                 \
+    do {                                      \
+        if (!(expr)) {                        \
+            ::TestingLib::checkFailed(#expr); \
+        }                                     \
+    } while (false) TEST_CHECK_SUPPRESS_END
 
 //! Fails showing both values if `a != b`.
 #define TEST_CHECK_EQUAL(a, b) ::TestingLib::checkEqual((a), (b), #a, #b)
 
 //! Fails if `expr` does not throw.
-#define TEST_CHECK_THROWS(expr)    \
-    ::TestingLib::checkThrows( \
-        [&] {                      \
-            (void)(expr);          \
-        },                         \
+#define TEST_CHECK_THROWS(expr) \
+    ::TestingLib::checkThrows(  \
+        [&] {                   \
+            (void)(expr);       \
+        },                      \
         #expr)
 
 //! Defines and auto-registers a test case.
-#define TEST_CASE(test_name)                                           \
-    static void test_name();                                           \
-    namespace                                                          \
-    {                                                                  \
-        struct test_name##_registrar {                                 \
-            test_name##_registrar()                                    \
-            {                                                          \
+#define TEST_CASE(test_name)                                       \
+    static void test_name();                                       \
+    namespace                                                      \
+    {                                                              \
+        struct test_name##_registrar {                             \
+            test_name##_registrar()                                \
+            {                                                      \
                 ::TestingLib::registerTest(#test_name, test_name); \
-            }                                                          \
-        } test_name##_instance;                                        \
-    }                                                                  \
+            }                                                      \
+        } test_name##_instance;                                    \
+    }                                                              \
     static void test_name()

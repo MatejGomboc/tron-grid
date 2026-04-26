@@ -40,11 +40,11 @@ namespace MathLib
         float tan_half_fov = std::tan(fov_y * 0.5f);
 
         Mat4 result{};
-        result.m[0][0] = 1.0f / (aspect * tan_half_fov);
-        result.m[1][1] = 1.0f / tan_half_fov; // Y-flip handled by slangc -fvk-invert-y
-        result.m[2][2] = far_plane / (near_plane - far_plane);
-        result.m[2][3] = -1.0f;
-        result.m[3][2] = (near_plane * far_plane) / (near_plane - far_plane);
+        result(0, 0) = 1.0f / (aspect * tan_half_fov);
+        result(1, 1) = 1.0f / tan_half_fov; // Y-flip handled by slangc -fvk-invert-y
+        result(2, 2) = far_plane / (near_plane - far_plane);
+        result(2, 3) = -1.0f;
+        result(3, 2) = (near_plane * far_plane) / (near_plane - far_plane);
         return result;
     }
 
@@ -65,22 +65,22 @@ namespace MathLib
         Vec3 r = f.cross(up).normalised(); // Right
         Vec3 u = r.cross(f); // Recomputed up
 
-        Mat4 result = Mat4::identity();
-        result.m[0][0] = r.x;
-        result.m[1][0] = r.y;
-        result.m[2][0] = r.z;
+        Mat4 result{Mat4::identity()};
+        result(0, 0) = r.x;
+        result(1, 0) = r.y;
+        result(2, 0) = r.z;
 
-        result.m[0][1] = u.x;
-        result.m[1][1] = u.y;
-        result.m[2][1] = u.z;
+        result(0, 1) = u.x;
+        result(1, 1) = u.y;
+        result(2, 1) = u.z;
 
-        result.m[0][2] = -f.x;
-        result.m[1][2] = -f.y;
-        result.m[2][2] = -f.z;
+        result(0, 2) = -f.x;
+        result(1, 2) = -f.y;
+        result(2, 2) = -f.z;
 
-        result.m[3][0] = -r.dot(eye);
-        result.m[3][1] = -u.dot(eye);
-        result.m[3][2] = f.dot(eye);
+        result(3, 0) = -r.dot(eye);
+        result(3, 1) = -u.dot(eye);
+        result(3, 2) = f.dot(eye);
         return result;
     }
 
@@ -152,17 +152,17 @@ namespace MathLib
         Frustum f{};
 
         // Left:   row3 + row0
-        f.planes[0] = {vp.m[0][3] + vp.m[0][0], vp.m[1][3] + vp.m[1][0], vp.m[2][3] + vp.m[2][0], vp.m[3][3] + vp.m[3][0]};
+        f.planes[0] = {vp(0, 3) + vp(0, 0), vp(1, 3) + vp(1, 0), vp(2, 3) + vp(2, 0), vp(3, 3) + vp(3, 0)};
         // Right:  row3 - row0
-        f.planes[1] = {vp.m[0][3] - vp.m[0][0], vp.m[1][3] - vp.m[1][0], vp.m[2][3] - vp.m[2][0], vp.m[3][3] - vp.m[3][0]};
+        f.planes[1] = {vp(0, 3) - vp(0, 0), vp(1, 3) - vp(1, 0), vp(2, 3) - vp(2, 0), vp(3, 3) - vp(3, 0)};
         // Bottom: row3 + row1
-        f.planes[2] = {vp.m[0][3] + vp.m[0][1], vp.m[1][3] + vp.m[1][1], vp.m[2][3] + vp.m[2][1], vp.m[3][3] + vp.m[3][1]};
+        f.planes[2] = {vp(0, 3) + vp(0, 1), vp(1, 3) + vp(1, 1), vp(2, 3) + vp(2, 1), vp(3, 3) + vp(3, 1)};
         // Top:    row3 - row1
-        f.planes[3] = {vp.m[0][3] - vp.m[0][1], vp.m[1][3] - vp.m[1][1], vp.m[2][3] - vp.m[2][1], vp.m[3][3] - vp.m[3][1]};
+        f.planes[3] = {vp(0, 3) - vp(0, 1), vp(1, 3) - vp(1, 1), vp(2, 3) - vp(2, 1), vp(3, 3) - vp(3, 1)};
         // Near:   row2 (Vulkan depth [0,1] — not row3 + row2 which is for OpenGL [-1,1])
-        f.planes[4] = {vp.m[0][2], vp.m[1][2], vp.m[2][2], vp.m[3][2]};
+        f.planes[4] = {vp(0, 2), vp(1, 2), vp(2, 2), vp(3, 2)};
         // Far:    row3 - row2
-        f.planes[5] = {vp.m[0][3] - vp.m[0][2], vp.m[1][3] - vp.m[1][2], vp.m[2][3] - vp.m[2][2], vp.m[3][3] - vp.m[3][2]};
+        f.planes[5] = {vp(0, 3) - vp(0, 2), vp(1, 3) - vp(1, 2), vp(2, 3) - vp(2, 2), vp(3, 3) - vp(3, 2)};
 
         // Normalise planes so distance tests give true distances
         for (uint32_t i{0}; i < 6; ++i) {

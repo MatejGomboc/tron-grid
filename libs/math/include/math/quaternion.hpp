@@ -16,6 +16,7 @@
 
 #include "math/matrix.hpp"
 #include "math/vector.hpp"
+#include <algorithm>
 #include <cmath>
 
 namespace MathLib
@@ -106,19 +107,19 @@ namespace MathLib
             float wz = w * z;
 
             Mat4 result{};
-            result.m[0][0] = 1.0f - 2.0f * (yy + zz);
-            result.m[0][1] = 2.0f * (xy + wz);
-            result.m[0][2] = 2.0f * (xz - wy);
+            result(0, 0) = 1.0f - 2.0f * (yy + zz);
+            result(0, 1) = 2.0f * (xy + wz);
+            result(0, 2) = 2.0f * (xz - wy);
 
-            result.m[1][0] = 2.0f * (xy - wz);
-            result.m[1][1] = 1.0f - 2.0f * (xx + zz);
-            result.m[1][2] = 2.0f * (yz + wx);
+            result(1, 0) = 2.0f * (xy - wz);
+            result(1, 1) = 1.0f - 2.0f * (xx + zz);
+            result(1, 2) = 2.0f * (yz + wx);
 
-            result.m[2][0] = 2.0f * (xz + wy);
-            result.m[2][1] = 2.0f * (yz - wx);
-            result.m[2][2] = 1.0f - 2.0f * (xx + yy);
+            result(2, 0) = 2.0f * (xz + wy);
+            result(2, 1) = 2.0f * (yz - wx);
+            result(2, 2) = 1.0f - 2.0f * (xx + yy);
 
-            result.m[3][3] = 1.0f;
+            result(3, 3) = 1.0f;
             return result;
         }
 
