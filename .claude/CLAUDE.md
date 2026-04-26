@@ -269,7 +269,7 @@ radiance into the grid; raymarch composite per pixel marches the
 froxel column, accumulates `transmittance *= exp(-extinction_per_slice)`
 plus per-slice scattered radiance per Wronski 2014 / Frostbite, then
 blends `final = scene * transmittance + scattered` into HDR before
-bloom extraction so the fog itself bloom. World-space froxel-centre
+bloom extraction so the fog itself can bloom. World-space froxel-centre
 reconstruction uses the inverse view-projection plus a shader-side
 `camera_forward` derived from `inv_view_projection` so off-axis
 pixels land at the correct view depth (parametric distance scaled by

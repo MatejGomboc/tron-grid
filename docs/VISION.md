@@ -61,10 +61,7 @@ The aesthetic is not just visual — it informs everything:
 - Sectors instead of regions
 - Derezzing instead of death
 - The Grid instead of the world
-
-| Aspect | Grid Equivalent |
-|--------|-----------------|
-| **Mortality** | Programmes derez permanently; players resurrect at a safe house |
+- Mortality — programmes derez permanently; players resurrect at a safe house
 
 ### Rendering Requirements
 
@@ -200,8 +197,9 @@ Anyone can build an AI bot for TronGrid. The requirements are:
 Everything else — the language, the framework, the AI approach, the training pipeline — is
 entirely up to the bot author. TronGrid is agnostic.
 
-The detailed bot interface specification (shared memory layout, staged protocol, packet
-structures) will be documented in `AI_INTERFACE.md` in a future phase.
+The detailed bot interface specification — shared memory layout, staged protocol (Stage 0 scalar
+sensory through Stage 3 full sensory), required C-linkage exports, and lifecycle — lives in
+[AI_INTERFACE.md](AI_INTERFACE.md).
 
 ## Target Hardware
 

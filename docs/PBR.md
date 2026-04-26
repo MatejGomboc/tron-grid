@@ -266,15 +266,18 @@ The `neonEmissiveColour()` function in `mesh.slang` selects the emissive
 colour based on the world-space position of the fragment:
 
 ```hlsl
-float mod_x = fmod(abs(floor(world_pos.x)), MAJOR_GRID_SPACING);
-float mod_z = fmod(abs(floor(world_pos.z)), MAJOR_GRID_SPACING);
+float mod_x = fmod(floor(abs(world_pos.x)), MAJOR_GRID_SPACING);
+float mod_z = fmod(floor(abs(world_pos.z)), MAJOR_GRID_SPACING);
 bool is_orange = (mod_x < 0.5) || (mod_z < 0.5);
 ```
 
 Cells whose X or Z coordinate falls on a multiple of `MAJOR_GRID_SPACING`
 (8) get orange neon tubes. All other cells get cyan. This creates a coarse
 orange supergrid overlay on top of the finer cyan grid — approximately 23%
-of cells are orange.
+of cells are orange. The `floor(abs(...))` order (rather than
+`abs(floor(...))`) keeps the orange bands symmetric around the world
+origin: without it, negative-x bands shift by one cell relative to
+positive-x.
 
 The same function is used for both primary fragments and reflection hit
 points, ensuring reflected neon tubes display the correct colour.
@@ -303,15 +306,26 @@ Natively supported at full rate on all NVIDIA GPUs from Pascal onward.
 ### Rendering Pipeline
 
 ```text
-1. Transition MSAA colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (transient)
-2. Transition HDR image:   UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
-3. Render scene to MSAA colour → resolve into HDR image (mesh shader pass)
-4. Transition HDR image:   COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL
-5. Bloom: extract bright pixels → mip chain downsample → tent-filter upsample
-6. Transition swapchain:   UNDEFINED → GENERAL (for compute storage write)
-7. Post-process compute: composite bloom, apply ACES RRT+ODT, sRGB encode
-8. Transition swapchain:   GENERAL → PRESENT_SRC_KHR
+ 1. Transition MSAA colour: UNDEFINED → COLOR_ATTACHMENT_OPTIMAL (transient)
+ 2. Transition HDR image:   UNDEFINED → COLOR_ATTACHMENT_OPTIMAL
+ 3. Render opaque scene to MSAA → resolve into HDR (mesh shader pass)
+ 4. Render skybox into HDR (full-screen pass, depth test only)
+ 5. Render transparent scene into HDR (premultiplied-alpha blend, mesh
+    shader pass with fragTransparent — see § Transparency and Refraction)
+ 6. Transition HDR + froxel grid + bloom mips + swapchain: → GENERAL
+    (everything downstream is compute-shader storage I/O)
+ 7. Density-injection compute writes the froxel grid (extinction + radiance)
+ 8. Volumetric composite compute reads the froxel grid and blends fog
+    into the HDR image — see § Volumetric Fog
+ 9. Bloom: extract bright pixels → mip chain downsample → tent-filter upsample
+10. Post-process compute: composite bloom, apply ACES RRT+ODT, sRGB encode,
+    write the swapchain image directly
+11. Transition swapchain:   GENERAL → PRESENT_SRC_KHR
 ```
+
+The volumetric composite is sequenced **before** bloom so the fog itself
+can bloom — bright fog regions bleed correctly through the bloom chain
+rather than appearing as sharp halos at slice boundaries.
 
 The post-process compute shader (`postprocess.slang`) writes directly to
 the swapchain via a storage image — no blit, no format-conversion hop.

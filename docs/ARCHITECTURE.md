@@ -492,14 +492,28 @@ relevant chapter:
 
 ---
 
-## Future Architecture (Phases 2+)
+## Future Architecture (Beyond Phase 8)
 
-Once the foundation is solid, the architecture will evolve towards:
+Already in place from prior phases: GPU-driven rendering (mesh shaders +
+per-object frustum culling), fully bindless descriptors, meshlet-based
+geometry, ray-traced shadows / reflections / refraction / ambient occlusion,
+ReSTIR direct illumination, single-bounce indirect GI, and a froxel
+volumetric-fog foundation. Remaining architectural evolution:
 
-- **GPU-driven rendering** — indirect draw calls, visibility culling on the GPU
-- **Bindless resources** — all textures and buffers accessible via descriptor indexing
-- **Mesh shading** — meshlet-based geometry processing, replacing the traditional vertex pipeline
-- **Ray tracing** — acceleration structures for shadows and full global illumination
-- **AI embodiment** — one AI brain per instance as a DLL/SO plugin with staged sensory protocol (see [AI_INTERFACE.md](AI_INTERFACE.md))
-- **Off-screen rendering** — rendering to framebuffer for AI vision at Stage 2+ (Phase 9)
-- **Multiplayer** — extract world state to a separate authoritative server, MMO networking (Phase 10)
+- **Engine class + rendergraph** — extract the monolithic `recordFrame`
+  into a DAG-based pass scheduler with automatic barrier insertion and
+  resource aliasing (Phase 9)
+- **Tightly-coupled in-house subsystems** — physics, spatial audio, and
+  environment sensory sharing the rendering BLAS/TLAS and compute queues
+  (Phase 9)
+- **Asset pipeline** — in-house glTF 2.0 parser, skeletal animation,
+  procedural Grid architecture (Phase 10)
+- **AI embodiment** — one AI brain per instance as a DLL/SO plugin with
+  staged sensory protocol (Phase 11; see [AI_INTERFACE.md](AI_INTERFACE.md))
+- **Off-screen rendering for AI vision** — Stage 2+ rendering to
+  framebuffer + GPU readback to shared memory (Phase 11)
+- **Cyberpunk HUD** — MSDF text, energy / health bars, scent-aura
+  visualisation (Phase 12)
+- **Multiplayer** — extract world state to a separate authoritative
+  server with MMO networking (Backlog — see
+  [VISION.md](VISION.md) § Future: Multiplayer)
