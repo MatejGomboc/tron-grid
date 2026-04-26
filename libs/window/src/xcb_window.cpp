@@ -213,9 +213,11 @@ namespace WindowLib
 
             xcb_free_gc(m_connection, gc);
 
-            // Build the cursor from the (now zeroed) pixmap. Foreground bitmap = pixmap,
-            // mask = pixmap; both all-zero means "draw nothing", giving a fully invisible
-            // cursor.
+            // Build the cursor from the (now zeroed) pixmap. xcb_create_cursor takes a
+            // source bitmap and a mask bitmap; the mask determines which pixels are drawn
+            // at all (mask bit 0 = transparent, mask bit 1 = use source colour). With the
+            // mask all-zero, every pixel is transparent regardless of source — so passing
+            // the same zeroed pixmap for both arguments yields a fully invisible cursor.
             m_invisible_cursor = xcb_generate_id(m_connection);
             xcb_create_cursor(m_connection, m_invisible_cursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 0, 0);
 
