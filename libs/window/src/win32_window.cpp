@@ -27,11 +27,17 @@ namespace WindowLib
     {
         m_hinstance = GetModuleHandle(nullptr);
 
-        // Register window class once
+        // Register window class once. CS_OWNDC was previously included but is meaningless
+        // here (we render via Vulkan, not GDI — there is no device context to "own"); dropped
+        // for hygiene. CS_HREDRAW | CS_VREDRAW invalidate the client area on resize so DWM
+        // immediately requests a repaint via WM_PAINT, eliminating stale-content artefacts.
+        // hbrBackground = BLACK_BRUSH gives DWM a defined fill colour for any client-area
+        // pixels that have not yet been written by the Vulkan swapchain (e.g. between window
+        // creation and the first present), avoiding the "hollow" desktop-show-through window.
         if (!m_class_registered) {
             WNDCLASSEXW wc = {};
             wc.cbSize = sizeof(WNDCLASSEXW);
-            wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+            wc.style = CS_HREDRAW | CS_VREDRAW;
             wc.lpfnWndProc = wndProcStatic;
             wc.hInstance = m_hinstance;
             wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
@@ -68,9 +74,12 @@ namespace WindowLib
         int x{(screen_width - window_width) / 2};
         int y{(screen_height - window_height) / 2};
 
-        // Convert title to wide string
+        // Convert title to wide string. MultiByteToWideChar with cchSrc = -1 returns the
+        // count INCLUDING the trailing null terminator; sizing the wstring with that count
+        // would leave a spurious L'\0' at back(). Strip the terminator from the size — the
+        // wstring's own null terminator covers the C-string contract for CreateWindowExW.
         int title_len{MultiByteToWideChar(CP_UTF8, 0, config.title.c_str(), -1, nullptr, 0)};
-        std::wstring title_wide(title_len, 0);
+        std::wstring title_wide(static_cast<std::wstring::size_type>(title_len > 0 ? title_len - 1 : 0), 0);
         MultiByteToWideChar(CP_UTF8, 0, config.title.c_str(), -1, title_wide.data(), title_len);
 
         // Set dimensions before CreateWindowExW — WM_SIZE is dispatched during creation
@@ -78,10 +87,16 @@ namespace WindowLib
         m_width = config.width;
         m_height = config.height;
 
-        // WS_EX_NOREDIRECTIONBITMAP prevents DWM from allocating a redirection bitmap,
-        // so the window composites directly from the Vulkan swapchain. This eliminates
-        // the black flash during resize caused by DWM stretching stale content.
-        m_hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP, CLASS_NAME, title_wide.c_str(), style, x, y, window_width, window_height, nullptr, nullptr, m_hinstance,
+        // No WS_EX_NOREDIRECTIONBITMAP — that flag excludes the window from DWM
+        // compositing, which means the GDI hbrBackground (BLACK_BRUSH set on the window
+        // class) is never painted between window creation and the first Vulkan present.
+        // Result was a "hollow" window showing whatever was on the desktop behind it for a
+        // visible moment. With DWM compositing enabled, BLACK_BRUSH paints immediately and
+        // the window appears as a solid black rectangle until Vulkan takes over. The
+        // tradeoff is that DWM's redirection bitmap may briefly stretch stale swapchain
+        // content during a resize — far less jarring than the hollow startup window, and
+        // our explicit Vulkan resize handling minimises that window of staleness anyway.
+        m_hwnd = CreateWindowExW(0, CLASS_NAME, title_wide.c_str(), style, x, y, window_width, window_height, nullptr, nullptr, m_hinstance,
             this // Pass this pointer for WM_NCCREATE
         );
 
@@ -120,6 +135,14 @@ namespace WindowLib
 
     void Win32Window::setCursorCaptured(bool captured)
     {
+        // Early return if state is unchanged. ShowCursor maintains a per-process display
+        // counter (the cursor is hidden iff counter < 0); calling ShowCursor(FALSE) twice
+        // sinks the counter to -2 and a single ShowCursor(TRUE) only restores it to -1,
+        // leaving the cursor invisible. Same balancing concern for SetCapture /
+        // ReleaseCapture and ClipCursor. Idempotent calls must be no-ops.
+        if (m_cursor_captured == captured) {
+            return;
+        }
         m_cursor_captured = captured;
         if (captured) {
             SetCapture(m_hwnd);
@@ -129,11 +152,14 @@ namespace WindowLib
             GetClientRect(m_hwnd, &rect);
             MapWindowPoints(m_hwnd, nullptr, reinterpret_cast<POINT*>(&rect), 2);
             ClipCursor(&rect);
-            // Centre cursor so first delta is zero
+            // Centre cursor so first delta is zero. The SetCursorPos triggers a synthetic
+            // WM_MOUSEMOVE — flag it so the WM_MOUSEMOVE handler consumes that event
+            // without emitting a duplicate.
             POINT centre{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
             SetCursorPos(centre.x, centre.y);
             m_last_mouse_x = static_cast<int32_t>((rect.right - rect.left) / 2);
             m_last_mouse_y = static_cast<int32_t>((rect.bottom - rect.top) / 2);
+            m_warp_pending = true;
         } else {
             ClipCursor(nullptr);
             ShowCursor(TRUE);
@@ -215,7 +241,12 @@ namespace WindowLib
             ev.key.keycode = static_cast<uint32_t>(wparam);
             ev.key.repeat = (lparam & 0x40000000) != 0;
             pushEvent(ev);
-            return 0;
+            // For WM_SYSKEY* we must NOT return 0 — DefWindowProcW translates these into
+            // WM_SYSCOMMAND for system-key actions like Alt+F4 (close window), Alt+Space
+            // (system menu), and F10 (menu activation). Returning 0 silently breaks those.
+            // For WM_KEYDOWN, falling through to DefWindowProcW is also safe (it's a no-op
+            // for plain keys), so a single break covers both cases.
+            break;
         }
 
         case WM_KEYUP:
@@ -224,12 +255,27 @@ namespace WindowLib
             ev.key.keycode = static_cast<uint32_t>(wparam);
             ev.key.repeat = false;
             pushEvent(ev);
-            return 0;
+            // Same WM_SYSKEY → DefWindowProcW concern as KeyDown above.
+            break;
         }
 
         case WM_MOUSEMOVE: {
             int32_t x{static_cast<int16_t>(LOWORD(lparam))};
             int32_t y{static_cast<int16_t>(HIWORD(lparam))};
+
+            // Filter the synthetic recentre event. After SetCursorPos in the previous
+            // WM_MOUSEMOVE branch (or in setCursorCaptured), the OS dispatches a follow-up
+            // WM_MOUSEMOVE with the new position. Without this filter, every real mouse
+            // move emits two events — one real, one phantom (dx=0, dy=0) — doubling
+            // consumer event load and potentially confusing camera-look code that integrates
+            // dx/dy.
+            if (m_warp_pending) {
+                m_warp_pending = false;
+                m_last_mouse_x = x;
+                m_last_mouse_y = y;
+                m_mouse_tracked = true;
+                return 0;
+            }
 
             int32_t dx{m_mouse_tracked ? (x - m_last_mouse_x) : 0};
             int32_t dy{m_mouse_tracked ? (y - m_last_mouse_y) : 0};
@@ -244,6 +290,7 @@ namespace WindowLib
                 POINT screen_centre{centre};
                 ClientToScreen(hwnd, &screen_centre);
                 SetCursorPos(screen_centre.x, screen_centre.y);
+                m_warp_pending = true; // The next WM_MOUSEMOVE will be the synthetic recentre.
             } else {
                 m_last_mouse_x = x;
                 m_last_mouse_y = y;

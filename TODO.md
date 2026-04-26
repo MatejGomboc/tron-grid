@@ -289,31 +289,31 @@ behaviour, system keys, and the visible "hollow" startup window.
 
 **Scope:**
 
-- [ ] **`setCursorCaptured` unbalanced `ShowCursor` counter**
+- [x] **`setCursorCaptured` unbalanced `ShowCursor` counter**
   (`libs/window/src/win32_window.cpp:121-142`). `ShowCursor` keeps a
   per-process counter; double-call to `setCursorCaptured(true)` sinks
   it to -2 and a single `(false)` only restores to -1, leaving the
   cursor hidden. Add an early return when `m_cursor_captured == captured`.
-- [ ] **`WM_SYSKEYDOWN` / `WM_SYSKEYUP` swallow system keys**
+- [x] **`WM_SYSKEYDOWN` / `WM_SYSKEYUP` swallow system keys**
   (`libs/window/src/win32_window.cpp:212-228`). Both handlers `return 0`
   instead of falling through to `DefWindowProcW`. Breaks Alt+F4,
   Alt+Space (system menu), F10. Forward to `DefWindowProcW` from
   `WM_SYSKEY*`, or synthesise a Close event for Alt+F4 explicitly.
-- [ ] **Hollow window before first Vulkan frame**
+- [x] **Hollow window before first Vulkan frame**
   (`libs/window/src/win32_window.cpp` window-class registration). Caused
   by `WS_EX_NOREDIRECTIONBITMAP` excluding the window from DWM
   compositing combined with no GDI background brush. Fix: remove
   `WS_EX_NOREDIRECTIONBITMAP` and set
   `wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH)` so the client
   area paints black before the swapchain present.
-- [ ] **Title string off-by-one** (`libs/window/src/win32_window.cpp:72-74`).
+- [x] **Title string off-by-one** (`libs/window/src/win32_window.cpp:72-74`).
   `MultiByteToWideChar` with `cchSrc = -1` returns the count *including*
   the trailing null; sizing the `std::wstring` with that count puts a
   spurious `L'\0'` at `back()`. Use `title_len - 1`.
-- [ ] **`CS_OWNDC` cosmetic** (`libs/window/src/win32_window.cpp:34`).
+- [x] **`CS_OWNDC` cosmetic** (`libs/window/src/win32_window.cpp:34`).
   Meaningless when paired with `WS_EX_NOREDIRECTIONBITMAP`; redundant
   even if the latter is removed. Drop the flag.
-- [ ] **Synthetic mouse-warp event filtering**
+- [x] **Synthetic mouse-warp event filtering**
   (`libs/window/src/win32_window.cpp:230-261`). The recentre warp
   generates a `MouseMove` with `dx == 0 && dy == 0` after every real
   move, doubling the event count. Filter by tracking `m_warp_pending`
@@ -778,6 +778,47 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Maintenance Etape M2: Win32 window hardening
+
+Six findings from the parallel `libs/` audit (the audit plan landed in
+PR #99; M1 shipped in PR #100; this PR ships M2's Win32 cleanup).
+
+1. **Hollow window before first Vulkan frame fixed.** Removed
+   `WS_EX_NOREDIRECTIONBITMAP` from `CreateWindowExW`. That flag was
+   excluding the window from DWM compositing entirely, so the
+   `BLACK_BRUSH` set on the window class never had a chance to paint
+   between window creation and the first Vulkan present — the client area
+   showed whatever was on the desktop behind it for a visible moment. With
+   DWM compositing enabled, `BLACK_BRUSH` paints immediately and the
+   window appears as a solid black rectangle until Vulkan takes over. The
+   minor cost is that DWM may briefly stretch a stale swapchain bitmap
+   during a resize, much less jarring than the hollow startup.
+2. **`CS_OWNDC` dropped from window class.** Meaningless for a
+   Vulkan-rendered window (no GDI device context to "own"); cosmetic
+   cleanup.
+3. **Title string off-by-one fixed.** `MultiByteToWideChar` with
+   `cchSrc = -1` returns the count *including* the trailing null;
+   `std::wstring` is now sized as `title_len - 1` so its `back()` is the
+   last real character rather than a spurious `L'\0'`.
+4. **`setCursorCaptured` early-return guard.** `ShowCursor`,
+   `SetCapture`/`ReleaseCapture`, and `ClipCursor` are stateful and
+   unbalance under repeated calls; the function now no-ops when
+   `m_cursor_captured == captured`. Without this, double-toggling the
+   cursor capture would leave the cursor invisible.
+5. **`WM_SYSKEYDOWN` / `WM_SYSKEYUP` no longer swallow system keys.** Both
+   handlers now push the event then `break` to fall through to
+   `DefWindowProcW`, which translates `WM_SYSKEY*` into `WM_SYSCOMMAND`
+   for Alt+F4 (close window), Alt+Space (system menu), F10 (menu
+   activation). Returning 0 silently broke those.
+6. **Synthetic mouse-warp event filtering.** New `m_warp_pending` flag
+   set after every `SetCursorPos` (both the `WM_MOUSEMOVE` recentre path
+   and the initial centre-on-capture in `setCursorCaptured`); the next
+   `WM_MOUSEMOVE` is consumed silently. Without this, every real mouse
+   movement generated a phantom `MouseMove` event with `dx = dy = 0`,
+   doubling consumer event load.
+
+101 PRs merged.
 
 ### 2026-04-26 — Maintenance Etape M1: logger race + math/quaternion hardening
 
