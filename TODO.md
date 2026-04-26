@@ -222,8 +222,8 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
   blending — full WBOIT is deferred until the scene has enough overlapping transparents to
   justify the accumulation/revealage targets)
 - [x] Per-material opacity in material SSBO
-- [ ] Froxel-based volumetric fog with neon light shafts
-- [ ] Temporal reprojection for fog noise reduction
+- [x] Froxel-based volumetric fog with neon light shafts
+- [x] Temporal reprojection for fog noise reduction
 - [ ] Adaptive meshlet LOD with seamless transitions
 - [ ] Temporal denoising for RT output
 - [ ] GPU profiling with per-pass timestamps
@@ -778,6 +778,55 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Phase 8 Etape 41 sub-etapes 41b + 41c: emissive light shafts + temporal reprojection
+
+Combined sub-etapes 41b (per-froxel emissive sampling) and 41c (temporal
+reprojection) into one PR after iterative quality work showed that single-frame
+MC over 17 000 emissive triangles is fundamentally too noisy without temporal
+filtering — Frostbite / Wronski 2014 always pair the two for that reason.
+
+**41b — emissive sampling.** `inject_density.slang` now samples one emissive
+triangle per froxel via the same power-weighted CDF used by ReSTIR DI, traces a
+TLAS shadow ray (`RAY_FLAG_CULL_NON_OPAQUE` so glass / pillar don't block), and
+adds the in-scattered radiance modulated by a Henyey-Greenstein phase function
+(g = 0.6 — moderate forward scatter, atmospheric haze). 4 samples per froxel
+with a per-sample firefly clamp (3.0) before averaging. Inject pipeline gains
+two new descriptor bindings (TLAS at 1, emissive triangle SSBO at 2); push
+constants extended from 112 → 128 bytes for `frame_count`,
+`emissive_count`, `total_emissive_power`, `hg_g`. Pure single-frame output
+visibly suffered from the variance inherent to single-sample MC over thousands
+of light triangles, motivating 41c.
+
+**41c — spatial-blur + temporal reprojection.** New `volumetric_filter.slang`
+replaces the standalone blur shader. In one compute pass per froxel: 3×3 XY
+spatial blur of the inject output, plus reprojection of the froxel centre
+through the previous frame's view-projection matrix to look up history at the
+last frame's filter output, plus EMA blend (α = 0.1, ~10-frame effective
+sample count). Trilinear sample of the history grid. History-validity flag
+gates the blend so the very first frame doesn't blend with garbage. Two
+ping-pong filter images alternate between (history, output) roles each frame.
+
+**Plumbing.** Filter pipeline carries 176-byte push constants (two mat4s plus
+matrices). One-shot startup `UNDEFINED → GENERAL` transition for both
+ping-pong images so the per-frame barrier can use `eGeneral → eGeneral` and
+preserve the temporal accumulator across frames. Cross-frame compute memory
+barrier added at the top of `recordFrame` alongside the existing reservoir
+fragment-stage barrier.
+
+**Grid resolution.** Bumped from 160×90 to 320×180 (4× more cells). At
+1280×720 each froxel now covers a 4×4 px screen tile rather than 8×8 — visibly
+finer light-shaft detail. Memory: ~30 MB per image × 3 images = ~90 MB
+volumetric VRAM. Inject cost: 4 samples × 3.7 M froxels × 60 fps ≈ 880 M ray
+queries / sec, comfortably within the RTX 4090's budget.
+
+**Combined effective sample count per froxel:** 4 samples × 9 spatial neighbours
+× ~10 temporal frames ≈ 360. Visually, the result reads as soft cyberpunk
+atmospheric haze rather than animated TV static.
+
+Acceptance criteria ticked: "Froxel-based volumetric fog with neon light
+shafts" and "Temporal reprojection for fog noise reduction".
+106 PRs merged.
 
 ### 2026-04-26 — Documentation polish pass
 

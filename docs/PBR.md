@@ -506,23 +506,30 @@ overlapping translucent geometry to justify the plumbing cost.
 TronGrid renders atmospheric scattering through a **frustum-aligned voxel
 grid** (commonly called a *froxel grid*) — the AAA-standard approach
 used by Frostbite, Unreal Engine 4/5, and Unity HDRP. The reference
-paper is Wronski 2014 (SIGGRAPH "Volumetric Fog"). Implementation lives
-in `src/inject_density.slang` (per-froxel scattering + extinction) and
-`src/volumetric_composite.slang` (per-pixel raymarch + composite).
+paper is Wronski 2014 (SIGGRAPH "Volumetric Fog"); the temporal
+reprojection follows the same pattern. Implementation lives in three
+compute shaders:
+
+- `src/inject_density.slang` — per-froxel emissive sampling, shadow ray,
+  Henyey-Greenstein phase function.
+- `src/volumetric_filter.slang` — spatial 3×3 XY blur + temporal
+  reprojection (ping-pong).
+- `src/volumetric_composite.slang` — per-pixel raymarch + composite onto
+  HDR.
 
 ### The Froxel Grid
 
 The grid is a 3D image (`R16G16B16A16_SFLOAT`, dimensions
-`160 × 90 × 64`) where each voxel — froxel — stores:
+`320 × 180 × 64`, ~30 MB) where each voxel — *froxel* — stores:
 
 | Channel | Meaning |
 |---------|---------|
-| `.rgb` | In-scattered radiance arriving at the froxel toward the camera |
-| `.a` | Optical depth = extinction × slice thickness (extinction integrated over the slice's view-space depth) |
+| `.rgb` | In-scattered radiance toward the camera, pre-multiplied by `σ_s · slice_dz` (so the composite recurrence is just a load + multiply-add per slice) |
+| `.a` | Optical depth = `σ_t · slice_dz` (extinction integrated over the slice's view-space depth). Drives the per-slice transmittance via `T_slice = exp(-.a)` in the composite |
 
-X/Y are screen-space tiles (each froxel covers an 8×8-pixel screen
-region at 1280×720). Z slices the view direction with a **logarithmic
-depth distribution**:
+X/Y are screen-space tiles (each froxel covers a 4×4-pixel screen region
+at 1280×720). Z slices the view direction with a **logarithmic depth
+distribution**:
 
 ```text
 depth(z) = near · (far / near)^(z / Z)
@@ -532,6 +539,10 @@ where `near = 0.1 m`, `far = 120 m`, `Z = 64`. This packs more
 resolution close to the camera (where the projected screen size of each
 froxel is largest and parallax is most visible) and less at the far
 plane.
+
+The pipeline owns *three* such images: one raw inject target plus a
+ping-pong pair for the temporal-reprojection filter. Total volumetric
+VRAM ~90 MB.
 
 ### Scattering Equation
 
@@ -549,13 +560,14 @@ T(a, b) = exp(-∫_a^b σ_t(s') ds')
 ```
 
 and `σ_t` is the extinction coefficient (absorption + out-scattering).
-For a discrete froxel grid this collapses to the classic Frostbite
-recurrence:
+TronGrid models atmospheric haze with `σ_a ≈ 0`, so `σ_s = σ_t = density`.
+For a discrete froxel grid the integral collapses to the classic
+Frostbite recurrence:
 
 ```text
-T_slice    = exp(-σ_t · dz)                    // transmittance through slice
-L_total   += L_slice · T_accumulated            // scattered light, attenuated by depth so far
-T_accumulated *= T_slice                        // attenuate accumulated transmittance
+T_slice    = exp(-σ_t · dz)                     // transmittance through this slice
+L_total   += L_slice · T_accumulated             // scattered light, attenuated by depth so far
+T_accumulated *= T_slice                         // attenuate accumulated transmittance
 ```
 
 After all slices, the final pixel colour is
@@ -570,84 +582,195 @@ the camera along the way.
 
 ### Density Injection
 
-`inject_density.slang` runs once per froxel (1 thread per froxel,
-`[numthreads(8, 8, 1)]`, `(20 × 12 × 64)` workgroups).
+`inject_density.slang` runs once per froxel
+(`[numthreads(8, 8, 1)]`, `(40 × 23 × 64)` workgroups).
 
 For each froxel, the shader:
 
-1. Reconstructs the world-space position of the froxel centre. NDC `xy`
-   maps to a near-plane direction via `inv_view_projection`; `view_z`
-   from the slice index is the depth along **camera_forward**, so the
-   parametric distance along the ray is
-   `t = view_z / dot(ray_dir, camera_forward)` — not `view_z`
-   directly, which would put off-axis pixels at the wrong depth.
-   `camera_forward` is recovered from `inv_view_projection` itself by
-   unprojecting the NDC centre.
-2. Computes a height-falloff density: full strength at and below
+1. **Reconstructs the world-space position** of the froxel centre. NDC
+   `xy` maps to a near-plane direction via `inv_view_projection`;
+   `view_z` from the slice index is the depth along **camera_forward**,
+   so the parametric distance along the ray is
+   `t = view_z / dot(ray_dir, camera_forward)` — not `view_z` directly,
+   which would put off-axis pixels at the wrong depth. `camera_forward`
+   is recovered from `inv_view_projection` itself by unprojecting the
+   NDC centre.
+2. **Computes height-falloff density:** full strength at and below
    `FOG_HEIGHT_BASE = 4 m`, exponentially attenuated above with a
    `FOG_HEIGHT_FALLOFF = 6 m` scale. Models a ground-hugging fog layer
    that's denser near the Tron grid floor than up in the sky.
-3. Stores `(0, 0, 0, σ_t · slice_dz)` in the froxel — no in-scattered
-   radiance yet (a follow-up etape adds per-froxel emissive sampling
-   via TLAS shadow rays for actual neon light shafts).
+3. **Samples emissive geometry** (4 samples per froxel). Each sample uses
+   the same power-weighted CDF that ReSTIR DI uses for the surface
+   shader: `P(triangle i) = area_i · luminance_i / total_power`. Within
+   a chosen triangle, sample uniformly in barycentric coordinates (Turk
+   1990 / Shirley & Chiu).
+4. **Traces a TLAS shadow ray** from the froxel centre toward each
+   sample point with `RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH |
+   RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_CULL_NON_OPAQUE`. The
+   `CULL_NON_OPAQUE` flag is load-bearing: glass and the energy-barrier
+   pillar are flagged non-opaque (per Etape 40), and atmospheric light
+   should pass through transparent surfaces rather than be blocked by
+   them.
+5. **Modulates by the Henyey-Greenstein phase function:**
+
+   ```text
+   phase(g, μ) = (1 - g²) / (4π · (1 + g² - 2g·μ)^1.5)
+   ```
+
+   where `μ = cos(view_dir, light_dir)` and `g = 0.6`. Forward-biased
+   scatter — looking *toward* a tube through fog gives a brighter
+   in-scatter than looking away. Reference: Henyey & Greenstein 1941;
+   `g ≈ 0.6` is canonical for atmospheric haze.
+6. **Combines** as `σ_s · dz · phase · (emissive · cos_light / dist²) /
+   pdf · visibility` per sample. Per-sample firefly clamp (3.0) before
+   averaging keeps single-sample spikes from dominating the mean.
+7. **Writes** `(scattered, σ_t · dz)` into the raw inject image.
+
+The `area` factor does NOT appear in the geometric kernel, despite
+showing up in the CDF. The joint per-area sampling PDF is
+`area_i · lum_i / total_power · 1/area_i = lum_i / total_power` (m⁻²)
+— the area cancels exactly. Including it again would double-bias toward
+large triangles.
+
+### Spatial Blur + Temporal Reprojection (Filter Pass)
+
+`volumetric_filter.slang` runs once per froxel and combines two
+variance-reduction techniques in one compute pass:
+
+**(1) Spatial 3×3 XY blur.** Per slice, each output froxel is the mean
+of its 3×3 neighbourhood in the raw inject image. Reduces inter-froxel
+variance (each froxel's 4 single-frame samples are independent — without
+spatial averaging, adjacent froxels can land on wildly different "lucky
+picks" from the 17 000-triangle CDF). Z is *not* blurred — the slice
+integration is exact at slice boundaries; mixing slices would change
+the integration model.
+
+**(2) Temporal reprojection (Wronski 2014 / Frostbite).** Reconstruct
+this froxel's world-space centre, project it through the **previous**
+frame's view-projection matrix to find where the froxel sat last frame,
+sample the previous frame's filter output trilinearly at the reprojected
+coordinates, and EMA-blend with the current spatial-blurred value:
+
+```text
+out = lerp(history, current_blurred, alpha)
+```
+
+`alpha = 0.1` gives a ~10-frame effective sample count.
+
+The Z reprojection inverts the logarithmic depth mapping:
+
+```text
+view_z   = prev_clip.w
+t        = log(view_z / near) / log(far / near)
+froxel_z = t · Z - 0.5
+```
+
+History is rejected if any of: `prev_clip.w ≤ 0` (behind previous
+camera), reprojected XY outside the screen-aligned tile grid, or
+reprojected Z outside `[0, Z)`. On rejection the filter outputs only the
+spatial value (no temporal blend) — disocclusion handling.
+
+A `history_valid` flag in the push constants is `0` on the very first
+frame so the filter doesn't blend against an uninitialised history image.
+
+**Ping-pong.** The filter both reads from one filter image (history) and
+writes to the other (output). The host alternates the
+(history, output) pair between the two physical filter images each
+frame, so frame N+1's history is what frame N just wrote. This naturally
+aligns with the existing `MAX_FRAMES_IN_FLIGHT = 2` ping-pong of
+descriptor sets — filter set 0 reads B and writes A, filter set 1 reads A
+and writes B.
+
+**Layout preservation.** Filter ping-pong images get a one-shot startup
+`UNDEFINED → GENERAL` transition; per-frame barriers thereafter use
+`GENERAL → GENERAL` (rather than `UNDEFINED → GENERAL`) so the temporal
+accumulator's contents survive across frames. Without this, the per-frame
+discard would wipe the history every frame.
+
+**Cross-submission visibility.** The previous submission's filter compute
+write needs to be visible to this submission's filter compute read; per
+the Vulkan memory model, submission ordering alone is not enough. A
+compute-stage `MemoryBarrier2` at the top of `recordFrame` (alongside
+the existing fragment-stage barrier for ReSTIR reservoirs) provides the
+hand-off.
+
+**Effective sample count per froxel:** 4 inject samples × 9 spatial
+neighbours × ~10 temporal frames ≈ 360. Visually reads as soft
+cyberpunk atmospheric haze rather than animated noise.
 
 ### Raymarch Composite
 
 `volumetric_composite.slang` runs once per HDR pixel
-(`[numthreads(8, 8, 1)]`, screen-tile dispatch).
+(`[numthreads(8, 8, 1)]`, screen-tile dispatch). Reads from the
+*filtered* froxel image (post spatial blur + temporal accumulation), not
+the raw inject output.
 
 For each pixel: walk through the 64 froxels of that pixel's column,
-running the Frostbite recurrence above. Output:
+running the Frostbite recurrence above. Bilinear interpolation in XY
+across the 320×180 grid smooths the upsample to screen resolution.
+Output:
 
 ```text
 hdr_image[pixel].rgb = scene · accumulated_transmittance + accumulated_radiance
 ```
 
 The composite runs **before** bloom extraction so the fog itself can
-bloom — bright fog regions (near the sun, around emissive geometry in
-later sub-etapes) bleed correctly through the bloom chain rather than
-appearing as sharp halos.
+bloom — bright fog regions (near the sun, around emissive geometry)
+bleed correctly through the bloom chain rather than appearing as sharp
+halos at slice boundaries.
 
 ### Why Compute, Not Pixel Shaders
 
 The froxel grid is built once per frame on the GPU and consumed by the
 composite. Doing density injection in a fragment shader (rasterising
-proxy geometry) would be possible but ties the cost to screen
-fillrate. With compute, each froxel pays a fixed cost regardless of
-camera angle, and the 921 600 froxels run in well under a millisecond
-on the RTX 4090.
+proxy geometry) would be possible but ties the cost to screen fillrate.
+With compute, each froxel pays a fixed cost regardless of camera angle.
+At 320×180×64 = 3.7 M froxels with 4 ray queries each = ~15 M shadow
+rays per frame, the inject runs in well under 2 ms on the RTX 4090.
 
 ### Vulkan Sequencing
 
 Per-frame ordering inside `recordFrame`:
 
-1. Mesh shader pass writes opaque + transparent HDR colour.
-2. Image transitions: HDR + swapchain + bloom + froxel → `eGeneral`.
-3. Density injection compute writes the froxel grid.
-4. Memory barrier (compute → compute, froxel write → froxel read).
-5. Volumetric composite compute reads froxel + RW HDR.
-6. Memory barrier (compute → compute, HDR write → HDR read).
-7. Bloom extraction reads the **fogged** HDR.
-8. Bloom downsample / upsample chain.
-9. Tonemap composite to swapchain.
+1. Cross-frame `MemoryBarrier2` at top: makes the previous submission's
+   fragment-stage reservoir writes (ReSTIR) and compute-stage filter
+   writes (volumetric history) visible to this frame's matching reads.
+2. Mesh shader pass writes opaque + skybox + transparent HDR colour.
+3. Image transitions: HDR + swapchain + bloom + raw-froxel + both filter
+   ping-pong images → `eGeneral` (filter pair uses `GENERAL → GENERAL`
+   to preserve history).
+4. Density-injection compute writes the raw froxel image.
+5. Memory barrier (compute → compute, raw-froxel write → filter read).
+6. Filter compute: 3×3 spatial blur of raw inject + temporal-reprojection
+   blend with previous frame's filter output → writes this frame's
+   filter image.
+7. Memory barrier (compute → compute, filter write → composite read).
+8. Volumetric composite compute reads filter image + RW HDR.
+9. Memory barrier (compute → compute, HDR write → bloom read).
+10. Bloom extraction reads the **fogged** HDR.
+11. Bloom downsample / upsample chain.
+12. Tonemap composite to swapchain.
 
 ### Limitations and Future Work
 
-- **No in-scattered radiance yet** — added in sub-etape 41b via
-  per-froxel emissive sampling (one TLAS shadow ray per froxel toward
-  each emissive light source, weighted by the Henyey-Greenstein phase
-  function for forward / back scattering).
-- **No temporal reprojection** — added in sub-etape 41c. Reuses prior
-  frame's froxel grid via the existing motion vectors (Etape 37);
-  dramatically reduces noise from sampling sparse light sources.
 - **Density injection ignores the depth buffer** — fog accumulates
-  through opaque geometry too. Sub-etape 41c adds a depth-aware
-  early-out.
+  through opaque geometry too. A depth-aware early-out (per-froxel
+  visibility check against the depth buffer) would skip wholly-occluded
+  froxels.
 - **Per-slice scattering is "front of slice" approximation** — the
   Frostbite-accurate integrated form
   `L = (L · (1 - T_slice)) / σ_t` would attenuate scattered light
   through the slice itself, more accurate at high densities. Acceptable
   approximation while overall density is low.
+- **Single-sample-per-froxel + 4-sample baseline could be replaced by
+  RIS** (reservoir-style importance resampling like ReSTIR DI uses for
+  surfaces). Would dramatically reduce variance per inject sample;
+  larger architectural change. Phase 8 Etape 42 ("temporal denoising +
+  adaptive LOD") is the natural place for it.
+- **Bilinear upsample in composite is not edge-aware** — light shafts
+  across surface boundaries can leak slightly. Bilateral upsample
+  (depth-aware, normal-aware) would tighten this; also a Phase 8
+  Etape 42 candidate.
 
 ---
 
@@ -747,4 +870,4 @@ Per-frame ordering inside `recordFrame`:
 
 ---
 
-*Last updated: 2026-04-26 (Etape 41a)*
+*Last updated: 2026-04-26 (Etape 41b + 41c — emissive light shafts + temporal reprojection)*

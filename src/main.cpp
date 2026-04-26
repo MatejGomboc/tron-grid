@@ -99,11 +99,13 @@ constexpr float BLOOM_STRENGTH{0.095f};
 //! Fence poll timeout — short enough for responsive shutdown, long enough to avoid busy-waiting.
 constexpr uint64_t FENCE_TIMEOUT_NS{100'000'000};
 
-//! Volumetric froxel grid dimensions (Phase 8 Etape 41 sub-etape 41a).
+//! Volumetric froxel grid dimensions (Phase 8 Etape 41).
 //! Frustum-aligned: x/y are screen-space tiles, z is logarithmically spaced view-space depth.
-//! 160 × 90 × 64 = 921 600 froxels; at rgba16f = 8 bytes/froxel → 7.4 MB total. Cheap.
-constexpr uint32_t FROXEL_WIDTH{160};
-constexpr uint32_t FROXEL_HEIGHT{90};
+//! 320 × 180 × 64 = 3.7 M froxels; at rgba16f = 8 bytes/froxel → ~29.5 MB per image.
+//! 41a started at 160×90; bumped 4× in 41b/41c so the visible "blob size" of the in-scattered
+//! light shafts drops from 8×8 px tiles (at 1280×720) to 4×4 px — well below noticeable.
+constexpr uint32_t FROXEL_WIDTH{320};
+constexpr uint32_t FROXEL_HEIGHT{180};
 constexpr uint32_t FROXEL_DEPTH{64};
 
 //! Volumetric near/far in view-space metres. The grid spans [near, far] along z, with
@@ -122,6 +124,18 @@ constexpr float FOG_HEIGHT_BASE{4.0f};
 //! FOG_DENSITY * exp(-h / FOG_HEIGHT_FALLOFF).
 constexpr float FOG_HEIGHT_FALLOFF{6.0f};
 
+//! Henyey-Greenstein phase-function asymmetry parameter. Values in (0, 1) bias scattering
+//! forward (toward the light); negative values bias backward. 0.6 matches typical
+//! atmospheric haze and gives visible cyberpunk light shafts when looking toward an
+//! emissive source through fog. (Frostbite / Wronski use 0.7–0.85; Tron-style cooler.)
+constexpr float FOG_HG_ASYMMETRY{0.6f};
+
+//! Temporal-reprojection EMA blend factor (Phase 8 Etape 41 sub-etape 41c). Each frame's
+//! filter output = lerp(reprojected_history, current_blurred, alpha). Alpha 0.1 ≈ 10-frame
+//! effective sample count. Lower = smoother but laggier; 0.05–0.15 is the typical Frostbite
+//! / UE / Unity HDRP range.
+constexpr float FOG_TEMPORAL_ALPHA{0.1f};
+
 //! Volumetric inject compute shader push-constant block. Layout MUST match the slang
 //! FroxelPushConstants struct in src/inject_density.slang byte-for-byte (scalar layout).
 struct VolumetricInjectPushConstants {
@@ -136,6 +150,10 @@ struct VolumetricInjectPushConstants {
     MathLib::Mat4 inv_view_projection{}; //!< World reconstruction at froxel centres.
     MathLib::Vec3 camera_pos{};
     float pad{0.0f};
+    uint32_t frame_count{0}; //!< Per-frame jitter seed (Phase 8 Etape 41b emissive sampling).
+    uint32_t emissive_count{0}; //!< Number of emissive triangles in the SSBO (CDF length).
+    float total_emissive_power{0.0f}; //!< Sum of all emissive triangle powers (PDF normalisation).
+    float hg_g{FOG_HG_ASYMMETRY}; //!< Henyey-Greenstein asymmetry parameter g ∈ (-1, 1).
 };
 
 //! Volumetric composite compute shader push-constant block. Layout MUST match the slang
@@ -151,16 +169,44 @@ struct VolumetricCompositePushConstants {
     float pad2{0.0f};
 };
 
+//! Volumetric filter (spatial blur + temporal reprojection) compute shader push-constants.
+//! Layout MUST match the slang FilterPushConstants struct in src/volumetric_filter.slang.
+//!
+//! 176 bytes — exceeds the Vulkan-spec-minimum 128 push-constant range. Requires GPU support
+//! for `maxPushConstantsSize ≥ 192`; NVIDIA, Intel, modern AMD all guarantee 256+. RTX 4090
+//! supports 256. Project's target hardware is RTX 4090 (see VISION.md), so this is fine.
+struct VolumetricFilterPushConstants {
+    MathLib::Mat4 inv_view_projection{}; //!< Reconstruct world position of current froxel centre.
+    MathLib::Mat4 prev_view_projection{}; //!< Project that world position into previous frame's clip space.
+    MathLib::Vec3 camera_pos{};
+    float alpha{FOG_TEMPORAL_ALPHA}; //!< EMA blend factor; 0.1 ≈ 10-frame effective sample count.
+    uint32_t froxel_width{0};
+    uint32_t froxel_height{0};
+    uint32_t froxel_depth{0};
+    uint32_t history_valid{0}; //!< 0 on the very first frame, 1 thereafter (so the filter doesn't blend with garbage).
+    float near_plane{0.0f};
+    float far_plane{0.0f};
+    float pad0{0.0f};
+    float pad1{0.0f};
+};
+
 // Compile-time guards on the volumetric push-constant struct sizes. The C++ structs above
 // match the Slang ones byte-for-byte under std430 partly by coincidence — Mat4 in
 // VolumetricInjectPushConstants happens to land at offset 32 (16-byte aligned) because the
 // preceding 8 floats sum to exactly 32. Reordering members would diverge between C++ (which
 // would not pad) and std430 (which would). The static_asserts catch any future reordering
 // before it causes silent shader-side garbage.
-static_assert(sizeof(VolumetricInjectPushConstants) == 112,
-    "VolumetricInjectPushConstants must be 112 bytes — Slang inject_density.slang FroxelPushConstants depends on this exact layout");
+//
+// 41b extends the inject struct from 112 → 128 bytes (4 new fields × 4 bytes), the upper
+// bound of the Vulkan-guaranteed 128-byte push-constant range. RTX 4090 supports much more,
+// but we stay within the spec minimum so the layout is portable.
+static_assert(sizeof(VolumetricInjectPushConstants) == 128,
+    "VolumetricInjectPushConstants must be 128 bytes — Slang inject_density.slang FroxelPushConstants depends on this exact layout");
 static_assert(sizeof(VolumetricCompositePushConstants) == 32,
     "VolumetricCompositePushConstants must be 32 bytes — Slang volumetric_composite.slang VolumetricPushConstants depends on this exact layout");
+static_assert(sizeof(VolumetricFilterPushConstants) == 176,
+    "VolumetricFilterPushConstants must be 176 bytes — Slang volumetric_filter.slang FilterPushConstants depends on this exact layout. "
+    "Requires GPU with maxPushConstantsSize >= 192 (RTX 4090 / NVIDIA / Intel: 256, modern AMD: 256, spec min: 128)");
 
 //! Computes the number of mip levels for the bloom texture (base = half swapchain resolution).
 [[nodiscard]] static uint32_t bloomMipCount(vk::Extent2D extent)
@@ -342,27 +388,39 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::Pipeline bloom_extract_pipeline, vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline, vk::PipelineLayout bloom_layout,
     const std::vector<vk::DescriptorSet>& bloom_sets, const std::vector<vk::DescriptorSet>& bloom_upsample_sets, vk::Pipeline skybox_pipeline,
     vk::PipelineLayout skybox_layout, vk::DescriptorSet skybox_descriptor_set, vk::Pipeline inject_pipeline, vk::PipelineLayout inject_pipeline_layout,
-    vk::DescriptorSet inject_descriptor_set, vk::Pipeline composite_pipeline, vk::PipelineLayout composite_pipeline_layout, vk::DescriptorSet composite_descriptor_set,
-    vk::Image froxel_image, const VolumetricInjectPushConstants& inject_push, float time)
+    vk::DescriptorSet inject_descriptor_set, vk::Pipeline filter_pipeline, vk::PipelineLayout filter_pipeline_layout, vk::DescriptorSet filter_descriptor_set,
+    vk::Image filter_output_image, vk::Pipeline composite_pipeline, vk::PipelineLayout composite_pipeline_layout, vk::DescriptorSet composite_descriptor_set,
+    vk::Image froxel_image, vk::Image froxel_image_filter_a, vk::Image froxel_image_filter_b, const VolumetricInjectPushConstants& inject_push,
+    const VolumetricFilterPushConstants& filter_push, float time)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
 
-    // ── Cross-frame reservoir memory barrier ──
-    // The previous submission's fragment shader wrote the ReSTIR reservoir ping-pong
-    // buffers; this submission's fragment shader will read them. Submission order
-    // provides execution ordering, but per the Vulkan memory model we still need an
-    // explicit memory barrier for the write-to-read hand-off to be visible.
+    // ── Cross-frame ReSTIR reservoir + volumetric filter memory barrier ──
+    // Two distinct hand-offs from the previous submission to this one:
+    //   (a) Fragment-stage ReSTIR reservoir writes → this frame's reservoir reads.
+    //   (b) Compute-stage volumetric filter writes (the ping-pong "history" target) →
+    //       this frame's filter reads it as the temporal-reuse history.
+    // Submission order provides execution ordering, but per the Vulkan memory model the
+    // write→read hand-off needs an explicit memory barrier to be visible.
     vk::MemoryBarrier2 reservoir_cross_frame{};
     reservoir_cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
     reservoir_cross_frame.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
     reservoir_cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
     reservoir_cross_frame.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
 
-    vk::DependencyInfo dep_reservoir{};
-    dep_reservoir.setMemoryBarriers(reservoir_cross_frame);
-    cmd.pipelineBarrier2(dep_reservoir);
+    vk::MemoryBarrier2 volumetric_filter_cross_frame{};
+    volumetric_filter_cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    volumetric_filter_cross_frame.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    volumetric_filter_cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    volumetric_filter_cross_frame.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+
+    std::array<vk::MemoryBarrier2, 2> cross_frame_barriers{reservoir_cross_frame, volumetric_filter_cross_frame};
+
+    vk::DependencyInfo dep_cross_frame{};
+    dep_cross_frame.setMemoryBarriers(cross_frame_barriers);
+    cmd.pipelineBarrier2(dep_cross_frame);
 
     // ── Transition HDR + depth to render targets ──
 
@@ -598,7 +656,32 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     froxel_to_general.subresourceRange.baseArrayLayer = 0;
     froxel_to_general.subresourceRange.layerCount = 1;
 
-    std::array<vk::ImageMemoryBarrier2, 4> to_compute_barriers{hdr_to_general, swap_to_general, bloom_to_general, froxel_to_general};
+    // Filter ping-pong images: oldLayout MUST be eGeneral (not eUndefined) — UNDEFINED would
+    // discard contents, which would wipe the history image and break temporal accumulation.
+    // The startup-time one-shot UNDEFINED→GENERAL transition (in renderThread setup) puts them
+    // into GENERAL once; from then on they stay in GENERAL across submissions and we just
+    // synchronise compute writes from the previous frame against compute reads/writes here.
+    vk::ImageMemoryBarrier2 froxel_filter_a_to_general{};
+    froxel_filter_a_to_general.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_filter_a_to_general.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    froxel_filter_a_to_general.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_filter_a_to_general.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+    froxel_filter_a_to_general.oldLayout = vk::ImageLayout::eGeneral;
+    froxel_filter_a_to_general.newLayout = vk::ImageLayout::eGeneral;
+    froxel_filter_a_to_general.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_filter_a_to_general.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_filter_a_to_general.image = froxel_image_filter_a;
+    froxel_filter_a_to_general.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    froxel_filter_a_to_general.subresourceRange.baseMipLevel = 0;
+    froxel_filter_a_to_general.subresourceRange.levelCount = 1;
+    froxel_filter_a_to_general.subresourceRange.baseArrayLayer = 0;
+    froxel_filter_a_to_general.subresourceRange.layerCount = 1;
+
+    vk::ImageMemoryBarrier2 froxel_filter_b_to_general{froxel_filter_a_to_general};
+    froxel_filter_b_to_general.image = froxel_image_filter_b;
+
+    std::array<vk::ImageMemoryBarrier2, 6> to_compute_barriers{
+        hdr_to_general, swap_to_general, bloom_to_general, froxel_to_general, froxel_filter_a_to_general, froxel_filter_b_to_general};
     vk::DependencyInfo dep_to_compute{};
     dep_to_compute.setImageMemoryBarriers(to_compute_barriers);
     cmd.pipelineBarrier2(dep_to_compute);
@@ -618,27 +701,47 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     uint32_t inject_groups_y{(FROXEL_HEIGHT + INJECT_GROUP_SIZE - 1) / INJECT_GROUP_SIZE};
     cmd.dispatch(inject_groups_x, inject_groups_y, FROXEL_DEPTH);
 
-    // Barrier: froxel write (inject) → froxel read (composite). Compute → compute, same
-    // image, same layout, just an execution + memory dependency between dispatches.
-    vk::ImageMemoryBarrier2 froxel_inject_to_composite{};
-    froxel_inject_to_composite.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-    froxel_inject_to_composite.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
-    froxel_inject_to_composite.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-    froxel_inject_to_composite.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
-    froxel_inject_to_composite.oldLayout = vk::ImageLayout::eGeneral;
-    froxel_inject_to_composite.newLayout = vk::ImageLayout::eGeneral;
-    froxel_inject_to_composite.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
-    froxel_inject_to_composite.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
-    froxel_inject_to_composite.image = froxel_image;
-    froxel_inject_to_composite.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
-    froxel_inject_to_composite.subresourceRange.baseMipLevel = 0;
-    froxel_inject_to_composite.subresourceRange.levelCount = 1;
-    froxel_inject_to_composite.subresourceRange.baseArrayLayer = 0;
-    froxel_inject_to_composite.subresourceRange.layerCount = 1;
+    // Barrier: inject's froxel write must complete before filter reads it. Compute →
+    // compute, same layout, execution + memory dependency between dispatches.
+    vk::ImageMemoryBarrier2 froxel_inject_to_filter{};
+    froxel_inject_to_filter.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_inject_to_filter.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    froxel_inject_to_filter.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_inject_to_filter.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+    froxel_inject_to_filter.oldLayout = vk::ImageLayout::eGeneral;
+    froxel_inject_to_filter.newLayout = vk::ImageLayout::eGeneral;
+    froxel_inject_to_filter.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_inject_to_filter.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_inject_to_filter.image = froxel_image;
+    froxel_inject_to_filter.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    froxel_inject_to_filter.subresourceRange.baseMipLevel = 0;
+    froxel_inject_to_filter.subresourceRange.levelCount = 1;
+    froxel_inject_to_filter.subresourceRange.baseArrayLayer = 0;
+    froxel_inject_to_filter.subresourceRange.layerCount = 1;
 
-    vk::DependencyInfo dep_inject_to_composite{};
-    dep_inject_to_composite.setImageMemoryBarriers(froxel_inject_to_composite);
-    cmd.pipelineBarrier2(dep_inject_to_composite);
+    vk::DependencyInfo dep_inject_to_filter{};
+    dep_inject_to_filter.setImageMemoryBarriers(froxel_inject_to_filter);
+    cmd.pipelineBarrier2(dep_inject_to_filter);
+
+    // ── Filter dispatch (Phase 8 Etape 41b/c: spatial 3×3 blur + temporal reprojection) ──
+    //
+    // Reads raw inject + previous-frame filter output (history); writes this frame's filter
+    // output. The host alternates the (history, output) pair between two physical images
+    // each frame so the next frame's history is what this frame just wrote (ping-pong).
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, filter_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, filter_pipeline_layout, 0, {filter_descriptor_set}, {});
+    cmd.pushConstants<VolumetricFilterPushConstants>(filter_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, filter_push);
+
+    cmd.dispatch(inject_groups_x, inject_groups_y, FROXEL_DEPTH);
+
+    // Barrier: filter writes filter_output_image → composite reads same image.
+    vk::ImageMemoryBarrier2 froxel_filter_to_composite{froxel_inject_to_filter};
+    froxel_filter_to_composite.image = filter_output_image;
+
+    vk::DependencyInfo dep_filter_to_composite{};
+    dep_filter_to_composite.setImageMemoryBarriers(froxel_filter_to_composite);
+    cmd.pipelineBarrier2(dep_filter_to_composite);
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout, 0, {composite_descriptor_set}, {});
@@ -748,9 +851,10 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     camera state, input processing, and delta time.
 */
 static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t opaque_object_count, uint32_t transparent_object_count,
-    uint32_t emissive_count, float total_emissive_power, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers, VkBuffer reservoir_a_buf,
-    VkBuffer reservoir_b_buf, VkDeviceSize reservoir_buffer_size, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex,
-    std::condition_variable& render_cv, LoggingLib::Logger& logger)
+    uint32_t emissive_count, float total_emissive_power, vk::AccelerationStructureKHR inject_tlas, VkBuffer inject_emissive_ssbo, VkDeviceSize inject_emissive_ssbo_size,
+    vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers, VkBuffer reservoir_a_buf, VkBuffer reservoir_b_buf,
+    VkDeviceSize reservoir_buffer_size, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
+    LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -1245,10 +1349,26 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
     };
 
-    // ── Volumetric fog (Phase 8 Etape 41 sub-etape 41a) — froxel grid + 2 compute pipelines ──
+    // ── Volumetric fog (Phase 8 Etape 41) — froxel grids + 3 compute pipelines ──
+    //
+    // Three 3D images:
+    //   froxel_image           — raw per-frame inject output (radiance + optical depth)
+    //   froxel_image_filter_a  ┐ ping-pong filter outputs. Each frame the filter reads
+    //   froxel_image_filter_b  ┘ from one (history) and writes to the other (current).
+    //                            Composite reads from whichever was just written.
+    //
+    // Two filter ping-pong images are required because temporal-reprojection (Etape 41c)
+    // needs the previous frame's output as history input. ~30 MB per image at 320×180×64
+    // rgba16f = ~90 MB total volumetric VRAM.
 
-    // 3D froxel grid: stores per-froxel scattered radiance (rgb) + extinction (a).
+    // Raw inject target — fully overwritten by inject every frame, contents discardable.
     AllocatedImage froxel_image{allocator.createImage3D(FROXEL_WIDTH, FROXEL_HEIGHT, FROXEL_DEPTH, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT)};
+
+    // Filter ping-pong (must preserve contents across frames — this IS the temporal history).
+    AllocatedImage froxel_image_filter_a{
+        allocator.createImage3D(FROXEL_WIDTH, FROXEL_HEIGHT, FROXEL_DEPTH, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT)};
+    AllocatedImage froxel_image_filter_b{
+        allocator.createImage3D(FROXEL_WIDTH, FROXEL_HEIGHT, FROXEL_DEPTH, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT)};
 
     vk::ImageViewCreateInfo froxel_view_info{};
     froxel_view_info.image = froxel_image.image();
@@ -1261,17 +1381,88 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     froxel_view_info.subresourceRange.layerCount = 1;
     vk::raii::ImageView froxel_view{device.get(), froxel_view_info};
 
-    // Inject pipeline — 1 storage image (the froxel grid) + push constants.
+    vk::ImageViewCreateInfo froxel_filter_a_view_info{froxel_view_info};
+    froxel_filter_a_view_info.image = froxel_image_filter_a.image();
+    vk::raii::ImageView froxel_filter_a_view{device.get(), froxel_filter_a_view_info};
+
+    vk::ImageViewCreateInfo froxel_filter_b_view_info{froxel_view_info};
+    froxel_filter_b_view_info.image = froxel_image_filter_b.image();
+    vk::raii::ImageView froxel_filter_b_view{device.get(), froxel_filter_b_view_info};
+
+    // One-shot startup transition: filter ping-pong images go UNDEFINED → GENERAL once.
+    // From then on per-frame barriers use eGeneral → eGeneral so contents survive (the
+    // history image IS the temporal accumulator). Without this initial transition, the
+    // per-frame eGeneral → eGeneral barrier would be invalid (image actually in UNDEFINED).
+    {
+        vk::CommandBufferAllocateInfo init_alloc_info{};
+        init_alloc_info.commandPool = *command_pool;
+        init_alloc_info.level = vk::CommandBufferLevel::ePrimary;
+        init_alloc_info.commandBufferCount = 1;
+        vk::raii::CommandBuffers init_cmds{device.get(), init_alloc_info};
+        const vk::raii::CommandBuffer& init_cmd = init_cmds[0];
+
+        vk::CommandBufferBeginInfo init_begin{};
+        init_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        init_cmd.begin(init_begin);
+
+        std::array<vk::ImageMemoryBarrier2, 2> init_barriers{};
+        for (uint32_t i{0}; i < 2; ++i) {
+            init_barriers[i].srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+            init_barriers[i].srcAccessMask = vk::AccessFlagBits2::eNone;
+            init_barriers[i].dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            init_barriers[i].dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+            init_barriers[i].oldLayout = vk::ImageLayout::eUndefined;
+            init_barriers[i].newLayout = vk::ImageLayout::eGeneral;
+            init_barriers[i].srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+            init_barriers[i].dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+            init_barriers[i].subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+            init_barriers[i].subresourceRange.baseMipLevel = 0;
+            init_barriers[i].subresourceRange.levelCount = 1;
+            init_barriers[i].subresourceRange.baseArrayLayer = 0;
+            init_barriers[i].subresourceRange.layerCount = 1;
+        }
+        init_barriers[0].image = froxel_image_filter_a.image();
+        init_barriers[1].image = froxel_image_filter_b.image();
+
+        vk::DependencyInfo init_dep{};
+        init_dep.setImageMemoryBarriers(init_barriers);
+        init_cmd.pipelineBarrier2(init_dep);
+
+        init_cmd.end();
+
+        vk::CommandBufferSubmitInfo init_cmd_submit{};
+        init_cmd_submit.commandBuffer = *init_cmd;
+
+        vk::SubmitInfo2 init_submit{};
+        init_submit.setCommandBufferInfos(init_cmd_submit);
+        device.graphicsQueue().submit2({init_submit});
+        device.graphicsQueue().waitIdle();
+    }
+
+    // Inject pipeline — Phase 8 Etape 41b extends bindings from 1 to 3:
+    //   binding 0 = froxel storage image (RW)
+    //   binding 1 = TLAS                  (visibility shadow rays per-froxel)
+    //   binding 2 = emissive triangles SSBO (CDF-weighted light source list)
+    // Push constants carry frame_count, emissive_count, total_emissive_power, hg_g for
+    // sampling + Henyey-Greenstein phase function.
     std::vector<uint32_t> inject_spirv{loadSpirv(exe_dir_rt + "inject_density.spv", logger)};
 
-    vk::DescriptorSetLayoutBinding inject_binding{};
-    inject_binding.binding = 0;
-    inject_binding.descriptorType = vk::DescriptorType::eStorageImage;
-    inject_binding.descriptorCount = 1;
-    inject_binding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    std::array<vk::DescriptorSetLayoutBinding, 3> inject_bindings{};
+    inject_bindings[0].binding = 0;
+    inject_bindings[0].descriptorType = vk::DescriptorType::eStorageImage;
+    inject_bindings[0].descriptorCount = 1;
+    inject_bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    inject_bindings[1].binding = 1;
+    inject_bindings[1].descriptorType = vk::DescriptorType::eAccelerationStructureKHR;
+    inject_bindings[1].descriptorCount = 1;
+    inject_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    inject_bindings[2].binding = 2;
+    inject_bindings[2].descriptorType = vk::DescriptorType::eStorageBuffer;
+    inject_bindings[2].descriptorCount = 1;
+    inject_bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
 
     vk::DescriptorSetLayoutCreateInfo inject_layout_info{};
-    inject_layout_info.setBindings(inject_binding);
+    inject_layout_info.setBindings(inject_bindings);
     vk::raii::DescriptorSetLayout inject_descriptor_set_layout{device.get(), inject_layout_info};
 
     vk::PushConstantRange inject_push_range{};
@@ -1297,6 +1488,57 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     inject_pipeline_info.stage = inject_stage;
     inject_pipeline_info.layout = *inject_pipeline_layout;
     vk::raii::Pipeline inject_pipeline{device.get(), nullptr, inject_pipeline_info};
+
+    // Filter pipeline — Phase 8 Etape 41b/c spatial 3×3 blur + temporal reprojection.
+    // Three storage images:
+    //   binding 0 = froxel_image       (raw inject output, read)
+    //   binding 1 = filter history     (last frame's filter output, read; ping-pong source)
+    //   binding 2 = filter output      (this frame's filter output, write; ping-pong dest)
+    // The (history, output) pair alternates between froxel_image_filter_a and _b each frame.
+    // Reduces variance ~36× spatial × ~10× temporal vs single-sample MC.
+    std::vector<uint32_t> filter_spirv{loadSpirv(exe_dir_rt + "volumetric_filter.spv", logger)};
+
+    std::array<vk::DescriptorSetLayoutBinding, 3> filter_bindings{};
+    filter_bindings[0].binding = 0;
+    filter_bindings[0].descriptorType = vk::DescriptorType::eStorageImage;
+    filter_bindings[0].descriptorCount = 1;
+    filter_bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    filter_bindings[1].binding = 1;
+    filter_bindings[1].descriptorType = vk::DescriptorType::eStorageImage;
+    filter_bindings[1].descriptorCount = 1;
+    filter_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    filter_bindings[2].binding = 2;
+    filter_bindings[2].descriptorType = vk::DescriptorType::eStorageImage;
+    filter_bindings[2].descriptorCount = 1;
+    filter_bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo filter_layout_info{};
+    filter_layout_info.setBindings(filter_bindings);
+    vk::raii::DescriptorSetLayout filter_descriptor_set_layout{device.get(), filter_layout_info};
+
+    vk::PushConstantRange filter_push_range{};
+    filter_push_range.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    filter_push_range.offset = 0;
+    filter_push_range.size = sizeof(VolumetricFilterPushConstants);
+
+    vk::PipelineLayoutCreateInfo filter_pipeline_layout_info{};
+    filter_pipeline_layout_info.setSetLayouts(*filter_descriptor_set_layout);
+    filter_pipeline_layout_info.setPushConstantRanges(filter_push_range);
+    vk::raii::PipelineLayout filter_pipeline_layout{device.get(), filter_pipeline_layout_info};
+
+    vk::ShaderModuleCreateInfo filter_module_info{};
+    filter_module_info.setCode(filter_spirv);
+    vk::raii::ShaderModule filter_module{device.get(), filter_module_info};
+
+    vk::PipelineShaderStageCreateInfo filter_stage{};
+    filter_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    filter_stage.module = *filter_module;
+    filter_stage.setPName("filterMain");
+
+    vk::ComputePipelineCreateInfo filter_pipeline_info{};
+    filter_pipeline_info.stage = filter_stage;
+    filter_pipeline_info.layout = *filter_pipeline_layout;
+    vk::raii::Pipeline filter_pipeline{device.get(), nullptr, filter_pipeline_info};
 
     // Composite pipeline — 2 storage images (HDR in/out + froxel read) + push constants.
     std::vector<uint32_t> composite_spirv{loadSpirv(exe_dir_rt + "volumetric_composite.spv", logger)};
@@ -1339,20 +1581,26 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     composite_pipeline_info.layout = *composite_pipeline_layout;
     vk::raii::Pipeline composite_pipeline{device.get(), nullptr, composite_pipeline_info};
 
-    logger.logInfo("Volumetric compute pipelines created (inject + composite).");
+    logger.logInfo("Volumetric compute pipelines created (inject + filter + composite).");
 
-    // Descriptor pool — 1 inject set (1 storage image) + MAX_FRAMES_IN_FLIGHT composite
-    // sets (2 storage images each). Per-frame composite sets are required because the set
-    // is updated each frame (HDR view binding) while the prior frame's command buffer may
-    // still reference it; updating a set in use without VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
-    // is a Vulkan validation error.
-    std::array<vk::DescriptorPoolSize, 1> volumetric_pool_sizes{};
+    // Descriptor pool — 1 inject set (1 storage image + 1 TLAS + 1 storage buffer for 41b)
+    // + 1 blur set (2 storage images, persistent) + MAX_FRAMES_IN_FLIGHT composite sets
+    // (2 storage images each, per-frame for the HDR view rebind).
+    std::array<vk::DescriptorPoolSize, 3> volumetric_pool_sizes{};
     volumetric_pool_sizes[0].type = vk::DescriptorType::eStorageImage;
-    volumetric_pool_sizes[0].descriptorCount = 1 + (MAX_FRAMES_IN_FLIGHT * 2); // inject (1) + composite (2 per frame)
+    // inject (1) + blur (2) + composite (2 per frame).
+    // Storage images: inject (1) + 2 filter ping-pong sets × 3 images each (6) +
+    // composite-per-frame × 2 images (4 at MAX_FRAMES_IN_FLIGHT=2). Total 11.
+    volumetric_pool_sizes[0].descriptorCount = 1 + (2 * 3) + (MAX_FRAMES_IN_FLIGHT * 2);
+    volumetric_pool_sizes[1].type = vk::DescriptorType::eAccelerationStructureKHR;
+    volumetric_pool_sizes[1].descriptorCount = 1; // inject TLAS binding
+    volumetric_pool_sizes[2].type = vk::DescriptorType::eStorageBuffer;
+    volumetric_pool_sizes[2].descriptorCount = 1; // inject emissive SSBO binding
 
     vk::DescriptorPoolCreateInfo volumetric_pool_info{};
     volumetric_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-    volumetric_pool_info.maxSets = 1 + MAX_FRAMES_IN_FLIGHT;
+    // Sets: 1 inject + 2 filter ping-pong + MAX_FRAMES_IN_FLIGHT composite.
+    volumetric_pool_info.maxSets = 1 + 2 + MAX_FRAMES_IN_FLIGHT;
     volumetric_pool_info.setPoolSizes(volumetric_pool_sizes);
     vk::raii::DescriptorPool volumetric_descriptor_pool{device.get(), volumetric_pool_info};
 
@@ -1362,36 +1610,106 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     inject_alloc_info.setSetLayouts(inject_set_layouts);
     std::vector<vk::raii::DescriptorSet> inject_descriptor_sets{device.get().allocateDescriptorSets(inject_alloc_info)};
 
+    // Two filter descriptor sets — ping-pong:
+    //   filter_descriptor_sets[0]: history=B, output=A → used when current_frame == 0
+    //   filter_descriptor_sets[1]: history=A, output=B → used when current_frame == 1
+    std::array<vk::DescriptorSetLayout, 2> filter_set_layouts{*filter_descriptor_set_layout, *filter_descriptor_set_layout};
+    vk::DescriptorSetAllocateInfo filter_alloc_info{};
+    filter_alloc_info.descriptorPool = *volumetric_descriptor_pool;
+    filter_alloc_info.setSetLayouts(filter_set_layouts);
+    std::vector<vk::raii::DescriptorSet> filter_descriptor_sets{device.get().allocateDescriptorSets(filter_alloc_info)};
+
     std::vector<vk::DescriptorSetLayout> composite_set_layouts(MAX_FRAMES_IN_FLIGHT, *composite_descriptor_set_layout);
     vk::DescriptorSetAllocateInfo composite_alloc_info{};
     composite_alloc_info.descriptorPool = *volumetric_descriptor_pool;
     composite_alloc_info.setSetLayouts(composite_set_layouts);
     std::vector<vk::raii::DescriptorSet> composite_descriptor_sets{device.get().allocateDescriptorSets(composite_alloc_info)};
 
-    // Inject descriptor set is bound once — only references the (persistent) froxel image.
-    // No per-frame update needed; the same set is safely referenced by every command buffer.
+    // Inject descriptor set is bound once — froxel image + TLAS + emissive SSBO are all
+    // persistent references. No per-frame update needed; the same set is safely referenced
+    // by every command buffer.
     {
         vk::DescriptorImageInfo inject_image_info{};
         inject_image_info.imageView = *froxel_view;
         inject_image_info.imageLayout = vk::ImageLayout::eGeneral;
 
-        vk::WriteDescriptorSet inject_write{};
-        inject_write.dstSet = *inject_descriptor_sets[0];
-        inject_write.dstBinding = 0;
-        inject_write.dstArrayElement = 0;
-        inject_write.descriptorType = vk::DescriptorType::eStorageImage;
-        inject_write.setImageInfo(inject_image_info);
+        vk::WriteDescriptorSet inject_image_write{};
+        inject_image_write.dstSet = *inject_descriptor_sets[0];
+        inject_image_write.dstBinding = 0;
+        inject_image_write.dstArrayElement = 0;
+        inject_image_write.descriptorType = vk::DescriptorType::eStorageImage;
+        inject_image_write.setImageInfo(inject_image_info);
 
-        device.get().updateDescriptorSets({inject_write}, {});
+        // TLAS write — pNext'd via WriteDescriptorSetAccelerationStructureKHR.
+        vk::WriteDescriptorSetAccelerationStructureKHR inject_tlas_info{};
+        inject_tlas_info.setAccelerationStructures(inject_tlas);
+
+        vk::WriteDescriptorSet inject_tlas_write{};
+        inject_tlas_write.dstSet = *inject_descriptor_sets[0];
+        inject_tlas_write.dstBinding = 1;
+        inject_tlas_write.dstArrayElement = 0;
+        inject_tlas_write.descriptorCount = 1;
+        inject_tlas_write.descriptorType = vk::DescriptorType::eAccelerationStructureKHR;
+        inject_tlas_write.setPNext(&inject_tlas_info);
+
+        // Emissive triangle SSBO write.
+        vk::DescriptorBufferInfo inject_emissive_info{};
+        inject_emissive_info.buffer = inject_emissive_ssbo;
+        inject_emissive_info.offset = 0;
+        inject_emissive_info.range = inject_emissive_ssbo_size;
+
+        vk::WriteDescriptorSet inject_emissive_write{};
+        inject_emissive_write.dstSet = *inject_descriptor_sets[0];
+        inject_emissive_write.dstBinding = 2;
+        inject_emissive_write.dstArrayElement = 0;
+        inject_emissive_write.descriptorType = vk::DescriptorType::eStorageBuffer;
+        inject_emissive_write.setBufferInfo(inject_emissive_info);
+
+        device.get().updateDescriptorSets({inject_image_write, inject_tlas_write, inject_emissive_write}, {});
     }
 
-    // Composite descriptor set is rebound each frame for the per-frame composite_descriptor_sets[frame_index]
-    // — the HDR view changes on resize. Per-frame sets avoid the in-flight-update race.
+    // Filter descriptor set ping-pong is bound once at startup — both directions of the
+    // (history, output) pair use persistent froxel image views. The set chosen each frame
+    // determines which physical image is read as history vs written as the output.
+    //
+    //   filter_descriptor_sets[0]: input=raw, history=B, output=A   (use when current_frame == 0)
+    //   filter_descriptor_sets[1]: input=raw, history=A, output=B   (use when current_frame == 1)
+    //
+    // This naturally aligns with the existing MAX_FRAMES_IN_FLIGHT=2 ping-pong: frame N's
+    // filter writes the image that frame N's composite then reads, AND that image becomes
+    // frame (N+1)'s history input.
+    for (uint32_t i{0}; i < 2; ++i) {
+        vk::ImageView history_view{(i == 0) ? *froxel_filter_b_view : *froxel_filter_a_view};
+        vk::ImageView output_view{(i == 0) ? *froxel_filter_a_view : *froxel_filter_b_view};
+
+        std::array<vk::DescriptorImageInfo, 3> filter_infos{};
+        filter_infos[0].imageView = *froxel_view; // raw inject (read)
+        filter_infos[0].imageLayout = vk::ImageLayout::eGeneral;
+        filter_infos[1].imageView = history_view; // previous frame's output (read)
+        filter_infos[1].imageLayout = vk::ImageLayout::eGeneral;
+        filter_infos[2].imageView = output_view; // this frame's output (write)
+        filter_infos[2].imageLayout = vk::ImageLayout::eGeneral;
+
+        std::array<vk::WriteDescriptorSet, 3> filter_writes{};
+        for (uint32_t b{0}; b < 3; ++b) {
+            filter_writes[b].dstSet = *filter_descriptor_sets[i];
+            filter_writes[b].dstBinding = b;
+            filter_writes[b].dstArrayElement = 0;
+            filter_writes[b].descriptorType = vk::DescriptorType::eStorageImage;
+            filter_writes[b].setImageInfo(filter_infos[b]);
+        }
+
+        device.get().updateDescriptorSets(filter_writes, {});
+    }
+
+    // Composite descriptor set is rebound each frame: per-frame because the HDR view
+    // changes on resize, AND because the source froxel image alternates with the filter
+    // ping-pong (frame 0 reads filter_a, frame 1 reads filter_b).
     auto updateVolumetricCompositeDescriptors = [&](uint32_t frame_index, vk::ImageView hdr_sv) {
         std::array<vk::DescriptorImageInfo, 2> infos{};
         infos[0].imageView = hdr_sv;
         infos[0].imageLayout = vk::ImageLayout::eGeneral;
-        infos[1].imageView = *froxel_view;
+        infos[1].imageView = (frame_index == 0) ? *froxel_filter_a_view : *froxel_filter_b_view;
         infos[1].imageLayout = vk::ImageLayout::eGeneral;
 
         std::array<vk::WriteDescriptorSet, 2> writes{};
@@ -1770,6 +2088,14 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         inject_push.fog_height_falloff = FOG_HEIGHT_FALLOFF;
         inject_push.near_plane = FROXEL_NEAR;
         inject_push.far_plane = FROXEL_FAR;
+
+        VolumetricFilterPushConstants filter_push{};
+        filter_push.alpha = FOG_TEMPORAL_ALPHA;
+        filter_push.froxel_width = FROXEL_WIDTH;
+        filter_push.froxel_height = FROXEL_HEIGHT;
+        filter_push.froxel_depth = FROXEL_DEPTH;
+        filter_push.near_plane = FROXEL_NEAR;
+        filter_push.far_plane = FROXEL_FAR;
         {
             uint32_t extent_height{swapchain.extent().height};
 
@@ -1797,6 +2123,18 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
             inject_push.inv_view_projection = ubo.inv_view_projection;
             inject_push.camera_pos = ubo.camera_pos;
+            inject_push.frame_count = ubo.frame_count;
+            inject_push.emissive_count = emissive_count;
+            inject_push.total_emissive_power = total_emissive_power;
+            // hg_g already initialised to FOG_HG_ASYMMETRY by the struct's default member
+            // initialiser; no per-frame override yet.
+
+            filter_push.inv_view_projection = ubo.inv_view_projection;
+            filter_push.prev_view_projection = ubo.prev_view_projection;
+            filter_push.camera_pos = ubo.camera_pos;
+            // history_valid: 0 only on the very first frame (when the history image holds
+            // nothing yet). frame_count was set BEFORE the post-increment of frame_counter.
+            filter_push.history_valid = (ubo.frame_count > 0) ? 1u : 0u;
         }
 
         // Record command buffer — mesh shaders + compute post-process in one submission
@@ -1817,12 +2155,18 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             bloom_upsample_sets_for_frame.push_back(*bloom_upsample_descriptor_sets[current_frame * BLOOM_MAX_MIPS + m]);
         }
 
+        // Filter ping-pong: current_frame == 0 writes filter_a; == 1 writes filter_b.
+        // The recordFrame side just needs the image handle that the bound filter set writes,
+        // so the post-filter barrier can synchronise the right resource.
+        vk::Image filter_output_image{(current_frame == 0) ? froxel_image_filter_a.image() : froxel_image_filter_b.image()};
+
         recordFrame(cmd, msaa_image.image(), *msaa_view, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index],
             swapchain.extent(), pipeline, pipeline.descriptorSet(current_frame), frustum, opaque_object_count, transparent_object_count, *pp_pipeline,
             *pp_pipeline_layout, *pp_descriptor_sets[current_frame], bloom_image.image(), bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline,
             *bloom_downsample_pipeline, *bloom_upsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame, bloom_upsample_sets_for_frame, *skybox_pipeline,
-            *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], *inject_pipeline, *inject_pipeline_layout, *inject_descriptor_sets[0], *composite_pipeline,
-            *composite_pipeline_layout, *composite_descriptor_sets[current_frame], froxel_image.image(), inject_push,
+            *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], *inject_pipeline, *inject_pipeline_layout, *inject_descriptor_sets[0], *filter_pipeline,
+            *filter_pipeline_layout, *filter_descriptor_sets[current_frame], filter_output_image, *composite_pipeline, *composite_pipeline_layout,
+            *composite_descriptor_sets[current_frame], froxel_image.image(), froxel_image_filter_a.image(), froxel_image_filter_b.image(), inject_push, filter_push,
             std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
 
         // Submit
@@ -3659,8 +4003,8 @@ int main()
 
         // Spawn the render thread
         std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), opaque_object_count,
-            transparent_object_count, emissive_count, total_power, std::ref(command_pool), std::ref(command_buffers), reservoir_a.buffer(), reservoir_b.buffer(),
-            reservoir_buffer_size, std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+            transparent_object_count, emissive_count, total_power, *tlas, emissive_ssbo.buffer(), emissive_ssbo_size, std::ref(command_pool), std::ref(command_buffers),
+            reservoir_a.buffer(), reservoir_b.buffer(), reservoir_buffer_size, std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {

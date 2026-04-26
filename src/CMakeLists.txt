@@ -194,6 +194,9 @@ add_custom_command(
 )
 
 # Volumetric fog shaders (Phase 8 Etape 41) — froxel density injection + raymarch composite.
+# 41b adds RayQuery shadow rays to inject_density.slang, which auto-promotes the SPIR-V
+# capability set; -capability GL_EXT_ray_query suppresses the warning that -warnings-as-errors
+# would otherwise turn into a build failure (matches mesh.slang's compile flags).
 set(INJECT_DENSITY_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/inject_density.slang)
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT_DIR}/inject_density.spv
@@ -204,11 +207,30 @@ add_custom_command(
         -emit-spirv-directly
         -fvk-use-entrypoint-name
         -warnings-as-errors all
+        -capability GL_EXT_ray_query
         -entry injectMain
         -o ${SHADER_OUTPUT_DIR}/inject_density.spv
     COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/inject_density.spv
     DEPENDS ${INJECT_DENSITY_SOURCE}
     COMMENT "Compiling inject_density.slang -> inject_density.spv (with validation)"
+    VERBATIM
+)
+
+set(VOLUMETRIC_FILTER_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/volumetric_filter.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/volumetric_filter.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${VOLUMETRIC_FILTER_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry filterMain
+        -o ${SHADER_OUTPUT_DIR}/volumetric_filter.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/volumetric_filter.spv
+    DEPENDS ${VOLUMETRIC_FILTER_SOURCE}
+    COMMENT "Compiling volumetric_filter.slang -> volumetric_filter.spv (with validation)"
     VERBATIM
 )
 
@@ -262,6 +284,7 @@ add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
     ${SHADER_OUTPUT_DIR}/bloom_upsample.spv
     ${SHADER_OUTPUT_DIR}/inject_density.spv
+    ${SHADER_OUTPUT_DIR}/volumetric_filter.spv
     ${SHADER_OUTPUT_DIR}/volumetric_composite.spv
     ${SHADER_OUTPUT_DIR}/skybox.spv
 )
@@ -291,6 +314,8 @@ add_custom_target(copy_shaders ALL
         ${SHADER_OUTPUT_DIR}/bloom_upsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_upsample.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/inject_density.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/inject_density.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/volumetric_filter.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/volumetric_filter.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/volumetric_composite.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/volumetric_composite.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
