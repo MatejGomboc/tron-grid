@@ -12,11 +12,15 @@
     GNU General Public License for more details.
 */
 
-// Procedural cyberpunk skybox — faintly glowing cyan-green data fog clouds
-// drifting through infinite darkness. Renders as a fullscreen triangle with
-// depth test (eLessOrEqual) so only sky pixels (depth = 1.0) are shaded.
-// Value noise (3 octaves) on the world-space ray direction produces slow-rolling
-// volumetric cloud shapes concentrated at the horizon.
+// Procedural cyberpunk skybox — faintly glowing cyan-green data fog clouds drifting
+// through infinite darkness. Renders as a fullscreen triangle with depth test
+// (eLessOrEqual at z = 1.0) so only sky pixels (depth = 1.0) are shaded.
+//
+// The procedural sky function itself lives in skybox_common.slang so the same code path
+// is shared with mesh.slang's reflection-ray miss handler — see skybox_common.slang for
+// the noise + horizon-gradient + cloud-threshold logic.
+
+import skybox_common;
 
 struct CameraData {
     float4x4 view;
@@ -29,82 +33,16 @@ struct CameraData {
     float total_emissive_power;
     uint screen_width;
     uint screen_height;
+    float time; //!< Elapsed time in seconds (drives cloud-drift animation).
 };
 
 [[vk::binding(0, 0)]]
 ConstantBuffer<CameraData> camera;
 
-struct SkyboxPushConstants
-{
-    float time;
-};
-
-[[vk::push_constant]]
-SkyboxPushConstants push;
-
 struct VSOutput {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
 };
-
-// ── Value noise (ported from terrain.cpp) ──
-
-//! Hash function — produces a pseudo-random value in [0, 1] from integer coordinates.
-float hashNoise(int2 p, uint seed)
-{
-    uint h = uint(p.x) * 374761393u + uint(p.y) * 668265263u + seed * 1274126177u;
-    h = (h ^ (h >> 13)) * 1103515245u;
-    h = h ^ (h >> 16);
-    return float(h & 0x7FFFFFFF) / float(0x7FFFFFFF);
-}
-
-//! 2D value noise with smoothstep interpolation.
-float valueNoise(float2 coord, uint seed)
-{
-    int2 i = int2(floor(coord));
-    float2 f = frac(coord);
-
-    // Smoothstep interpolation.
-    f = f * f * (3.0 - 2.0 * f);
-
-    float v00 = hashNoise(i + int2(0, 0), seed);
-    float v10 = hashNoise(i + int2(1, 0), seed);
-    float v01 = hashNoise(i + int2(0, 1), seed);
-    float v11 = hashNoise(i + int2(1, 1), seed);
-
-    float v0 = lerp(v00, v10, f.x);
-    float v1 = lerp(v01, v11, f.x);
-    return lerp(v0, v1, f.y);
-}
-
-//! Layered value noise (octaves) for cloud density.
-float layeredNoise(float2 coord, uint octaves, float frequency, uint seed)
-{
-    float value = 0.0;
-    float amplitude = 1.0;
-    float total_amplitude = 0.0;
-    float freq = frequency;
-
-    for (uint i = 0; i < octaves; ++i) {
-        value += amplitude * valueNoise(coord * freq, seed + i);
-        total_amplitude += amplitude;
-        amplitude *= 0.5;
-        freq *= 2.0;
-    }
-
-    return value / total_amplitude;
-}
-
-// ── Sky constants ──
-
-static const float3 SKY_BASE_COLOUR = float3(0.002, 0.005, 0.004);
-static const float3 CLOUD_COLOUR = float3(0.0, 0.04, 0.03);
-static const float CLOUD_FREQUENCY = 0.8;
-static const uint CLOUD_OCTAVES = 3;
-static const uint CLOUD_SEED = 42;
-static const float CLOUD_SPEED = 0.01;
-static const float CLOUD_DENSITY_THRESHOLD = 0.45;
-static const float CLOUD_DENSITY_SOFTNESS = 0.2;
 
 //! Fullscreen triangle vertex shader — generates a screen-filling triangle from vertex ID.
 [shader("vertex")]
@@ -138,22 +76,5 @@ float4 skyFragMain(VSOutput input) : SV_Target
     float4 world_pos = mul(camera.inv_view_projection, float4(ndc, 1.0, 1.0));
     float3 ray_dir = normalize(world_pos.xyz / world_pos.w - camera.camera_pos);
 
-    // Horizon density gradient — clouds concentrate at the horizon, sparse overhead.
-    float horizon_factor = 1.0 - abs(ray_dir.y);
-    horizon_factor = horizon_factor * horizon_factor;
-
-    // Sample layered value noise on the ray direction (XZ plane) with time scroll.
-    float2 noise_coord = ray_dir.xz / max(abs(ray_dir.y) + 0.1, 0.1);
-    noise_coord += float2(push.time * CLOUD_SPEED, push.time * CLOUD_SPEED * 0.7);
-
-    float density = layeredNoise(noise_coord, CLOUD_OCTAVES, CLOUD_FREQUENCY, CLOUD_SEED);
-
-    // Shape the density with a soft threshold.
-    density = smoothstep(CLOUD_DENSITY_THRESHOLD, CLOUD_DENSITY_THRESHOLD + CLOUD_DENSITY_SOFTNESS, density);
-    density *= horizon_factor;
-
-    // Blend between dark sky base and brighter cloud wisps.
-    float3 colour = lerp(SKY_BASE_COLOUR, CLOUD_COLOUR, density);
-
-    return float4(colour, 1.0);
+    return float4(sampleProceduralSky(ray_dir, camera.time), 1.0);
 }

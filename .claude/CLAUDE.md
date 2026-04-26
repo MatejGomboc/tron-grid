@@ -332,9 +332,50 @@ warm-up used. With both fixes shipped, FOG_DENSITY was iterated by
 visual tuning to 0.006 (the "sweet spot" for cyberpunk mist — half the
 original 41a value of 0.012, three times the polish-1 minimum of 0.002).
 
+**Combined-lighting SVGF denoiser** (Phase 8 Etape 42c-polish-3,
+Schied et al. 2017 HPG — the algorithm NVIDIA productionised as RELAX
+in NRD/RTXDI). Mesh-shader fragment writes
+`(r.indirect + direct_diffuse) × ao_factor + direct_specular` into a
+storage image (`lighting_raw`, rgba16f, full-screen, binding 14, sample 0
+gated). SVGF compute pass runs 4 dispatches per frame: pass 0 init
+(reads lighting_raw, EMA-blends per-pixel temporal moments
+μ₁/μ₂ ← luminance/luminance² with α=0.20, computes
+`variance = max(0, μ₂ − μ₁²)`, writes √variance into wavelet alpha);
+passes 1-3 à-trous wavelet at strides 1/2/4 with 5×5 B3-spline kernel
+and per-pixel adaptive luminance edge stop
+`exp(−|Δluma| / (φ_color × √variance))` (φ_color = 2). Pass 3 writes
+the denoised total-lighting result into one of two ping-pong
+`denoised_indirect_history` rgba16f images; next frame's mesh shader
+reads it via binding 12 for the diffuse composite, so the composite
+becomes simply
+`colour = denoised_lighting + emissive + reflected_colour × F_view`.
+Variance-driven σ preserves sharp BRDF-peak hot spots (low-variance
+stable pixels → narrow effective σ → edge preservation) while
+killing MC speckle (high-variance noisy pixels → wide effective σ →
+aggressive smoothing). RT reflection's per-hit indirect lookup also
+routes through the same denoised history (one-frame latent,
+reprojected through `prev_view_projection`), so reflection on
+obsidian shares the wavelet's smoothed output instead of pulling raw
+single-bounce hemisphere noise. **Sky reflection on RT reflection-ray
+miss** (same etape) — the previous miss path returned black, leaving
+the obsidian floor's reflection pitch-black wherever the reflected ray
+pointed at the sky; new `src/skybox_common.slang` Slang module
+(`module skybox_common; public float3 sampleProceduralSky(ray_dir,
+time)`) factors the procedural sky function so the dedicated skybox
+pipeline AND the mesh-shader miss handler share one bit-identical
+implementation. Module wired via `import skybox_common;` and
+`-I ${CMAKE_CURRENT_SOURCE_DIR}` slangc flag (Slang user guide
+"Compiling Code with Slang"). `CameraData` gains a `time` field
+(linked to a new `CameraUBO::time`) read by both consumers — skybox
+pipeline drops its push constant entirely. **Non-opaque RayQuery loop
+fix** (same etape) — reflection + indirect-bounce ray queries now use
+`while (Proceed()) { CommitNonOpaqueTriangleHit() if non-opaque; }`,
+fixing a long-standing bug that hid the glass tower + energy-barrier
+pillar from RT reflections / indirect contributions since Etape 40.
+
 **GPU profiler** (Phase 8 Etape 42 sub-etape 42a) — `vk::raii::QueryPool`
-with `MAX_FRAMES_IN_FLIGHT × (8 passes × 2 timestamps)` = 32 timestamp
-queries. Each pass writes a paired `(start, end)` timestamp via
+with `MAX_FRAMES_IN_FLIGHT × (9 passes × 2 timestamps)` = 36 timestamp
+queries (9th pass added in polish-3 for SVGF). Each pass writes a paired `(start, end)` timestamp via
 `writeTimestamp2(eAllCommands, …)`; the host reads results back after
 the per-frame fence wait (no GPU stall — the fence guarantees
 availability) using `vk::Device::getQueryPoolResults` with the

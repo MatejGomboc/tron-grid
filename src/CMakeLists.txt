@@ -102,10 +102,16 @@ add_custom_command(
     COMMENT "Compiling task.slang -> task.spv (with validation)"
     VERBATIM
 )
+# mesh.slang `import skybox_common;` — the shared procedural-sky module is resolved by
+# slangc against the `-I <src dir>` search path (see Slang user guide
+# "Compiling Code with Slang"). The DEPENDS list also tracks skybox_common.slang so
+# changes to the module trigger a mesh.spv rebuild.
+set(SKYBOX_COMMON_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/skybox_common.slang)
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT_DIR}/mesh.spv
     COMMAND ${SLANGC_EXECUTABLE}
         ${MESH_SOURCE}
+        -I ${CMAKE_CURRENT_SOURCE_DIR}
         -target spirv
         -profile spirv_1_4
         -emit-spirv-directly
@@ -118,7 +124,7 @@ add_custom_command(
         -entry fragTransparent
         -o ${SHADER_OUTPUT_DIR}/mesh.spv
     COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/mesh.spv
-    DEPENDS ${MESH_SOURCE}
+    DEPENDS ${MESH_SOURCE} ${SKYBOX_COMMON_SOURCE}
     COMMENT "Compiling mesh.slang -> mesh.spv (with validation)"
     VERBATIM
 )
@@ -252,12 +258,37 @@ add_custom_command(
     VERBATIM
 )
 
-# Skybox shader (vertex + fragment) — compile, then validate SPIR-V
+# SVGF denoiser shader (compute) — Phase 8 Etape 42c-polish-3 (Schied et al. 2017 SVGF for
+# the single-bounce indirect GI channel). Single entry point with multi-pass parameterisation
+# via push constants — host dispatches it 5 times per frame (1 init + 4 wavelet iterations
+# at strides 1/2/4/8) per the canonical à-trous sequence (Dammertz et al. 2010).
+set(SVGF_DENOISE_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/svgf_denoise.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/svgf_denoise.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${SVGF_DENOISE_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry svgfMain
+        -o ${SHADER_OUTPUT_DIR}/svgf_denoise.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/svgf_denoise.spv
+    DEPENDS ${SVGF_DENOISE_SOURCE}
+    COMMENT "Compiling svgf_denoise.slang -> svgf_denoise.spv (with validation)"
+    VERBATIM
+)
+
+# Skybox shader (vertex + fragment) — compile, then validate SPIR-V.
+# `import skybox_common;` is resolved by slangc against the `-I <src dir>` search path;
+# DEPENDS tracks skybox_common.slang so module changes trigger a rebuild.
 set(SKYBOX_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/skybox.slang)
 add_custom_command(
     OUTPUT ${SHADER_OUTPUT_DIR}/skybox.spv
     COMMAND ${SLANGC_EXECUTABLE}
         ${SKYBOX_SOURCE}
+        -I ${CMAKE_CURRENT_SOURCE_DIR}
         -target spirv
         -profile spirv_1_4
         -emit-spirv-directly
@@ -268,7 +299,7 @@ add_custom_command(
         -entry skyFragMain
         -o ${SHADER_OUTPUT_DIR}/skybox.spv
     COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/skybox.spv
-    DEPENDS ${SKYBOX_SOURCE}
+    DEPENDS ${SKYBOX_SOURCE} ${SKYBOX_COMMON_SOURCE}
     COMMENT "Compiling skybox.slang -> skybox.spv (with validation)"
     VERBATIM
 )
@@ -286,6 +317,7 @@ add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/inject_density.spv
     ${SHADER_OUTPUT_DIR}/volumetric_filter.spv
     ${SHADER_OUTPUT_DIR}/volumetric_composite.spv
+    ${SHADER_OUTPUT_DIR}/svgf_denoise.spv
     ${SHADER_OUTPUT_DIR}/skybox.spv
 )
 add_dependencies(${PROJECT_NAME} shaders)
@@ -318,6 +350,8 @@ add_custom_target(copy_shaders ALL
         ${SHADER_OUTPUT_DIR}/volumetric_filter.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/volumetric_filter.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/volumetric_composite.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/volumetric_composite.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/svgf_denoise.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/svgf_denoise.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/skybox.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/skybox.spv
     COMMENT "Copying shaders to output directory"

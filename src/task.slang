@@ -17,6 +17,10 @@
 // it dispatches mesh shader workgroups for each of the object's meshlets.
 // Meshlet offset/count are per-object (stored in ObjectData SSBO).
 
+// Layout MUST match the C++ CameraUBO struct in pipeline.hpp byte-for-byte; the same
+// UBO is bound to descriptor 0 in mesh.slang and skybox.slang and they share the buffer
+// view. Task shader does not read `time`, but the field is declared here so all shader
+// views of the buffer agree on its byte layout.
 struct CameraData {
     float4x4 view;
     float4x4 projection;
@@ -28,6 +32,7 @@ struct CameraData {
     float total_emissive_power; // Sum of all emissive triangle powers.
     uint screen_width; // Render target width in pixels.
     uint screen_height; // Render target height in pixels.
+    float time; // Elapsed seconds (read by mesh / skybox shaders for sky cloud drift).
 };
 
 // Must match C++ ObjectData struct layout (including padding).

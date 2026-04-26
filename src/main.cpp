@@ -40,6 +40,7 @@
 #if defined(_MSC_VER) && defined(_DEBUG)
 #include <crtdbg.h>
 #endif
+#include <functional>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -147,6 +148,7 @@ constexpr float FOG_TEMPORAL_ALPHA{0.1f};
 enum class GpuPass : uint32_t {
     Frame = 0, //!< Wraps the entire frame — useful as a sanity check vs the sum of pass times.
     Mesh, //!< Mesh-shader pass: opaque draws, skybox, transparent draws (one beginRendering / endRendering).
+    Svgf, //!< SVGF combined-lighting denoiser — 4 compute dispatches (init + 3 wavelet iters at strides 1/2/4). Phase 8 Etape 42c-polish-3.
     VolumetricInject, //!< Volumetric inject compute (per-froxel emissive sampling, shadow rays).
     VolumetricFilter, //!< Volumetric filter compute (spatial 3×3 + temporal reprojection).
     VolumetricComposite, //!< Volumetric composite compute (raymarch + HDR blend).
@@ -248,6 +250,23 @@ static_assert(sizeof(VolumetricCompositePushConstants) == 32,
 static_assert(sizeof(VolumetricFilterPushConstants) == 176,
     "VolumetricFilterPushConstants must be 176 bytes — Slang volumetric_filter.slang FilterPushConstants depends on this exact layout. "
     "Requires GPU with maxPushConstantsSize >= 192 (RTX 4090 / NVIDIA / Intel: 256, modern AMD: 256, spec min: 128)");
+
+//! Push constants for the SVGF denoiser (Phase 8 Etape 42c-polish-3). Drives a single
+//! shader entry point through 4 dispatches per frame: pass 0 = init (read lighting_raw,
+//! update temporal moments, compute √variance), passes 1-3 = à-trous wavelet iterations
+//! at strides 1, 2, 4 (Dammertz et al. 2010 / Schied et al. 2017 sequence — truncated
+//! from 4 iterations to 3 against visual gates; the largest stride was producing
+//! low-frequency blob smear on the obsidian floor). Pass 3 is the FINAL iteration and
+//! writes to the denoised-indirect output image (which next frame's mesh shader reads
+//! via binding 12) instead of the wavelet ping-pong.
+struct SvgfPushConstants {
+    uint32_t screen_width{0};
+    uint32_t screen_height{0};
+    uint32_t pass_id{0};
+    uint32_t stride{0};
+};
+
+static_assert(sizeof(SvgfPushConstants) == 16, "SvgfPushConstants must be 16 bytes — Slang svgf_denoise.slang depends on this exact layout");
 
 //! Computes the number of mip levels for the bloom texture (base = half swapchain resolution).
 [[nodiscard]] static uint32_t bloomMipCount(vk::Extent2D extent)
@@ -432,7 +451,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::DescriptorSet inject_descriptor_set, vk::Pipeline filter_pipeline, vk::PipelineLayout filter_pipeline_layout, vk::DescriptorSet filter_descriptor_set,
     vk::Image filter_output_image, vk::Pipeline composite_pipeline, vk::PipelineLayout composite_pipeline_layout, vk::DescriptorSet composite_descriptor_set,
     vk::Image froxel_image, vk::Image froxel_image_filter_a, vk::Image froxel_image_filter_b, const VolumetricInjectPushConstants& inject_push,
-    const VolumetricFilterPushConstants& filter_push, vk::QueryPool query_pool, uint32_t frame_slot, float time)
+    const VolumetricFilterPushConstants& filter_push, vk::Pipeline svgf_pipeline, vk::PipelineLayout svgf_pipeline_layout, vk::DescriptorSet svgf_descriptor_set,
+    vk::QueryPool query_pool, uint32_t frame_slot)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -444,11 +464,19 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     cmd.resetQueryPool(query_pool, frame_slot * TIMESTAMPS_PER_FRAME, TIMESTAMPS_PER_FRAME);
     cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Frame, false));
 
-    // ── Cross-frame ReSTIR reservoir + volumetric filter memory barrier ──
-    // Two distinct hand-offs from the previous submission to this one:
+    // ── Cross-frame ReSTIR reservoir + volumetric filter + SVGF history memory barrier ──
+    // Three distinct hand-offs from the previous submission to this one:
     //   (a) Fragment-stage ReSTIR reservoir writes → this frame's reservoir reads.
-    //   (b) Compute-stage volumetric filter writes (the ping-pong "history" target) →
-    //       this frame's filter reads it as the temporal-reuse history.
+    //   (b) Compute-stage storage writes → compute-stage reads. Covers two unrelated
+    //       channels with the same src/dst stage pair: the volumetric filter ping-pong
+    //       history image AND the SVGF moments ping-pong (which feeds variance
+    //       estimation in this frame's SVGF init pass). Both rely on the previous
+    //       submission's compute writes being visible to this submission's compute
+    //       reads of the same memory.
+    //   (c) Compute-stage SVGF writes (the previous frame's denoised-indirect output) →
+    //       this frame's mesh-shader fragment reads it via binding 12 for the diffuse
+    //       composite. (Phase 8 Etape 42c-polish-3 — SVGF lives entirely in eGeneral
+    //       layout so this is a pure memory barrier, no image-layout transition.)
     // Submission order provides execution ordering, but per the Vulkan memory model the
     // write→read hand-off needs an explicit memory barrier to be visible.
     vk::MemoryBarrier2 reservoir_cross_frame{};
@@ -463,7 +491,13 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     volumetric_filter_cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
     volumetric_filter_cross_frame.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
 
-    std::array<vk::MemoryBarrier2, 2> cross_frame_barriers{reservoir_cross_frame, volumetric_filter_cross_frame};
+    vk::MemoryBarrier2 svgf_history_cross_frame{};
+    svgf_history_cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    svgf_history_cross_frame.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    svgf_history_cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+    svgf_history_cross_frame.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+
+    std::array<vk::MemoryBarrier2, 3> cross_frame_barriers{reservoir_cross_frame, volumetric_filter_cross_frame, svgf_history_cross_frame};
 
     vk::DependencyInfo dep_cross_frame{};
     dep_cross_frame.setMemoryBarriers(cross_frame_barriers);
@@ -602,7 +636,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     // is the visually correct order for "see through glass at the sky" cases.
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, skybox_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, skybox_layout, 0, {skybox_descriptor_set}, {});
-    cmd.pushConstants<float>(skybox_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, time);
+    // Time is now read by the skybox fragment shader from CameraData.time in the bound
+    // UBO (descriptor 0), updated once per frame by the per-frame UBO upload. No
+    // pipeline-specific push constant required.
     cmd.draw(3, 1, 0, 0);
 
     // ── Transparent pass: render entities [opaque_object_count, total_objects) ──
@@ -735,9 +771,97 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
 
     std::array<vk::ImageMemoryBarrier2, 6> to_compute_barriers{
         hdr_to_general, swap_to_general, bloom_to_general, froxel_to_general, froxel_filter_a_to_general, froxel_filter_b_to_general};
+
+    // Same-frame fragment-stage SSBO write → compute-stage SSBO read for the ReSTIR
+    // reservoir (Phase 8 Etape 42c-polish-3). The mesh shader fragment writes
+    // reservoir_current via binding 10 just above; the SVGF compute pass below reads it
+    // via SVGF binding 0. Without this barrier the SVGF dispatch could race the writes
+    // even though they're ordered by submission. The dst stage stays generic enough that
+    // it costs nothing for the volumetric inject (which doesn't read the reservoir SSBO)
+    // since vol-inject doesn't use any storage-buffer reads in the fragment-write set.
+    vk::MemoryBarrier2 reservoir_frag_to_compute{};
+    reservoir_frag_to_compute.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+    reservoir_frag_to_compute.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    reservoir_frag_to_compute.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    reservoir_frag_to_compute.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+
     vk::DependencyInfo dep_to_compute{};
     dep_to_compute.setImageMemoryBarriers(to_compute_barriers);
+    dep_to_compute.setMemoryBarriers(reservoir_frag_to_compute);
     cmd.pipelineBarrier2(dep_to_compute);
+
+    // ── SVGF denoiser dispatches (Phase 8 Etape 42c-polish-3) ──
+    //
+    // Reads this frame's reservoir.indirect (just written by the mesh shader fragment
+    // above; synchronised via the reservoir_frag_to_compute memory barrier in the
+    // dependency info just submitted), runs an à-trous wavelet chain (Dammertz et al.
+    // 2010 / Schied et al. 2017), and writes the final denoised result to this frame's
+    // denoised-indirect output texture (which becomes next frame's mesh-shader binding-12
+    // history input via the svgf_history_cross_frame memory barrier at the top of this
+    // function).
+    //
+    // Four dispatches in sequence (iterated 4 → 3 wavelet passes against visual gates;
+    // dropping stride 8 halves the worst-case filter footprint and prevents the
+    // low-frequency indirect-bounce blobs that 4 iterations were producing on the
+    // obsidian floor near bright emissives):
+    //   pass 0 — init:        lighting_raw + moments_prev → wavelet_a (rgb=lighting, a=√variance)
+    //                                                       moments_curr (μ₁, μ₂)
+    //   pass 1 — wavelet 0:   wavelet_a → wavelet_b   (stride 1)
+    //   pass 2 — wavelet 1:   wavelet_b → wavelet_a   (stride 2)
+    //   pass 3 — wavelet 2:   wavelet_a → denoised    (stride 4, FINAL)
+    //
+    // Each pass writes to a storage image that the NEXT pass reads, so we need a
+    // compute-shader-write → compute-shader-read memory barrier between every pair.
+    // Layouts stay eGeneral throughout; this is a pure memory hand-off, no image
+    // transition involved.
+    //
+    // No barrier is needed AFTER the final dispatch in the same frame because nothing
+    // in the current frame consumes the denoised image — only NEXT frame's mesh shader
+    // does, and that hand-off is the svgf_history_cross_frame barrier at the top of
+    // recordFrame.
+
+    // GPU profiler: mark start of the entire SVGF chain (4 dispatches as a unit).
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Svgf, false));
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, svgf_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, svgf_pipeline_layout, 0, {svgf_descriptor_set}, {});
+
+    constexpr uint32_t SVGF_GROUP_SIZE{8};
+    uint32_t svgf_groups_x{(extent.width + SVGF_GROUP_SIZE - 1) / SVGF_GROUP_SIZE};
+    uint32_t svgf_groups_y{(extent.height + SVGF_GROUP_SIZE - 1) / SVGF_GROUP_SIZE};
+
+    // Compute → compute memory barrier between SVGF passes. Each pass writes a storage
+    // image the next pass reads; with both bound to the same descriptor set the read
+    // and write would otherwise race. Reused across all 4 inter-pass barriers — the
+    // src/dst masks and access flags are identical for every pair.
+    vk::MemoryBarrier2 svgf_inter_pass{};
+    svgf_inter_pass.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    svgf_inter_pass.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    svgf_inter_pass.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    svgf_inter_pass.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+
+    vk::DependencyInfo svgf_inter_dep{};
+    svgf_inter_dep.setMemoryBarriers(svgf_inter_pass);
+
+    constexpr std::array<uint32_t, 4> SVGF_STRIDES{0u, 1u, 2u, 4u}; // pass 0 unused, passes 1-3 carry the stride.
+
+    for (uint32_t pass{0}; pass < 4; ++pass) {
+        if (pass > 0) {
+            cmd.pipelineBarrier2(svgf_inter_dep);
+        }
+
+        SvgfPushConstants svgf_push{};
+        svgf_push.screen_width = extent.width;
+        svgf_push.screen_height = extent.height;
+        svgf_push.pass_id = pass;
+        svgf_push.stride = SVGF_STRIDES[pass];
+        cmd.pushConstants<SvgfPushConstants>(svgf_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, svgf_push);
+
+        cmd.dispatch(svgf_groups_x, svgf_groups_y, 1);
+    }
+
+    // GPU profiler: mark end of the entire SVGF chain.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Svgf, true));
 
     // ── Volumetric inject + composite (Phase 8 Etape 41 sub-etape 41a) ──
     // Inject writes the per-froxel scattered radiance + extinction; composite raymarches
@@ -997,7 +1121,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
     //! Pass-name strings for the periodic log line. Indexed by GpuPass enum value.
     static constexpr std::array<const char*, static_cast<size_t>(GpuPass::Count)> PASS_NAMES{
-        "frame", "mesh", "vol_inject", "vol_filter", "vol_composite", "bloom_down", "bloom_up", "post"};
+        "frame", "mesh", "svgf", "vol_inject", "vol_filter", "vol_composite", "bloom_down", "bloom_up", "post"};
 
     // Per-swapchain-image semaphores for present
     std::vector<vk::raii::Semaphore> render_finished_semaphores;
@@ -1116,6 +1240,178 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     };
     rebuildBloomMipViews();
 
+    // SVGF denoised-indirect ping-pong textures (Phase 8 Etape 42c-polish-3). Two rgba16f
+    // images sized to the swapchain extent. Each frame the SVGF wavelet's FINAL iteration
+    // writes its output into *one* of these images; the next frame's mesh shader reads the
+    // *other* image (which was the previous frame's SVGF output) via binding 12 for its
+    // diffuse composite. Persistent across frames — the contents ARE the displayed
+    // indirect signal, so they get a one-shot UNDEFINED → GENERAL transition + zero-fill
+    // at startup (and again on resize) instead of the per-frame discard pattern HDR uses.
+    AllocatedImage denoised_indirect_a{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)};
+    AllocatedImage denoised_indirect_b{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)};
+
+    // SVGF wavelet ping-pong scratch textures. Each à-trous iteration alternates which
+    // of these it reads from and which it writes to; the final iteration writes to one
+    // of the denoised_indirect ping-pong images instead. Same recreation-on-resize +
+    // zero-clear treatment as the denoised images, even though their contents are pure
+    // intra-frame scratch (the wavelet always overwrites them top-down each frame), so
+    // that the very first frame's first-iteration read doesn't see uninitialised values
+    // — the spec says reads of uninitialised storage images are undefined and validation
+    // layers may flag it.
+    AllocatedImage svgf_wavelet_a{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)};
+    AllocatedImage svgf_wavelet_b{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)};
+
+    // lighting_raw — single rgba16f scratch image written by the mesh shader fragment
+    // (combined-lighting input to SVGF). Single image, not ping-pong — mesh writes it
+    // and SVGF reads it within the same frame, then it's discarded. Same lifecycle
+    // pattern as the wavelet scratch.
+    AllocatedImage lighting_raw{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)};
+
+    // SVGF per-pixel temporal moments (Schied et al. 2017 §4) — μ₁ luminance + μ₂
+    // luminance² accumulated via per-pixel EMA. Ping-pong because each frame's SVGF
+    // init pass reads the *previous* frame's moments at the same pixel and writes new
+    // moments to the opposite slot. Variance = max(0, μ₂ − μ₁²) drives the adaptive
+    // edge-stop sigma in the wavelet — high-variance (noisy) pixels get aggressive
+    // smoothing, low-variance (stable) pixels get edge preservation. This is what makes
+    // sharp BRDF-peak hot spots survive SVGF while MC-variance speckle still gets
+    // killed. rg16f because each channel is a per-pixel luminance running average
+    // (single channel: μ₁ in .r, μ₂ in .g).
+    AllocatedImage moments_a{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(vk::Format::eR16G16Sfloat),
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)};
+    AllocatedImage moments_b{allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(vk::Format::eR16G16Sfloat),
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)};
+
+    vk::ImageViewCreateInfo denoised_view_info{};
+    denoised_view_info.viewType = vk::ImageViewType::e2D;
+    denoised_view_info.format = HDR_FORMAT;
+    denoised_view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    denoised_view_info.subresourceRange.baseMipLevel = 0;
+    denoised_view_info.subresourceRange.levelCount = 1;
+    denoised_view_info.subresourceRange.baseArrayLayer = 0;
+    denoised_view_info.subresourceRange.layerCount = 1;
+    denoised_view_info.image = denoised_indirect_a.image();
+    vk::raii::ImageView denoised_indirect_a_view(device.get(), denoised_view_info);
+    denoised_view_info.image = denoised_indirect_b.image();
+    vk::raii::ImageView denoised_indirect_b_view(device.get(), denoised_view_info);
+    denoised_view_info.image = svgf_wavelet_a.image();
+    vk::raii::ImageView svgf_wavelet_a_view(device.get(), denoised_view_info);
+    denoised_view_info.image = svgf_wavelet_b.image();
+    vk::raii::ImageView svgf_wavelet_b_view(device.get(), denoised_view_info);
+    denoised_view_info.image = lighting_raw.image();
+    vk::raii::ImageView lighting_raw_view(device.get(), denoised_view_info);
+
+    // Moments views use the same subresource template but their own format (rg16f).
+    vk::ImageViewCreateInfo moments_view_info{denoised_view_info};
+    moments_view_info.format = vk::Format::eR16G16Sfloat;
+    moments_view_info.image = moments_a.image();
+    vk::raii::ImageView moments_a_view(device.get(), moments_view_info);
+    moments_view_info.image = moments_b.image();
+    vk::raii::ImageView moments_b_view(device.get(), moments_view_info);
+
+    // One-shot transition (UNDEFINED → GENERAL) + clear-to-zero of the SVGF ping-pong
+    // images (both denoised-indirect and wavelet scratch). Lambda so it can be called both
+    // at startup (now) and on every swapchain resize (after rebuildFrameBuffers reallocates
+    // the images). Called with the GPU drained — startup runs sequentially before the render
+    // thread spawns, and resize already does waitIdle before recreating frame buffers, so
+    // it's safe to submit + waitIdle a fresh one-shot command buffer here.
+    auto initDenoisedIndirect = [&]() {
+        vk::CommandBufferAllocateInfo init_alloc{};
+        init_alloc.commandPool = *command_pool;
+        init_alloc.level = vk::CommandBufferLevel::ePrimary;
+        init_alloc.commandBufferCount = 1;
+        vk::raii::CommandBuffers init_cmds{device.get(), init_alloc};
+        const vk::raii::CommandBuffer& init_cmd{init_cmds[0]};
+
+        vk::CommandBufferBeginInfo init_begin{};
+        init_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+        init_cmd.begin(init_begin);
+
+        vk::ImageSubresourceRange denoised_subresource{};
+        denoised_subresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+        denoised_subresource.baseMipLevel = 0;
+        denoised_subresource.levelCount = 1;
+        denoised_subresource.baseArrayLayer = 0;
+        denoised_subresource.layerCount = 1;
+
+        std::array<vk::ImageMemoryBarrier2, 7> denoised_to_transfer{};
+        for (uint32_t i{0}; i < 7; ++i) {
+            denoised_to_transfer[i].srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+            denoised_to_transfer[i].srcAccessMask = vk::AccessFlagBits2::eNone;
+            denoised_to_transfer[i].dstStageMask = vk::PipelineStageFlagBits2::eClear;
+            denoised_to_transfer[i].dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            denoised_to_transfer[i].oldLayout = vk::ImageLayout::eUndefined;
+            denoised_to_transfer[i].newLayout = vk::ImageLayout::eGeneral;
+            denoised_to_transfer[i].srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+            denoised_to_transfer[i].dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+            denoised_to_transfer[i].subresourceRange = denoised_subresource;
+        }
+        denoised_to_transfer[0].image = denoised_indirect_a.image();
+        denoised_to_transfer[1].image = denoised_indirect_b.image();
+        denoised_to_transfer[2].image = svgf_wavelet_a.image();
+        denoised_to_transfer[3].image = svgf_wavelet_b.image();
+        denoised_to_transfer[4].image = lighting_raw.image();
+        denoised_to_transfer[5].image = moments_a.image();
+        denoised_to_transfer[6].image = moments_b.image();
+
+        vk::DependencyInfo denoised_dep{};
+        denoised_dep.setImageMemoryBarriers(denoised_to_transfer);
+        init_cmd.pipelineBarrier2(denoised_dep);
+
+        vk::ClearColorValue clear_zero{std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}};
+        init_cmd.clearColorImage(denoised_indirect_a.image(), vk::ImageLayout::eGeneral, clear_zero, denoised_subresource);
+        init_cmd.clearColorImage(denoised_indirect_b.image(), vk::ImageLayout::eGeneral, clear_zero, denoised_subresource);
+        init_cmd.clearColorImage(svgf_wavelet_a.image(), vk::ImageLayout::eGeneral, clear_zero, denoised_subresource);
+        init_cmd.clearColorImage(svgf_wavelet_b.image(), vk::ImageLayout::eGeneral, clear_zero, denoised_subresource);
+        init_cmd.clearColorImage(lighting_raw.image(), vk::ImageLayout::eGeneral, clear_zero, denoised_subresource);
+        init_cmd.clearColorImage(moments_a.image(), vk::ImageLayout::eGeneral, clear_zero, denoised_subresource);
+        init_cmd.clearColorImage(moments_b.image(), vk::ImageLayout::eGeneral, clear_zero, denoised_subresource);
+
+        // Make the clear's writes visible to subsequent compute reads + fragment-shader
+        // reads. The first SVGF dispatch will WRITE one of these images (no read hazard
+        // there — write doesn't depend on prior contents), but the first frame's MESH
+        // shader will READ the denoised image as the previous frame's history. Without
+        // this barrier the read could see uninitialised contents.
+        std::array<vk::ImageMemoryBarrier2, 7> denoised_to_shader{};
+        for (uint32_t i{0}; i < 7; ++i) {
+            denoised_to_shader[i].srcStageMask = vk::PipelineStageFlagBits2::eClear;
+            denoised_to_shader[i].srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            denoised_to_shader[i].dstStageMask = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader;
+            denoised_to_shader[i].dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+            denoised_to_shader[i].oldLayout = vk::ImageLayout::eGeneral;
+            denoised_to_shader[i].newLayout = vk::ImageLayout::eGeneral;
+            denoised_to_shader[i].srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+            denoised_to_shader[i].dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+            denoised_to_shader[i].subresourceRange = denoised_subresource;
+        }
+        denoised_to_shader[0].image = denoised_indirect_a.image();
+        denoised_to_shader[1].image = denoised_indirect_b.image();
+        denoised_to_shader[2].image = svgf_wavelet_a.image();
+        denoised_to_shader[3].image = svgf_wavelet_b.image();
+        denoised_to_shader[4].image = lighting_raw.image();
+        denoised_to_shader[5].image = moments_a.image();
+        denoised_to_shader[6].image = moments_b.image();
+
+        vk::DependencyInfo denoised_shader_dep{};
+        denoised_shader_dep.setImageMemoryBarriers(denoised_to_shader);
+        init_cmd.pipelineBarrier2(denoised_shader_dep);
+
+        init_cmd.end();
+
+        vk::CommandBufferSubmitInfo init_cmd_submit{};
+        init_cmd_submit.commandBuffer = *init_cmd;
+
+        vk::SubmitInfo2 init_submit{};
+        init_submit.setCommandBufferInfos(init_cmd_submit);
+        device.graphicsQueue().submit2({init_submit});
+        device.graphicsQueue().waitIdle();
+    };
+    initDenoisedIndirect();
+
     // Capacity check + zero-fill of the reservoir ping-pong buffers. Called from
     // rebuildFrameBuffers so that each resize starts with a clean ReSTIR state —
     // without this, the one-frame-after-resize sees reservoir indices that now
@@ -1155,7 +1451,16 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         device.graphicsQueue().waitIdle();
     };
 
-    // Rebuilds MSAA, depth, HDR, bloom, and swapchain storage views to match the current swapchain extent.
+    // Indirection slot for SVGF descriptor rebinding on resize. The denoised-indirect ping-
+    // pong views change every time the swapchain resizes (images get reallocated to the new
+    // extent), and BOTH the SVGF compute descriptor sets AND the mesh-pipeline binding 12
+    // need to point at the new views. Those descriptor sets and the mesh pipeline are
+    // created later in this function (after rebuildFrameBuffers itself), so we can't
+    // reference them inside the rebuildFrameBuffers lambda by capture. The std::function
+    // is initialised to a no-op now and overwritten after SVGF setup completes.
+    std::function<void()> bind_svgf_history_views{[]() {}};
+
+    // Rebuilds MSAA, depth, HDR, bloom, denoised-indirect, and swapchain storage views to match the current swapchain extent.
     auto rebuildFrameBuffers = [&]() {
         msaa_image = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, msaa_samples);
@@ -1178,6 +1483,41 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         bloom_image = allocator.createImage(bloom_base_w, bloom_base_h, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT, VK_SAMPLE_COUNT_1_BIT,
             bloom_mip_count);
         rebuildBloomMipViews();
+
+        // SVGF denoised-indirect ping-pong + wavelet scratch ping-pong (Phase 8 Etape
+        // 42c-polish-3) — same recreation pattern as HDR/bloom, plus a one-shot transition
+        // + zero-clear to restore the contract that mesh.slang's binding 12 reads zeroed
+        // memory on the first post-resize frame (rather than uninitialised contents).
+        denoised_indirect_a = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        denoised_indirect_b = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        svgf_wavelet_a = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        svgf_wavelet_b = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        lighting_raw = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(HDR_FORMAT),
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        moments_a = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(vk::Format::eR16G16Sfloat),
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        moments_b = allocator.createImage(swapchain.extent().width, swapchain.extent().height, static_cast<VkFormat>(vk::Format::eR16G16Sfloat),
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        denoised_view_info.image = denoised_indirect_a.image();
+        denoised_indirect_a_view = vk::raii::ImageView(device.get(), denoised_view_info);
+        denoised_view_info.image = denoised_indirect_b.image();
+        denoised_indirect_b_view = vk::raii::ImageView(device.get(), denoised_view_info);
+        denoised_view_info.image = svgf_wavelet_a.image();
+        svgf_wavelet_a_view = vk::raii::ImageView(device.get(), denoised_view_info);
+        denoised_view_info.image = svgf_wavelet_b.image();
+        svgf_wavelet_b_view = vk::raii::ImageView(device.get(), denoised_view_info);
+        denoised_view_info.image = lighting_raw.image();
+        lighting_raw_view = vk::raii::ImageView(device.get(), denoised_view_info);
+        moments_view_info.image = moments_a.image();
+        moments_a_view = vk::raii::ImageView(device.get(), moments_view_info);
+        moments_view_info.image = moments_b.image();
+        moments_b_view = vk::raii::ImageView(device.get(), moments_view_info);
+        initDenoisedIndirect();
+        bind_svgf_history_views();
 
         rebuildSwapchainStorageViews();
 
@@ -1862,6 +2202,170 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         device.get().updateDescriptorSets(writes, {});
     };
 
+    // ── SVGF denoiser compute pipeline (Phase 8 Etape 42c-polish-3, chunk 1) ──
+    //
+    // Spatiotemporal Variance-Guided Filter for the combined diffuse-style lighting
+    // channel (Schied et al. 2017 HPG; the algorithm NVIDIA productionised as RELAX in
+    // NRD/RTXDI). Per-pixel luminance moments + variance-driven adaptive σ + 3 à-trous
+    // wavelet iterations at strides 1/2/4 (truncated from canonical 4 against visual
+    // gates — stride 8 produced low-frequency blob smear on the obsidian floor).
+    // φ_color = 2 (well below Falcor's 10 to preserve sharp BRDF-peak hot spots near
+    // emissives), α_moments = 0.20.
+    std::vector<uint32_t> svgf_denoise_spirv{loadSpirv(exe_dir_rt + "svgf_denoise.spv", logger)};
+
+    // Descriptor set layout — 6 bindings:
+    //   binding 0 = lighting_raw (storage image, read — written by mesh shader fragment;
+    //               contains combined diffuse-style lighting (indirect + direct_diffuse) ×
+    //               ao + direct_specular for SVGF input). Phase 8 Etape 42c-polish-3
+    //               replaced the previous direct reservoir.indirect SSBO read here.
+    //   binding 1 = wavelet ping-pong A (storage image, read+write — used as both source
+    //               and destination across the wavelet iterations)
+    //   binding 2 = wavelet ping-pong B (storage image, read+write)
+    //   binding 3 = denoised lighting output texture (storage image, write — current
+    //               frame's ping-pong slot; final wavelet iteration writes here, next
+    //               frame's mesh shader reads it via binding 12)
+    //   binding 4 = moments_prev (storage image, read — previous frame's per-pixel
+    //               (μ₁, μ₂) luminance moments for variance estimation; Schied 2017 §4)
+    //   binding 5 = moments_curr (storage image, write — this frame's updated moments,
+    //               EMA-blended from prev moments + current frame's lighting_raw luma)
+    std::array<vk::DescriptorSetLayoutBinding, 6> svgf_bindings{};
+    svgf_bindings[0].binding = 0;
+    svgf_bindings[0].descriptorType = vk::DescriptorType::eStorageImage;
+    svgf_bindings[0].descriptorCount = 1;
+    svgf_bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    svgf_bindings[1].binding = 1;
+    svgf_bindings[1].descriptorType = vk::DescriptorType::eStorageImage;
+    svgf_bindings[1].descriptorCount = 1;
+    svgf_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    svgf_bindings[2].binding = 2;
+    svgf_bindings[2].descriptorType = vk::DescriptorType::eStorageImage;
+    svgf_bindings[2].descriptorCount = 1;
+    svgf_bindings[2].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    svgf_bindings[3].binding = 3;
+    svgf_bindings[3].descriptorType = vk::DescriptorType::eStorageImage;
+    svgf_bindings[3].descriptorCount = 1;
+    svgf_bindings[3].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    svgf_bindings[4].binding = 4;
+    svgf_bindings[4].descriptorType = vk::DescriptorType::eStorageImage;
+    svgf_bindings[4].descriptorCount = 1;
+    svgf_bindings[4].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    svgf_bindings[5].binding = 5;
+    svgf_bindings[5].descriptorType = vk::DescriptorType::eStorageImage;
+    svgf_bindings[5].descriptorCount = 1;
+    svgf_bindings[5].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo svgf_layout_info{};
+    svgf_layout_info.setBindings(svgf_bindings);
+    vk::raii::DescriptorSetLayout svgf_descriptor_set_layout{device.get(), svgf_layout_info};
+
+    vk::PushConstantRange svgf_push_range{};
+    svgf_push_range.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    svgf_push_range.offset = 0;
+    svgf_push_range.size = sizeof(SvgfPushConstants);
+
+    vk::PipelineLayoutCreateInfo svgf_pipeline_layout_info{};
+    svgf_pipeline_layout_info.setSetLayouts(*svgf_descriptor_set_layout);
+    svgf_pipeline_layout_info.setPushConstantRanges(svgf_push_range);
+    vk::raii::PipelineLayout svgf_pipeline_layout{device.get(), svgf_pipeline_layout_info};
+
+    vk::ShaderModuleCreateInfo svgf_module_info{};
+    svgf_module_info.setCode(svgf_denoise_spirv);
+    vk::raii::ShaderModule svgf_module{device.get(), svgf_module_info};
+
+    vk::PipelineShaderStageCreateInfo svgf_stage{};
+    svgf_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    svgf_stage.module = *svgf_module;
+    svgf_stage.setPName("svgfMain");
+
+    vk::ComputePipelineCreateInfo svgf_pipeline_info{};
+    svgf_pipeline_info.stage = svgf_stage;
+    svgf_pipeline_info.layout = *svgf_pipeline_layout;
+    vk::raii::Pipeline svgf_pipeline{device.get(), nullptr, svgf_pipeline_info};
+
+    logger.logInfo("SVGF compute pipeline created (à-trous wavelet, 3 iterations).");
+
+    // Descriptor pool — MAX_FRAMES_IN_FLIGHT sets, each with 6 storage images
+    // (4 originals + moments_prev + moments_curr added in canonical-SVGF iteration).
+    std::array<vk::DescriptorPoolSize, 1> svgf_pool_sizes{};
+    svgf_pool_sizes[0].type = vk::DescriptorType::eStorageImage;
+    svgf_pool_sizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 6;
+
+    vk::DescriptorPoolCreateInfo svgf_pool_info{};
+    svgf_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    svgf_pool_info.maxSets = MAX_FRAMES_IN_FLIGHT;
+    svgf_pool_info.setPoolSizes(svgf_pool_sizes);
+    vk::raii::DescriptorPool svgf_descriptor_pool{device.get(), svgf_pool_info};
+
+    std::vector<vk::DescriptorSetLayout> svgf_set_layouts(MAX_FRAMES_IN_FLIGHT, *svgf_descriptor_set_layout);
+    vk::DescriptorSetAllocateInfo svgf_alloc_info{};
+    svgf_alloc_info.descriptorPool = *svgf_descriptor_pool;
+    svgf_alloc_info.setSetLayouts(svgf_set_layouts);
+    std::vector<vk::raii::DescriptorSet> svgf_descriptor_sets{device.get().allocateDescriptorSets(svgf_alloc_info)};
+
+    // SVGF set N reads reservoir_X (where X matches mesh.slang's reservoir WRITE target
+    // for frame N) and the FINAL wavelet iteration writes denoised_X. Wavelet ping-pong
+    // bindings (1/2) point at the same scratch images on every set — only the reservoir
+    // (binding 0) and the denoised output (binding 3) ping-pong with the frame index.
+    // Mesh pipeline binding 12 then reads denoised_Y (the OPPOSITE slot — i.e., the
+    // previous frame's SVGF output).
+    //
+    //   set 0 (use when current_frame == 0): reads reservoir_a, final iter writes denoised_a
+    //   set 1 (use when current_frame == 1): reads reservoir_b, final iter writes denoised_b
+    //
+    // Mesh pipeline binding 12:
+    //   set 0: reads denoised_b (previous frame's SVGF output, written when current_frame == 1)
+    //   set 1: reads denoised_a (previous frame's SVGF output, written when current_frame == 0)
+    auto bindSvgfDescriptors = [&]() {
+        for (uint32_t i{0}; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+            vk::ImageView denoised_write_view{(i == 0) ? *denoised_indirect_a_view : *denoised_indirect_b_view};
+            // Moments ping-pong matches the same convention as the denoised images:
+            // when current_frame == i, SVGF *writes* moments_X (where X = i) and *reads*
+            // moments_Y (the OPPOSITE slot — i.e. last frame's write target).
+            vk::ImageView moments_write_view{(i == 0) ? *moments_a_view : *moments_b_view};
+            vk::ImageView moments_read_view{(i == 0) ? *moments_b_view : *moments_a_view};
+
+            std::array<vk::DescriptorImageInfo, 6> image_infos{};
+            image_infos[0].imageView = *lighting_raw_view; // SVGF input — same image both frames (no ping-pong)
+            image_infos[0].imageLayout = vk::ImageLayout::eGeneral;
+            image_infos[1].imageView = *svgf_wavelet_a_view;
+            image_infos[1].imageLayout = vk::ImageLayout::eGeneral;
+            image_infos[2].imageView = *svgf_wavelet_b_view;
+            image_infos[2].imageLayout = vk::ImageLayout::eGeneral;
+            image_infos[3].imageView = denoised_write_view;
+            image_infos[3].imageLayout = vk::ImageLayout::eGeneral;
+            image_infos[4].imageView = moments_read_view;
+            image_infos[4].imageLayout = vk::ImageLayout::eGeneral;
+            image_infos[5].imageView = moments_write_view;
+            image_infos[5].imageLayout = vk::ImageLayout::eGeneral;
+
+            std::array<vk::WriteDescriptorSet, 6> writes{};
+            for (uint32_t b{0}; b < 6; ++b) {
+                writes[b].dstSet = *svgf_descriptor_sets[i];
+                writes[b].dstBinding = b;
+                writes[b].dstArrayElement = 0;
+                writes[b].descriptorType = vk::DescriptorType::eStorageImage;
+                writes[b].setImageInfo(image_infos[b]);
+            }
+
+            device.get().updateDescriptorSets(writes, {});
+
+            // Mesh pipeline binding 12 reads the OPPOSITE ping-pong slot (= the previous
+            // frame's SVGF output). The reservoir SSBO bindings (10/11) for the mesh
+            // pipeline are bound separately in main() and don't need re-binding on resize,
+            // but bindings 12 (denoised history) and 14 (lighting_raw scratch) point at
+            // images whose views change whenever the swapchain extent changes, so we
+            // must re-bind both here every time this lambda runs.
+            vk::ImageView denoised_read_view{(i == 0) ? *denoised_indirect_b_view : *denoised_indirect_a_view};
+            pipeline.bindDenoisedIndirectHistory(i, denoised_read_view);
+            pipeline.bindLightingRaw(i, *lighting_raw_view);
+        }
+    };
+    bindSvgfDescriptors();
+
+    // Wire up the resize-time rebind indirection slot declared earlier (see comment
+    // around the rebuildFrameBuffers definition for why this needs an indirection).
+    bind_svgf_history_views = bindSvgfDescriptors;
+
     // ── Skybox graphics pipeline ──
 
     std::vector<uint32_t> skybox_spirv{loadSpirv(exe_dir_rt + "skybox.spv", logger)};
@@ -1923,14 +2427,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     skybox_layout_info.setBindings(skybox_ubo_binding);
     vk::raii::DescriptorSetLayout skybox_descriptor_set_layout{device.get(), skybox_layout_info};
 
-    vk::PushConstantRange skybox_push_range{};
-    skybox_push_range.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
-    skybox_push_range.offset = 0;
-    skybox_push_range.size = sizeof(float);
-
+    // The skybox shader reads `time` from CameraData.time (the same UBO this pipeline
+    // already binds at descriptor 0); no push constants required.
     vk::PipelineLayoutCreateInfo skybox_pipeline_layout_info{};
     skybox_pipeline_layout_info.setSetLayouts(*skybox_descriptor_set_layout);
-    skybox_pipeline_layout_info.setPushConstantRanges(skybox_push_range);
     vk::raii::PipelineLayout skybox_pipeline_layout{device.get(), skybox_pipeline_layout_info};
 
     vk::PipelineRenderingCreateInfo skybox_rendering_info{};
@@ -2450,6 +2950,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             ubo.total_emissive_power = total_emissive_power;
             ubo.screen_width = swapchain.extent().width;
             ubo.screen_height = swapchain.extent().height;
+            // Elapsed time in seconds — drives the sky-cloud drift animation. Read by the
+            // skybox fragment shader for primary sky pixels and by the mesh fragment
+            // shader's reflection-miss sky sampling so the floor's reflection picks up
+            // the same sky the player sees above.
+            ubo.time = std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count();
             pipeline.updateCameraUBO(current_frame, ubo);
             prev_view_projection = current_vp;
             ++frame_counter;
@@ -2501,7 +3006,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], *inject_pipeline, *inject_pipeline_layout, *inject_descriptor_sets[0], *filter_pipeline,
             *filter_pipeline_layout, *filter_descriptor_sets[current_frame], filter_output_image, *composite_pipeline, *composite_pipeline_layout,
             *composite_descriptor_sets[current_frame], froxel_image.image(), froxel_image_filter_a.image(), froxel_image_filter_b.image(), inject_push, filter_push,
-            *query_pool, current_frame, std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
+            *svgf_pipeline, *svgf_pipeline_layout, *svgf_descriptor_sets[current_frame], *query_pool, current_frame);
 
         // GPU profiler: this slot now has timestamps that the next iteration through this
         // slot will read back (after the matching fence wait).
@@ -3853,6 +4358,7 @@ int main()
                 // Material 0: obsidian terrain.
                 {0.005f, 0.005f, 0.01f}, // base_colour — deep black with cool tint.
                 0.15f, // roughness — polished obsidian (slightly glossy to soften terrace reflections).
+
                 {}, // emissive — none.
                 0.0f, // emissive_strength.
                 0.0f, // metallic.

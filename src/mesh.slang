@@ -16,6 +16,12 @@
 // Vertices are duplicated per triangle so each gets unique barycentric
 // coordinates for wireframe edge detection in the fragment shader.
 
+// Procedural sky sampling — used by the fragment shader when an RT reflection ray on
+// the obsidian floor misses all geometry, so the reflected colour picks up the same
+// sky the dedicated skybox pass renders for primary rays. Without it the floor's
+// reflection went pitch-black wherever the reflected ray pointed at the sky.
+import skybox_common;
+
 struct CameraData {
     float4x4 view;
     float4x4 projection;
@@ -27,6 +33,7 @@ struct CameraData {
     float total_emissive_power; // Sum of all emissive triangle powers.
     uint screen_width; // Render target width in pixels.
     uint screen_height; // Render target height in pixels.
+    float time; // Elapsed time in seconds (drives sky-cloud drift in reflection sampling).
 };
 
 // Must match C++ ObjectData struct layout (including padding).
@@ -143,6 +150,33 @@ RWStructuredBuffer<Reservoir> reservoir_current; // Current frame — write.
 [[vk::binding(11, 0)]]
 StructuredBuffer<Reservoir> reservoir_previous; // Previous frame — read.
 
+// Binding 12 — previous frame's denoised TOTAL diffuse-style lighting history texture
+// (Phase 8 Etape 42c-polish-3). Written by the SVGF compute pass after the previous
+// frame's mesh shader, contains the à-trous-filtered (indirect_bounce + direct_diffuse)
+// × ao_factor + direct_specular signal — i.e. EVERY noisy MC-sampled lighting term in
+// one denoised buffer. The host alternates which physical image is bound here each
+// frame so we always read the *previous* frame's SVGF output (one-frame latency on the
+// display, same as the reflection lookup at the bottom of fragMain). Layout: rgb =
+// denoised total lighting, a = unused.
+//
+// (The texture is still named "denoised_indirect_history" through the C++ side — the
+// name predates the architectural shift to combined-lighting denoising. Renaming is a
+// cleanup task for after the visual goal is met.)
+[[vk::binding(12, 0)]]
+[[vk::image_format("rgba16f")]]
+RWTexture2D<float4> denoised_indirect_history;
+
+// Binding 14 — raw combined-lighting output written by THIS frame's mesh shader for
+// SVGF input. The SVGF init pass reads this image and starts the à-trous wavelet chain.
+// Written via fragmentStoresAndAtomics at sample 0 only (consistent with the reservoir
+// write gating). Layout: rgb = (indirect_bounce + direct_diffuse) × ao_factor +
+// direct_specular, a = unused. Storage image because we want to write directly from
+// the fragment shader without adding another colour attachment to the dynamic-rendering
+// configuration (which would force matching changes in skybox / transparent pipelines).
+[[vk::binding(14, 0)]]
+[[vk::image_format("rgba16f")]]
+RWTexture2D<float4> lighting_raw;
+
 // Canonical ReSTIR temporal M clamp: prev_r.M is capped at TEMPORAL_M_CAP × current M,
 // with prev_r.w_sum scaled by the same ratio so that the invariant W × M × p_hat = w_sum
 // is preserved (Bitterli et al. 2020). 20× is the value used in the original paper and
@@ -154,6 +188,13 @@ static const uint SPATIAL_M_CAP = 100;
 
 // Spatial reuse — merge reservoirs from neighbouring pixels for faster convergence.
 static const uint NUM_SPATIAL_NEIGHBOURS = 5; // Number of random neighbours to merge.
+// Restored to 20 px in Etape 42c-polish-3 final after combined-lighting SVGF landed —
+// the wavelet now does the heavy spatial smoothing on the lighting signal, so ReSTIR's
+// spatial reuse only needs a tight footprint to feed correlated neighbours into the
+// reservoir's temporal accumulation (Schied et al. 2017 §4: "the wavelet does the
+// heavy lifting; the upstream temporal/spatial accumulator only needs to feed
+// correlated neighbours"). Was briefly widened to 40 px during the polish-3 attempt
+// to mask the (since fixed) un-denoised direct_specular bug.
 static const float SPATIAL_RADIUS = 20.0; // Pixel radius for neighbour sampling.
 
 // Geometric similarity thresholds for reprojection / neighbour rejection.
@@ -171,10 +212,30 @@ static const float RESTIR_MIN_NORMAL_DOT = 0.906; // Reject if dot(n_current, n_
 // sampling geometry term NdotL * cos_light / dist² can explode when a terrain hit
 // happens to land within centimetres of a neon tube and the random CDF picks that
 // tube as the bounce light. Without a clamp these fireflies persist in the EMA
-// forever and propagate visually via bloom. Value picked empirically — well above
-// plausible scene luminance (neon is 15, orb is 20) but below where a single bad
-// sample can dominate the accumulator.
-static const float INDIRECT_FIREFLY_MAX = 30.0;
+// forever and propagate visually via bloom.
+// Etape 42c-polish-3: tightened from 30 → 10 because residual MC variance near
+// the red energy-barrier pillar (emissive ~15) was reading as visible red speckle
+// on the obsidian floor. 10 still allows the strongest legitimate bounce
+// contributions through (a face-on terrain hit ~30 cm from a tube hits ~6–8 in
+// practice) but caps the worst spikes hard before the spatial filter has to deal
+// with them.
+static const float INDIRECT_FIREFLY_MAX = 10.0;
+
+// Per-pixel firefly clamp on direct_specular before it enters the SVGF input. ReSTIR's
+// per-frame emissive-sample variation produces high temporal variance even at "would-be
+// stable hot-spot" pixels, so the wavelet's variance-driven σ ends up smoothing those
+// pixels regardless. With direct_specular routed through SVGF (final polish-3
+// architecture), the practical role of this clamp is to bound the magnitude of MC
+// spikes BEFORE the wavelet sees them — without it, a single luminance-100+ spike at
+// one pixel poisons the wavelet's neighbourhood average across a 5×stride footprint.
+// Iterated 30 → 10 → 5 against visual gates; 5 caps spikes hard while preserving the
+// direct_specular term's contribution where the BRDF peak aligns with the chosen
+// emissive sample direction. (Briefly tested at 0 to confirm the term's visual
+// contribution in our scene was small relative to the RT-reflection path that
+// dominates obsidian highlights — but kept at a finite value to avoid silently
+// killing a canonical PBR direct-lighting term in scenes with rougher materials or
+// dimmer reflective contributions.)
+static const float DIRECT_SPECULAR_FIREFLY_MAX = 5.0;
 
 // Minimum GI-bounce light distance (squared). The primary candidate loop already
 // uses max(dist_sq, 1e-4); the GI bounce path takes a tighter floor because the
@@ -802,9 +863,17 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
             // RAY_FLAG_NONE — consistent with the reflection path. Neon tube quads are
             // thin emitters; making GI rays cull back-faces would silently drop legitimate
             // emissive contribution from tubes hit on the "far" side of a thin quad.
+            //
+            // Same Proceed() loop pattern as the reflection ray below — non-opaque BLAS
+            // hits (glass / energy-barrier pillar) need an explicit
+            // CommitNonOpaqueTriangleHit() to be considered for the bounce contribution.
             RayQuery<RAY_FLAG_NONE> gi_query;
             gi_query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, gi_ray);
-            gi_query.Proceed();
+            while (gi_query.Proceed()) {
+                if (gi_query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+                    gi_query.CommitNonOpaqueTriangleHit();
+                }
+            }
 
             if (gi_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
             {
@@ -907,7 +976,35 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         // converge to sample/rr_prob (1/rr_prob too high) instead of sample.
         float indirect_alpha = (temporal_M > 1) ? (1.0 / float(temporal_M)) : 1.0;
         r.indirect = lerp(r.indirect, new_indirect, indirect_alpha);
-        indirect_gi = r.indirect;
+
+        // Phase 8 Etape 42c-polish-3: combined-lighting denoiser. Mesh shader writes
+        // every term that carries MC variance — temporally-smoothed indirect bounce +
+        // direct_diffuse + direct_specular — into a storage image; the SVGF wavelet
+        // pass denoises the combined signal end-to-end with per-pixel variance-driven
+        // adaptive σ (Schied et al. 2017), so noisy pixels get aggressive smoothing
+        // and stable pixels get edge preservation.
+        //
+        // AO multiplies only the Lambertian (diffuse) lobes per canonical PBR (RTAO
+        // represents small-scale geometric occlusion of the diffuse irradiance integral,
+        // not of mirror reflections); spec stays at full brightness.
+        //
+        // Reflection (reflected_colour × F_view) and self-emissive stay OUT of this
+        // signal: reflection already routes its own indirect lookup through the same
+        // denoised buffer (per-hit reprojection further down), and emissive is a
+        // constant per-material term with no MC variance.
+        float3 lighting_for_svgf = (r.indirect + direct_diffuse) * ao_factor + direct_specular;
+        if (write_reservoir && pixel_in_bounds) {
+            lighting_raw[uint2(pixel_x, pixel_y)] = float4(lighting_for_svgf, 1.0);
+        }
+
+        // The displayed lighting contribution comes from the previous frame's denoised
+        // buffer — the wavelet-filtered total lighting for the same pixel one frame ago
+        // (one-frame latency, same as the reflection lookup further down). The local
+        // variable is still named `indirect_gi` for diff churn reasons; it actually now
+        // holds denoised TOTAL diffuse-style lighting (indirect + direct_diffuse × ao +
+        // direct_specular), so the composite at the bottom of fragMain adds it directly
+        // without re-applying ao or re-adding direct_diffuse/direct_specular.
+        indirect_gi = denoised_indirect_history[uint2(pixel_x, pixel_y)].rgb;
 
         // Store reservoir for next frame's temporal reuse — sample 0 only.
         if (write_reservoir && pixel_in_bounds) {
@@ -953,6 +1050,13 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                 float3 Lo_common = r.y_emissive * geometry_sel * r.W;
                 direct_diffuse = diff_brdf * Lo_common;
                 direct_specular = spec_brdf * Lo_common;
+
+                // Firefly clamp on direct_specular only — see DIRECT_SPECULAR_FIREFLY_MAX
+                // declaration above for the full rationale. Bounds spike magnitude
+                // (per-channel cap at 30) while leaving the per-pixel variance pattern
+                // intact for the natural "raytraced fireflies" look.
+                direct_specular = min(direct_specular,
+                    float3(DIRECT_SPECULAR_FIREFLY_MAX, DIRECT_SPECULAR_FIREFLY_MAX, DIRECT_SPECULAR_FIREFLY_MAX));
             }
         }
     }
@@ -979,11 +1083,43 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         reflect_ray.TMax = 200.0;
 
         // No back-face culling — neon tube quads must be visible from both sides in reflections.
+        //
+        // Phase 8 Etape 42c-polish-3 fix: the previous code called Proceed() once and
+        // assumed any hit would auto-commit. That's true for OPAQUE BLAS geometries (the
+        // terrain, neon tubes, orb), but the glass tower and energy-barrier pillar BLASes
+        // are flagged non-opaque (Etape 40, to support transparency / refraction inside
+        // their own ray queries). For non-opaque geometry the inline ray query stops at
+        // each candidate hit and asks the shader to decide whether to commit it via
+        // CommitNonOpaqueTriangleHit(). Without an explicit loop we leave those candidates
+        // un-committed → reflection sees nothing where the pillar should be → pillar
+        // doesn't appear in obsidian reflections. Auto-committing every candidate makes
+        // the reflection treat non-opaque surfaces as fully visible, which is correct for
+        // bright emissives like the pillar.
         RayQuery<RAY_FLAG_NONE> reflect_query;
         reflect_query.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, reflect_ray);
-        reflect_query.Proceed();
+        while (reflect_query.Proceed()) {
+            if (reflect_query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+                reflect_query.CommitNonOpaqueTriangleHit();
+            }
+        }
 
-        if (reflect_query.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+        if (reflect_query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
+        {
+            // Reflection ray missed all geometry — sample the procedural skybox at the
+            // reflection direction so the obsidian floor's reflection picks up the same
+            // sky the dedicated skybox pass renders for primary rays. Without this branch
+            // the reflection went pitch-black wherever the reflected ray pointed at the
+            // sky, leaving bright reflected emissives (orb, neon tubes) as isolated
+            // shapes against a void instead of being framed by the warm horizon glow and
+            // cloud wisps the player sees in the actual sky above.
+            //
+            // The same `sampleProceduralSky` function lives in skybox_common.slang and
+            // is called from the dedicated skybox pipeline's fragment shader, so the
+            // visual signature of the sky is bit-identical between primary and
+            // reflection paths.
+            reflected_colour = sampleProceduralSky(reflect_dir, camera.time);
+        }
+        else
         {
             // Look up the material of the reflected hit via instance custom index.
             uint hit_instance = reflect_query.CommittedInstanceID();
@@ -1006,11 +1142,22 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                 float3 hit_emissive = lerp(hit_tube_colour * TUBE_EMISSIVE_STRENGTH, float3(0.0, 0.0, 0.0), hit_wire);
                 float3 hit_base = lerp(float3(0.0, 0.0, 0.0), hit_mat.base_colour, hit_wire);
 
-                // Look up the reflected hit's indirect GI from its reservoir (one frame latent).
-                // reservoir_previous stores last frame's data, so reproject through last
-                // frame's view-projection to sample the correct pixel — using the current
-                // frame's VP (as the previous implementation did) misses the mark whenever
-                // the camera moves.
+                // Look up the reflected hit's indirect GI from the previous frame's
+                // denoised history texture (one frame latent — same temporal alignment as
+                // reservoir_previous, but routed through the SVGF wavelet output instead
+                // of the raw reservoir.indirect). Reproject through last frame's view-
+                // projection to find the right pixel; using the current frame's VP would
+                // miss the mark whenever the camera moves.
+                //
+                // Phase 8 Etape 42c-polish-3: this is the load-bearing fix. The OLD code
+                // read reservoir_previous[hit_res_idx].indirect, which holds raw single-
+                // bounce hemisphere-sample MC noise. Multiplied by F_view (≈ 1 at grazing
+                // angles on low-roughness obsidian), that noise dropped straight into the
+                // final colour as bright single-pixel speckle near bright reflected
+                // emissives — visually identical to the speckle SVGF was supposedly meant
+                // to remove. Routing this through the same denoised_indirect_history
+                // texture the diffuse composite reads makes the reflection share SVGF's
+                // smoothed output.
                 float3 hit_indirect = hit_base * AMBIENT; // Fallback.
                 float4 hit_clip = mul(camera.prev_view_projection, float4(hit_pos, 1.0));
                 if (hit_clip.w > 0.0) {
@@ -1020,11 +1167,7 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
                     if ((hit_px.x >= 0) && (hit_px.x < int(camera.screen_width))
                         && (hit_px.y >= 0) && (hit_px.y < int(camera.screen_height)))
                     {
-                        uint hit_res_idx = uint(hit_px.y) * camera.screen_width + uint(hit_px.x);
-                        Reservoir hit_res = reservoir_previous[hit_res_idx];
-                        if (hit_res.M > 0) {
-                            hit_indirect = hit_res.indirect;
-                        }
+                        hit_indirect = denoised_indirect_history[uint2(hit_px)].rgb;
                     }
                 }
 
@@ -1033,21 +1176,19 @@ float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Targe
         }
     }
 
-    // Canonical hybrid composite (per Bitterli et al. / Karis UE4 notes / LearnOpenGL IBL):
-    // direct analytic lighting + Fresnel-weighted RT reflection + emissive + indirect. The
-    // two specular terms cover different things — analytic spec evaluates the Cook-Torrance
-    // BRDF at the selected emissive sample's direction (roughness-broadened lobe around that
-    // single light), while RT reflection captures scene radiance at the mirror direction.
-    // Slight overlap in the perfect-mirror limit is accepted as the standard hybrid-rendering
-    // compromise; replacing one with the other blacks out pixels whose reflection ray misses.
+    // Final composite (Phase 8 Etape 42c-polish-3 architecture):
     //
-    // RTAO (ao_factor ∈ [0, 1]) multiplies only the Lambertian lobes — the indirect GI
-    // diffuse bounce and the direct-lighting diffuse contribution. Specular (analytic and
-    // RT reflection) and emissive are not attenuated by AO because AO represents small-scale
-    // geometric occlusion of the diffuse irradiance integral, not of mirror reflections or
-    // self-emitted radiance.
-    float3 diffuse_term = (indirect_gi + direct_diffuse) * ao_factor;
-    float3 colour = diffuse_term + direct_specular + emissive + reflected_colour * F_view;
+    //   `indirect_gi` is a misnomer kept for diff churn — actually holds the previous
+    //   frame's SVGF-DENOISED *total* diffuse-style lighting:
+    //       (r.indirect + direct_diffuse) × ao_factor + direct_specular
+    //   …all the noisy MC-sampled terms in one wavelet-filtered buffer with per-pixel
+    //   variance-driven σ. This frame re-computes the same combination and writes it
+    //   to `lighting_raw` for next frame's SVGF input (see `lighting_for_svgf` above).
+    //
+    //   `emissive` (per-material constant) and `reflected_colour × F_view` (RT
+    //   reflection — its own per-hit indirect lookup already routes through the
+    //   denoised buffer further up) round out the composite.
+    float3 colour = indirect_gi + emissive + reflected_colour * F_view;
     return float4(colour, 1.0);
 }
 
