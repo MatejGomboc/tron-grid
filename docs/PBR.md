@@ -487,6 +487,156 @@ overlapping translucent geometry to justify the plumbing cost.
 
 ---
 
+## Volumetric Fog
+
+TronGrid renders atmospheric scattering through a **frustum-aligned voxel
+grid** (commonly called a *froxel grid*) — the AAA-standard approach
+used by Frostbite, Unreal Engine 4/5, and Unity HDRP. The reference
+paper is Wronski 2014 (SIGGRAPH "Volumetric Fog"). Implementation lives
+in `src/inject_density.slang` (per-froxel scattering + extinction) and
+`src/volumetric_composite.slang` (per-pixel raymarch + composite).
+
+### The Froxel Grid
+
+The grid is a 3D image (`R16G16B16A16_SFLOAT`, dimensions
+`160 × 90 × 64`) where each voxel — froxel — stores:
+
+| Channel | Meaning |
+|---------|---------|
+| `.rgb` | In-scattered radiance arriving at the froxel toward the camera |
+| `.a` | Optical depth = extinction × slice thickness (extinction integrated over the slice's view-space depth) |
+
+X/Y are screen-space tiles (each froxel covers an 8×8-pixel screen
+region at 1280×720). Z slices the view direction with a **logarithmic
+depth distribution**:
+
+```text
+depth(z) = near · (far / near)^(z / Z)
+```
+
+where `near = 0.1 m`, `far = 120 m`, `Z = 64`. This packs more
+resolution close to the camera (where the projected screen size of each
+froxel is largest and parallax is most visible) and less at the far
+plane.
+
+### Scattering Equation
+
+The volumetric rendering equation along a view ray, integrating from
+camera (`s = 0`) to the surface hit (`s = D`):
+
+```text
+L_camera = ∫_0^D L_scatter(s) · T(0, s) ds + L_surface · T(0, D)
+```
+
+where the transmittance between two points is
+
+```text
+T(a, b) = exp(-∫_a^b σ_t(s') ds')
+```
+
+and `σ_t` is the extinction coefficient (absorption + out-scattering).
+For a discrete froxel grid this collapses to the classic Frostbite
+recurrence:
+
+```text
+T_slice    = exp(-σ_t · dz)                    // transmittance through slice
+L_total   += L_slice · T_accumulated            // scattered light, attenuated by depth so far
+T_accumulated *= T_slice                        // attenuate accumulated transmittance
+```
+
+After all slices, the final pixel colour is
+
+```text
+final = L_surface · T_accumulated + L_total
+```
+
+i.e. the surface colour attenuated by total transmittance through the
+fog volume, plus all the light scattered from the volume back toward
+the camera along the way.
+
+### Density Injection
+
+`inject_density.slang` runs once per froxel (1 thread per froxel,
+`[numthreads(8, 8, 1)]`, `(20 × 12 × 64)` workgroups).
+
+For each froxel, the shader:
+
+1. Reconstructs the world-space position of the froxel centre. NDC `xy`
+   maps to a near-plane direction via `inv_view_projection`; `view_z`
+   from the slice index is the depth along **camera_forward**, so the
+   parametric distance along the ray is
+   `t = view_z / dot(ray_dir, camera_forward)` — not `view_z`
+   directly, which would put off-axis pixels at the wrong depth.
+   `camera_forward` is recovered from `inv_view_projection` itself by
+   unprojecting the NDC centre.
+2. Computes a height-falloff density: full strength at and below
+   `FOG_HEIGHT_BASE = 4 m`, exponentially attenuated above with a
+   `FOG_HEIGHT_FALLOFF = 6 m` scale. Models a ground-hugging fog layer
+   that's denser near the Tron grid floor than up in the sky.
+3. Stores `(0, 0, 0, σ_t · slice_dz)` in the froxel — no in-scattered
+   radiance yet (a follow-up etape adds per-froxel emissive sampling
+   via TLAS shadow rays for actual neon light shafts).
+
+### Raymarch Composite
+
+`volumetric_composite.slang` runs once per HDR pixel
+(`[numthreads(8, 8, 1)]`, screen-tile dispatch).
+
+For each pixel: walk through the 64 froxels of that pixel's column,
+running the Frostbite recurrence above. Output:
+
+```text
+hdr_image[pixel].rgb = scene · accumulated_transmittance + accumulated_radiance
+```
+
+The composite runs **before** bloom extraction so the fog itself can
+bloom — bright fog regions (near the sun, around emissive geometry in
+later sub-etapes) bleed correctly through the bloom chain rather than
+appearing as sharp halos.
+
+### Why Compute, Not Pixel Shaders
+
+The froxel grid is built once per frame on the GPU and consumed by the
+composite. Doing density injection in a fragment shader (rasterising
+proxy geometry) would be possible but ties the cost to screen
+fillrate. With compute, each froxel pays a fixed cost regardless of
+camera angle, and the 921 600 froxels run in well under a millisecond
+on the RTX 4090.
+
+### Vulkan Sequencing
+
+Per-frame ordering inside `recordFrame`:
+
+1. Mesh shader pass writes opaque + transparent HDR colour.
+2. Image transitions: HDR + swapchain + bloom + froxel → `eGeneral`.
+3. Density injection compute writes the froxel grid.
+4. Memory barrier (compute → compute, froxel write → froxel read).
+5. Volumetric composite compute reads froxel + RW HDR.
+6. Memory barrier (compute → compute, HDR write → HDR read).
+7. Bloom extraction reads the **fogged** HDR.
+8. Bloom downsample / upsample chain.
+9. Tonemap composite to swapchain.
+
+### Limitations and Future Work
+
+- **No in-scattered radiance yet** — added in sub-etape 41b via
+  per-froxel emissive sampling (one TLAS shadow ray per froxel toward
+  each emissive light source, weighted by the Henyey-Greenstein phase
+  function for forward / back scattering).
+- **No temporal reprojection** — added in sub-etape 41c. Reuses prior
+  frame's froxel grid via the existing motion vectors (Etape 37);
+  dramatically reduces noise from sampling sparse light sources.
+- **Density injection ignores the depth buffer** — fog accumulates
+  through opaque geometry too. Sub-etape 41c adds a depth-aware
+  early-out.
+- **Per-slice scattering is "front of slice" approximation** — the
+  Frostbite-accurate integrated form
+  `L = (L · (1 - T_slice)) / σ_t` would attenuate scattered light
+  through the slice itself, more accurate at high densities. Acceptable
+  approximation while overall density is low.
+
+---
+
 ## References
 
 ### PBR and Microfacet Theory
@@ -583,4 +733,4 @@ overlapping translucent geometry to justify the plumbing cost.
 
 ---
 
-*Last updated: 2026-04-26*
+*Last updated: 2026-04-26 (Etape 41a)*
