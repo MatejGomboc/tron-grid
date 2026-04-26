@@ -186,52 +186,90 @@ cyberpunk rendering (Frostbite/DICE technique).
 **After this step:** faint neon-coloured fog rises from the grid lines,
 light shafts pierce the darkness — the world breathes.
 
-### Etape 42 — Adaptive LOD + Temporal Denoising
+### Etape 42 — Adaptive LOD + Temporal Denoising + GPU Profiling
 
-Nanite-inspired GPU-driven level-of-detail and temporal accumulation
-for noise-free RT at 4K @ 60+ FPS.
+GPU-driven level-of-detail, additional temporal denoising for the noisier
+RT outputs, and instrumentation for the 4K @ 60+ FPS performance target.
+Split into three sub-etapes — the LOD work is the largest of the three
+and may itself span multiple PRs.
 
-**Approach:**
+#### Sub-etape 42a — GPU profiling
 
-- **Adaptive meshlet LOD** — hierarchical meshlet DAG with GPU-driven
-  selection based on screen-space error (Nanite technique). Dense
-  meshlets near camera, coarse in the distance. Seamless transitions
-  via morphing or dithered crossfade.
-- **Temporal accumulation** — reuse prior frames to denoise RT output.
-  Motion vectors (from Etape 37) enable correct reprojection during
-  camera movement. Exponential moving average with rejection for
-  disoccluded pixels.
-- **GPU profiling** — timestamp queries for per-pass timing, automatic
-  bottleneck detection. Target: 4K @ 60+ FPS sustained on RTX 4090.
+**Goal:** measure before optimising. Add `VkQueryPool` timestamp queries
+around every major pass in `recordFrame` and report per-pass GPU times
+periodically. Foundation for 42b/42c performance work, and useful on
+its own to verify the existing pipeline meets the 4K @ 60+ target on
+the RTX 4090.
 
-**After this step:** the world renders at maximum quality with noise-free
-ray tracing and automatic detail scaling. Unreal Engine-quality output.
+**Scope:**
+
+- One timestamp pool sized for `MAX_FRAMES_IN_FLIGHT` × `(passes × 2)`
+  (start + end per pass; ping-pong slot per frame in flight).
+- `vkCmdResetQueryPool` at the start of each frame's slot, paired
+  `vkCmdWriteTimestamp` calls at pass boundaries.
+- Read back the previous slot's results after the per-frame fence wait
+  (already drained, no GPU stall).
+- Multiply by `VkPhysicalDeviceLimits::timestampPeriod` for nanoseconds.
+- Maintain a per-pass exponential moving average on the CPU; log via
+  `LoggingLib::Logger` once per second with all per-pass times in ms.
+- Pass coverage: mesh shader (opaque + skybox + transparent), volumetric
+  inject, volumetric filter, volumetric composite, bloom downsample
+  chain, bloom upsample chain, post-process tonemap, full frame.
+
+**Acceptance:** debug builds log per-pass GPU timings every ~1 s; sum
+of per-pass times matches the full-frame timestamp ± rasterisation
+overhead; no validation errors; release-build cost negligible.
+
+#### Sub-etape 42b — Temporal denoising for remaining noisy RT outputs
+
+**Goal:** clean up the RT outputs that aren't yet temporally filtered.
+Volumetric fog already has spatial+temporal (Etape 41c); ReSTIR DI
+already has temporal+spatial reuse (Etape 37b/c); RTAO already has
+temporal EMA + spatial averaging (Etape 39). Remaining candidates for
+edge-aware filtering: indirect GI bounce term and the RT reflection
+hit colour. Likely an A-trous or simple bilateral filter; SVGF would
+be over-engineering for the current single-bounce setup.
+
+#### Sub-etape 42c — Adaptive meshlet LOD (Nanite-style)
+
+**Goal:** hierarchical meshlet DAG with GPU-driven LOD selection based
+on screen-space error. Dense meshlets near the camera, coarse in the
+distance. Seamless transitions via morphing or dithered crossfade.
+Largest sub-etape; likely needs an offline mesh-decimation step in the
+build pipeline plus runtime DAG traversal in the task shader. Probably
+multiple PRs of its own.
+
+**After this etape:** the world renders at the full Phase 8 quality
+target — noise-free RT, automatic detail scaling, instrumented
+performance.
 
 ### Acceptance Criteria
 
 - [x] No point light abstraction — all lighting from emissive geometry
 - [x] ReSTIR DI for direct lighting from emissive surfaces
 - [x] Single-bounce indirect GI via cosine-weighted hemisphere sampling (Etape 38)
-- [ ] Full ReSTIR GI with path resampling and multi-bounce indirect
-- [ ] World-space irradiance cache
 - [x] Russian roulette path termination
 - [x] Motion vectors for temporal reuse
 - [x] Ray-traced ambient occlusion (RTAO)
 - [x] Transparent materials with refraction (Snell's law, IOR)
-- [ ] Weighted Blended OIT or equivalent (Etape 40 deliberately uses simpler premultiplied-alpha
-  blending — full WBOIT is deferred until the scene has enough overlapping transparents to
-  justify the accumulation/revealage targets)
 - [x] Per-material opacity in material SSBO
 - [x] Froxel-based volumetric fog with neon light shafts
 - [x] Temporal reprojection for fog noise reduction
-- [ ] Adaptive meshlet LOD with seamless transitions
-- [ ] Temporal denoising for RT output
-- [ ] GPU profiling with per-pass timestamps
+- [ ] Adaptive meshlet LOD with seamless transitions (42c)
+- [ ] Temporal denoising for RT output (42b — additional cleanup beyond ReSTIR / RTAO / fog)
+- [x] GPU profiling with per-pass timestamps (42a)
 - [ ] 4K @ 60+ FPS sustained on RTX 4090
 - [ ] Proper synchronisation barriers for all new passes
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
 - [ ] **Phase 8 complete — full RT + advanced rendering**
+
+The originally-planned ReSTIR GI multi-bounce, world-space irradiance
+cache, and Weighted Blended OIT have moved to **Backlog**. Single-bounce
+indirect GI (Etape 38) covers the colour-bleeding visual goal at much
+lower complexity; WBOIT is unjustified until the scene has enough
+overlapping transparents that the simpler premultiplied-alpha sort
+breaks down.
 
 ---
 
@@ -767,6 +805,24 @@ features that separate a tech demo from a published game.
   persistence via the DLL interface.
 - **Memory budget** — VMA budget tracking, streaming eviction policy,
   residency management for large scenes.
+- **Full ReSTIR GI (multi-bounce)** — moved from Phase 8 acceptance.
+  Single-bounce indirect GI (Etape 38) via cosine-weighted hemisphere
+  sampling already covers the colour-bleeding visual goal. Multi-bounce
+  ReSTIR GI (Bitterli et al. 2021) is path resampling with reservoirs,
+  much more complex than the surface ReSTIR DI we already implement.
+  Revisit when scene complexity makes the additional bounces visually
+  meaningful.
+- **World-space irradiance cache (Lumen-style)** — moved from Phase 8
+  acceptance. Lumen's surface cache amortises GI computation across
+  frames by caching lighting on surfaces. Significant architectural
+  effort; deferred until the test scene grows enough that the per-frame
+  GI cost becomes a measurable bottleneck (would be informed by 42a
+  profiling).
+- **Weighted Blended OIT (WBOIT)** — moved from Etape 40 acceptance.
+  The current premultiplied-alpha "over" blend is sufficient for two
+  non-overlapping transparents (glass tower + energy pillar). WBOIT
+  becomes worthwhile only once the scene grows enough overlapping
+  translucent geometry that sorted blending fails.
 - **Multiplayer** — extract world state to authoritative server, network
   replication, prediction + reconciliation, multiple concurrent players.
   See `docs/VISION.md` § Future: Multiplayer. Deferred until single-player
@@ -778,6 +834,57 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Phase 8 Etape 42 sub-etape 42a: GPU profiling
+
+Foundation for the rest of Etape 42 — measure first, optimise after. Adds
+`vk::raii::QueryPool` with `MAX_FRAMES_IN_FLIGHT × (8 passes × 2 timestamps)`
+= 32 timestamp queries; per-pass `(start, end)` pairs written via
+`writeTimestamp2(eAllCommands, …)` around every major pass in `recordFrame`
+(mesh + skybox + transparent, volumetric inject / filter / composite, bloom
+downsample / upsample chains, post-process tonemap, plus a frame-total
+wrapper).
+
+Host side reads results back **after the per-frame fence wait** — the fence
+guarantees the matching submission has finished, so the queries are
+available without an extra GPU sync stall. Used the user-buffer overload of
+`vk::Device::getQueryPoolResults` (the alternative `vk::raii::QueryPool::getResults`
+overload returns `std::vector` and would heap-allocate every frame; the
+ArrayProxy form on the raii class doesn't exist). Per-pass EMA averages
+(α = 0.05, ~20-frame smoothing) updated each frame; logged once per second.
+
+Capability check via `getQueueFamilyProperties()[graphicsFamilyIndex].timestampValidBits`;
+self-disables cleanly when zero (in practice all modern desktops support it).
+First `MAX_FRAMES_IN_FLIGHT` frames skip readback because the slot has not
+been written yet.
+
+**First numbers from the test scene** (debug build, GPU-Assisted Validation
+enabled, 1280×720, RTX 4090 Laptop):
+
+```text
+[INFO] GPU times (ms): frame=14.32 mesh=5.79 vol_inject=6.83 vol_filter=0.40
+                       vol_composite=1.02 bloom_down=0.025 bloom_up=0.020 post=0.029
+```
+
+Sum of per-pass times ≈ frame total — sanity check passes. Headline finding:
+**volumetric inject is the dominant per-frame cost (~7 ms in debug)** at 4
+samples × 320×180×64 froxels with TLAS shadow rays. The mesh-shader pass
+(opaque + ReSTIR + transparent) is 5–6 ms. Everything else (filter,
+composite, bloom, post) is sub-millisecond.
+
+Implications for 42b/42c:
+
+- Inject is the natural target if 4K @ 60+ becomes infeasible on release
+  builds — could drop to 2 samples per froxel + rely more heavily on
+  temporal accumulation, or reduce the grid resolution back from 320×180.
+- Mesh-shader cost is dominated by per-fragment ReSTIR work; not much to
+  optimise there without a different sampling strategy.
+- Bloom and post-process are essentially free, no need to revisit.
+- Release-build numbers will be substantially lower (debug + GPU-AV is the
+  worst case); user should re-profile on a release build before deciding
+  whether to chase any of the above.
+
+107 PRs merged.
 
 ### 2026-04-26 — Phase 8 Etape 41 sub-etapes 41b + 41c: emissive light shafts + temporal reprojection
 

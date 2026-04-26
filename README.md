@@ -40,7 +40,9 @@ ReSTIR DI, 4 samples, TLAS shadow ray, Henyey-Greenstein phase function
 g=0.6), spatial 3×3 + temporal-reprojection filter (ping-pong filter
 images, EMA blend with α=0.1, ~10-frame effective sample count), and
 raymarch composite (Wronski 2014 / Frostbite recurrence with bilinear XY
-upsample). Inserted before bloom extraction so the fog itself can bloom. Mesh shader rendering
+upsample). Inserted before bloom extraction so the fog itself can bloom.
+GPU profiler with `vk::QueryPool` timestamps around every major pass;
+per-pass EMA times logged once per second. Mesh shader rendering
 (task + mesh + fragment), procedural Tron terrain, per-object frustum
 culling, meshlet-based geometry, entity/component scene.
 Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU

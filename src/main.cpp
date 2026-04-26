@@ -136,6 +136,42 @@ constexpr float FOG_HG_ASYMMETRY{0.6f};
 //! / UE / Unity HDRP range.
 constexpr float FOG_TEMPORAL_ALPHA{0.1f};
 
+//! GPU-profiling pass identifiers (Phase 8 Etape 42 sub-etape 42a). Each pass writes a
+//! pair of timestamps (start, end) into the shared query pool; the difference is the
+//! pass's GPU duration. Order is purely cosmetic for log readability.
+enum class GpuPass : uint32_t {
+    Frame = 0, //!< Wraps the entire frame — useful as a sanity check vs the sum of pass times.
+    Mesh, //!< Mesh-shader pass: opaque draws, skybox, transparent draws (one beginRendering / endRendering).
+    VolumetricInject, //!< Volumetric inject compute (per-froxel emissive sampling, shadow rays).
+    VolumetricFilter, //!< Volumetric filter compute (spatial 3×3 + temporal reprojection).
+    VolumetricComposite, //!< Volumetric composite compute (raymarch + HDR blend).
+    BloomDownsample, //!< Bloom extract + downsample mip chain.
+    BloomUpsample, //!< Bloom tent-filter upsample chain.
+    PostProcess, //!< Post-process compute (ACES tonemap + sRGB encode + bloom composite + cinematic effects).
+    Count //!< Sentinel — number of distinct passes profiled per frame.
+};
+
+//! Each profiled pass writes a (start, end) timestamp pair, so two queries per pass.
+constexpr uint32_t TIMESTAMPS_PER_FRAME{static_cast<uint32_t>(GpuPass::Count) * 2u};
+
+//! Total queries reserved in the timestamp pool: ping-pong slot per frame in flight.
+constexpr uint32_t TIMESTAMP_POOL_SIZE{TIMESTAMPS_PER_FRAME * MAX_FRAMES_IN_FLIGHT};
+
+//! GPU-profiling EMA blend factor — `ema = lerp(ema, sample, alpha)`. 0.05 ≈ 20-frame
+//! effective average; smooth enough to read at a glance, fast enough to react to frame
+//! cost changes within ~third of a second at 60 fps.
+constexpr float GPU_PROFILER_EMA_ALPHA{0.05f};
+
+//! How often to log the per-pass GPU timings, measured in frames. 60 ≈ once per second
+//! at 60 fps. Logging more often is noisy; less often is sluggish for live tuning.
+constexpr uint64_t GPU_PROFILER_LOG_INTERVAL_FRAMES{60u};
+
+//! Computes the absolute query-pool index for a given frame slot, pass, and timestamp endpoint.
+[[nodiscard]] static constexpr uint32_t timestampIndex(uint32_t frame_slot, GpuPass pass, bool is_end)
+{
+    return (frame_slot * TIMESTAMPS_PER_FRAME) + (static_cast<uint32_t>(pass) * 2u) + (is_end ? 1u : 0u);
+}
+
 //! Volumetric inject compute shader push-constant block. Layout MUST match the slang
 //! FroxelPushConstants struct in src/inject_density.slang byte-for-byte (scalar layout).
 struct VolumetricInjectPushConstants {
@@ -391,11 +427,17 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::DescriptorSet inject_descriptor_set, vk::Pipeline filter_pipeline, vk::PipelineLayout filter_pipeline_layout, vk::DescriptorSet filter_descriptor_set,
     vk::Image filter_output_image, vk::Pipeline composite_pipeline, vk::PipelineLayout composite_pipeline_layout, vk::DescriptorSet composite_descriptor_set,
     vk::Image froxel_image, vk::Image froxel_image_filter_a, vk::Image froxel_image_filter_b, const VolumetricInjectPushConstants& inject_push,
-    const VolumetricFilterPushConstants& filter_push, float time)
+    const VolumetricFilterPushConstants& filter_push, vk::QueryPool query_pool, uint32_t frame_slot, float time)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
     cmd.begin(begin_info);
+
+    // ── GPU profiler: reset this frame slot's timestamp queries + frame-start mark ──
+    // Phase 8 Etape 42 sub-etape 42a. The slot's query results were already read back
+    // on the host side (after the per-frame fence wait) before entering recordFrame.
+    cmd.resetQueryPool(query_pool, frame_slot * TIMESTAMPS_PER_FRAME, TIMESTAMPS_PER_FRAME);
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Frame, false));
 
     // ── Cross-frame ReSTIR reservoir + volumetric filter memory barrier ──
     // Two distinct hand-offs from the previous submission to this one:
@@ -514,6 +556,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
 
     cmd.beginRendering(rendering_info);
 
+    // GPU profiler: mark start of mesh-shader pass (opaque + skybox + transparent).
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Mesh, false));
+
     vk::Viewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
@@ -584,6 +629,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     }
 
     cmd.endRendering();
+
+    // GPU profiler: mark end of mesh-shader pass.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Mesh, true));
 
     // ── Post-process: compute dispatch HDR → swapchain ──
 
@@ -692,6 +740,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     // and blends them onto the existing HDR colour. Sequenced before bloom extraction so
     // the bloom chain operates on the fogged HDR (the fog itself can bloom).
 
+    // GPU profiler: mark start of volumetric inject.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::VolumetricInject, false));
+
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, inject_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, inject_pipeline_layout, 0, {inject_descriptor_set}, {});
     cmd.pushConstants<VolumetricInjectPushConstants>(inject_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, inject_push);
@@ -700,6 +751,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     uint32_t inject_groups_x{(FROXEL_WIDTH + INJECT_GROUP_SIZE - 1) / INJECT_GROUP_SIZE};
     uint32_t inject_groups_y{(FROXEL_HEIGHT + INJECT_GROUP_SIZE - 1) / INJECT_GROUP_SIZE};
     cmd.dispatch(inject_groups_x, inject_groups_y, FROXEL_DEPTH);
+
+    // GPU profiler: mark end of volumetric inject.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::VolumetricInject, true));
 
     // Barrier: inject's froxel write must complete before filter reads it. Compute →
     // compute, same layout, execution + memory dependency between dispatches.
@@ -729,11 +783,17 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     // output. The host alternates the (history, output) pair between two physical images
     // each frame so the next frame's history is what this frame just wrote (ping-pong).
 
+    // GPU profiler: mark start of volumetric filter.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::VolumetricFilter, false));
+
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, filter_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, filter_pipeline_layout, 0, {filter_descriptor_set}, {});
     cmd.pushConstants<VolumetricFilterPushConstants>(filter_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, filter_push);
 
     cmd.dispatch(inject_groups_x, inject_groups_y, FROXEL_DEPTH);
+
+    // GPU profiler: mark end of volumetric filter.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::VolumetricFilter, true));
 
     // Barrier: filter writes filter_output_image → composite reads same image.
     vk::ImageMemoryBarrier2 froxel_filter_to_composite{froxel_inject_to_filter};
@@ -742,6 +802,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::DependencyInfo dep_filter_to_composite{};
     dep_filter_to_composite.setImageMemoryBarriers(froxel_filter_to_composite);
     cmd.pipelineBarrier2(dep_filter_to_composite);
+
+    // GPU profiler: mark start of volumetric composite.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::VolumetricComposite, false));
 
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout, 0, {composite_descriptor_set}, {});
@@ -757,6 +820,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     uint32_t composite_groups_x{(extent.width + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
     uint32_t composite_groups_y{(extent.height + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
     cmd.dispatch(composite_groups_x, composite_groups_y, 1);
+
+    // GPU profiler: mark end of volumetric composite.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::VolumetricComposite, true));
 
     // Barrier: HDR write (composite) → HDR read (bloom extract). Without this the bloom
     // chain could read stale HDR (pre-fog) and the post-process pass would see bloom that
@@ -783,10 +849,20 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
 
     // ── Bloom extraction + downsample + upsample chain ──
 
+    // GPU profiler: mark start of bloom downsample (extract + mip chain).
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::BloomDownsample, false));
+
     recordBloomDownsample(cmd, bloom_image, bloom_mip_count, bloom_base_w, bloom_base_h, bloom_extract_pipeline, bloom_downsample_pipeline, bloom_layout, bloom_sets,
         BLOOM_THRESHOLD);
 
+    // GPU profiler: mark end of bloom downsample / start of upsample.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::BloomDownsample, true));
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::BloomUpsample, false));
+
     recordBloomUpsample(cmd, bloom_image, bloom_mip_count, bloom_base_w, bloom_base_h, bloom_upsample_pipeline, bloom_layout, bloom_upsample_sets);
+
+    // GPU profiler: mark end of bloom upsample.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::BloomUpsample, true));
 
     // Barrier: bloom upsample writes must complete before tonemap reads bloom mip 0.
     // Narrowed to mip 0 only (the only mip the post-process shader samples) so the
@@ -813,6 +889,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
 
     // ── Tonemap: HDR + bloom → swapchain ──
 
+    // GPU profiler: mark start of post-process (tonemap + bloom composite + cinematic effects).
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::PostProcess, false));
+
     // Bind compute pipeline, push bloom strength, and dispatch post-process.
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_pipeline);
     cmd.pushConstants<float>(pp_layout, vk::ShaderStageFlagBits::eCompute, 0, BLOOM_STRENGTH);
@@ -821,6 +900,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     uint32_t group_x{(extent.width + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
     uint32_t group_y{(extent.height + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
     cmd.dispatch(group_x, group_y, 1);
+
+    // GPU profiler: mark end of post-process.
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::PostProcess, true));
 
     // Transition swapchain: GENERAL → PRESENT_SRC_KHR.
     // dstStage uses eAllCommands to match the submit's signal-semaphore stage mask
@@ -841,6 +923,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::DependencyInfo dep_to_present{};
     dep_to_present.setImageMemoryBarriers(swap_to_present);
     cmd.pipelineBarrier2(dep_to_present);
+
+    // GPU profiler: mark end of frame (after all per-frame work is recorded).
+    cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Frame, true));
 
     cmd.end();
 }
@@ -868,6 +953,46 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         image_available_semaphores.push_back(vk::raii::Semaphore(device.get(), sem_info));
         in_flight_fences.push_back(vk::raii::Fence(device.get(), fence_info));
     }
+
+    // ── GPU profiler (Phase 8 Etape 42 sub-etape 42a) ──
+    // Timestamp query pool with one ping-pong slot per frame in flight. Each pass writes
+    // a (start, end) timestamp pair; per-pass duration is the difference scaled by
+    // VkPhysicalDeviceLimits::timestampPeriod (in nanoseconds). Reading back the slot's
+    // results is safe AFTER the per-frame fence wait — the GPU has finished the matching
+    // submission by then, so the queries are guaranteed available without a separate
+    // CPU-GPU sync stall.
+    vk::QueryPoolCreateInfo qpool_info{};
+    qpool_info.queryType = vk::QueryType::eTimestamp;
+    qpool_info.queryCount = TIMESTAMP_POOL_SIZE;
+    vk::raii::QueryPool query_pool{device.get(), qpool_info};
+
+    vk::PhysicalDeviceProperties phys_props{device.physicalDevice().getProperties()};
+    float timestamp_period_ns{phys_props.limits.timestampPeriod};
+    std::vector<vk::QueueFamilyProperties> queue_families{device.physicalDevice().getQueueFamilyProperties()};
+    uint32_t timestamp_valid_bits{queue_families[device.graphicsFamilyIndex()].timestampValidBits};
+    if (timestamp_valid_bits == 0) {
+        logger.logInfo("GPU profiler disabled — graphics queue does not support timestamp queries.");
+    } else {
+        logger.logInfo("GPU profiler enabled — timestampPeriod " + std::to_string(timestamp_period_ns) + " ns, " + std::to_string(timestamp_valid_bits) + " valid bits.");
+    }
+    bool gpu_profiler_enabled{timestamp_valid_bits > 0};
+
+    // Per-pass exponential moving averages (in nanoseconds). Updated each frame as
+    // results come back; logged periodically. Mask of bits in the timestamp counter
+    // that are valid (the rest must be cleared before subtraction to avoid overflow).
+    // The ternary guards against the undefined `1ULL << 64` when valid bits == 64.
+    std::array<float, static_cast<size_t>(GpuPass::Count)> pass_ema_ns{};
+    bool ema_initialised{false};
+    uint64_t timestamp_mask{(timestamp_valid_bits >= 64u) ? ~uint64_t{0u} : ((uint64_t{1u} << timestamp_valid_bits) - 1u)};
+
+    // Per-frame slot tracks whether this slot has previously been submitted. We cannot
+    // read back results from a slot that has never been written, so the first
+    // MAX_FRAMES_IN_FLIGHT frames skip the readback.
+    std::array<bool, MAX_FRAMES_IN_FLIGHT> slot_has_pending_results{};
+
+    //! Pass-name strings for the periodic log line. Indexed by GpuPass enum value.
+    static constexpr std::array<const char*, static_cast<size_t>(GpuPass::Count)> PASS_NAMES{
+        "frame", "mesh", "vol_inject", "vol_filter", "vol_composite", "bloom_down", "bloom_up", "post"};
 
     // Per-swapchain-image semaphores for present
     std::vector<vk::raii::Semaphore> render_finished_semaphores;
@@ -2035,6 +2160,55 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             return;
         }
 
+        // ── GPU profiler readback ──
+        // The fence has signalled, so this slot's previous submission has finished and
+        // its timestamps are guaranteed available. First MAX_FRAMES_IN_FLIGHT frames
+        // skip readback because the slot has not been written yet.
+        if (gpu_profiler_enabled && slot_has_pending_results[current_frame]) {
+            std::array<uint64_t, TIMESTAMPS_PER_FRAME> raw_timestamps{};
+            // vulkan-hpp's user-buffer overload of vk::Device::getQueryPoolResults — fills
+            // our stack-allocated array via (void*, dataSize) without allocating a vector
+            // (the only other overload returns std::vector and would heap-allocate every
+            // frame). The raii Device converts implicitly to the vk::Device handle.
+            vk::Device device_handle{device.get()};
+            vk::Result query_result{device_handle.getQueryPoolResults(*query_pool, current_frame * TIMESTAMPS_PER_FRAME, TIMESTAMPS_PER_FRAME, sizeof(raw_timestamps),
+                raw_timestamps.data(), sizeof(uint64_t), vk::QueryResultFlagBits::e64)};
+            if (query_result == vk::Result::eSuccess) {
+                // Mask off invalid bits before subtraction so wrap-around inside the valid
+                // range produces the right elapsed count rather than a huge negative.
+                for (uint64_t& ts : raw_timestamps) {
+                    ts &= timestamp_mask;
+                }
+                std::array<float, static_cast<size_t>(GpuPass::Count)> sample_ns{};
+                for (uint32_t p{0}; p < static_cast<uint32_t>(GpuPass::Count); ++p) {
+                    uint64_t start_raw{raw_timestamps[p * 2u]};
+                    uint64_t end_raw{raw_timestamps[(p * 2u) + 1u]};
+                    // Modular subtraction handles 64-bit wrap-around.
+                    uint64_t delta_ticks{(end_raw - start_raw) & timestamp_mask};
+                    sample_ns[p] = static_cast<float>(delta_ticks) * timestamp_period_ns;
+                }
+                if (!ema_initialised) {
+                    pass_ema_ns = sample_ns;
+                    ema_initialised = true;
+                } else {
+                    for (uint32_t p{0}; p < static_cast<uint32_t>(GpuPass::Count); ++p) {
+                        pass_ema_ns[p] = (pass_ema_ns[p] * (1.0f - GPU_PROFILER_EMA_ALPHA)) + (sample_ns[p] * GPU_PROFILER_EMA_ALPHA);
+                    }
+                }
+
+                // Periodic log line (every GPU_PROFILER_LOG_INTERVAL_FRAMES). Reports
+                // each pass's EMA in milliseconds — the human-readable scale at 60 fps.
+                if ((frame_counter % GPU_PROFILER_LOG_INTERVAL_FRAMES) == 0) {
+                    std::string line{"GPU times (ms):"};
+                    for (uint32_t p{0}; p < static_cast<uint32_t>(GpuPass::Count); ++p) {
+                        float ms{pass_ema_ns[p] / 1.0e6f};
+                        line += " " + std::string{PASS_NAMES[p]} + "=" + std::to_string(ms);
+                    }
+                    logger.logInfo(line);
+                }
+            }
+        }
+
         // Skip acquire when the swapchain is zero-extent (minimised). Previously we
         // acquired and then "drained" with waitIdle — but waitIdle does not reset
         // semaphore signal state, so the next iteration's acquire with the same
@@ -2167,7 +2341,11 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], *inject_pipeline, *inject_pipeline_layout, *inject_descriptor_sets[0], *filter_pipeline,
             *filter_pipeline_layout, *filter_descriptor_sets[current_frame], filter_output_image, *composite_pipeline, *composite_pipeline_layout,
             *composite_descriptor_sets[current_frame], froxel_image.image(), froxel_image_filter_a.image(), froxel_image_filter_b.image(), inject_push, filter_push,
-            std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
+            *query_pool, current_frame, std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
+
+        // GPU profiler: this slot now has timestamps that the next iteration through this
+        // slot will read back (after the matching fence wait).
+        slot_has_pending_results[current_frame] = gpu_profiler_enabled;
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};

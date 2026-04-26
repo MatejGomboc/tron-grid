@@ -302,6 +302,20 @@ resampling from the 320×180 grid to screen.
 Combined effective sample count per froxel: 4 inject samples × 9 spatial
 neighbours × ~10 temporal frames ≈ 360 — visually reads as soft
 cyberpunk atmospheric haze rather than animated noise.
+
+**GPU profiler** (Phase 8 Etape 42 sub-etape 42a) — `vk::raii::QueryPool`
+with `MAX_FRAMES_IN_FLIGHT × (8 passes × 2 timestamps)` = 32 timestamp
+queries. Each pass writes a paired `(start, end)` timestamp via
+`writeTimestamp2(eAllCommands, …)`; the host reads results back after
+the per-frame fence wait (no GPU stall — the fence guarantees
+availability) using `vk::Device::getQueryPoolResults` with the
+user-buffer overload (zero allocation per frame). Per-pass exponential
+moving averages (α = 0.05, ~20-frame smoothing) updated each frame and
+logged once per second as `[INFO] GPU times (ms): frame=X mesh=Y …`.
+Capability check via `timestampValidBits` from
+`getQueueFamilyProperties`; profiler self-disables on hardware that
+doesn't support timestamp queries on the graphics queue (in practice
+all modern desktop GPUs do).
 Swapchain lifecycle hardened: `image_available_semaphores` rebuilt on
 resize (symmetry with present semaphores), zero-extent guard BEFORE acquire
 (`waitIdle` doesn't reset semaphore state), `acquireNextImage` catches
