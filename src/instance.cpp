@@ -37,8 +37,12 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(vk::DebugUtilsMessageS
         logger->logError(message);
     } else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning) {
         logger->logWarning(message);
-    } else {
+    } else if (severity & vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo) {
         logger->logInfo(message);
+    } else {
+        // eVerbose — route to debug channel so the high-volume per-frame trace can be
+        // filtered separately from informational best-practices hints (which stay on Info).
+        logger->logDebug(message);
     }
     return vk::False;
 }
@@ -127,15 +131,30 @@ Instance::Instance(bool enable_validation, const std::vector<const char*>& requi
     vk::ValidationFeaturesEXT validation_features{};
 
     if (enable_validation && !layers.empty()) {
-        debug_create_info.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
+        // All four severities subscribed so the audit captures Info-level best-practices
+        // hints and Verbose-level diagnostics that would otherwise be filtered out before
+        // reaching the callback. Verbose is chatty (hundreds of messages per frame in
+        // some Vulkan layer versions) but during an audit pass that's the point — we want
+        // every validation signal visible. Once the audit is closed, this can be tightened
+        // back to `eWarning | eError` to reduce log volume during normal dev iteration.
+        debug_create_info.messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo
+            | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
+        // `eDeviceAddressBinding` would require enabling `VK_EXT_device_address_binding_report`
+        // in the instance extensions; we don't, so the bit is silently ignored. Omit it to
+        // match the actually-enabled feature surface.
         debug_create_info.messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation
             | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance;
         debug_create_info.pfnUserCallback = vulkanDebugCallback;
         debug_create_info.setPUserData(&m_logger);
 
-        // Enable GPU-assisted, synchronisation, and best practices validation
-        static constexpr std::array<vk::ValidationFeatureEnableEXT, 3> ENABLED_VALIDATION_FEATURES = {
+        // Enable GPU-assisted, synchronisation, and best-practices validation. The
+        // additional `eGpuAssistedReserveBindingSlot` is required by GPU-assisted
+        // validation when the application uses the highest descriptor binding slot;
+        // it reserves the next-highest slot so GPU-AV's instrumentation has somewhere
+        // to live without colliding with application bindings.
+        static constexpr std::array<vk::ValidationFeatureEnableEXT, 4> ENABLED_VALIDATION_FEATURES = {
             vk::ValidationFeatureEnableEXT::eGpuAssisted,
+            vk::ValidationFeatureEnableEXT::eGpuAssistedReserveBindingSlot,
             vk::ValidationFeatureEnableEXT::eSynchronizationValidation,
             vk::ValidationFeatureEnableEXT::eBestPractices,
         };

@@ -324,7 +324,8 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     m_transparent_pipeline = vk::raii::Pipeline{device.get(), nullptr, transparent_pipeline_info};
 
-    // Descriptor pool — UBO + 10 SSBOs + 1 TLAS + 1 storage image per frame.
+    // Descriptor pool — UBO + 10 SSBOs + 1 TLAS + 2 storage images per frame
+    // (storage images: binding 12 SVGF history read + binding 14 lighting_raw write).
     std::array<vk::DescriptorPoolSize, 4> pool_sizes{};
     pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
     pool_sizes[0].descriptorCount = frames_in_flight;

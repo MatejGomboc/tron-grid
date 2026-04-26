@@ -452,7 +452,7 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::Image filter_output_image, vk::Pipeline composite_pipeline, vk::PipelineLayout composite_pipeline_layout, vk::DescriptorSet composite_descriptor_set,
     vk::Image froxel_image, vk::Image froxel_image_filter_a, vk::Image froxel_image_filter_b, const VolumetricInjectPushConstants& inject_push,
     const VolumetricFilterPushConstants& filter_push, vk::Pipeline svgf_pipeline, vk::PipelineLayout svgf_pipeline_layout, vk::DescriptorSet svgf_descriptor_set,
-    vk::QueryPool query_pool, uint32_t frame_slot)
+    vk::Image lighting_raw_image, vk::QueryPool query_pool, uint32_t frame_slot)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -464,8 +464,8 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     cmd.resetQueryPool(query_pool, frame_slot * TIMESTAMPS_PER_FRAME, TIMESTAMPS_PER_FRAME);
     cmd.writeTimestamp2(vk::PipelineStageFlagBits2::eAllCommands, query_pool, timestampIndex(frame_slot, GpuPass::Frame, false));
 
-    // ── Cross-frame ReSTIR reservoir + volumetric filter + SVGF history memory barrier ──
-    // Three distinct hand-offs from the previous submission to this one:
+    // ── Cross-frame ReSTIR reservoir + volumetric filter + SVGF history + lighting_raw memory barrier ──
+    // Four distinct hand-offs from the previous submission to this one:
     //   (a) Fragment-stage ReSTIR reservoir writes → this frame's reservoir reads.
     //   (b) Compute-stage storage writes → compute-stage reads. Covers two unrelated
     //       channels with the same src/dst stage pair: the volumetric filter ping-pong
@@ -477,8 +477,13 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     //       this frame's mesh-shader fragment reads it via binding 12 for the diffuse
     //       composite. (Phase 8 Etape 42c-polish-3 — SVGF lives entirely in eGeneral
     //       layout so this is a pure memory barrier, no image-layout transition.)
+    //   (d) Fragment-stage lighting_raw writes → this frame's TRANSFER-stage zero-clear
+    //       of the same image. Write-after-write hazard introduced by the per-frame
+    //       lighting_raw clear (added in Etape 42c-polish-3 hardening — see comment
+    //       block just before `cmd.clearColorImage(lighting_raw_image, …)` below).
     // Submission order provides execution ordering, but per the Vulkan memory model the
-    // write→read hand-off needs an explicit memory barrier to be visible.
+    // write→read (and write-after-write) hand-off needs an explicit memory barrier to be
+    // observed correctly.
     vk::MemoryBarrier2 reservoir_cross_frame{};
     reservoir_cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
     reservoir_cross_frame.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
@@ -497,7 +502,21 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     svgf_history_cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
     svgf_history_cross_frame.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
 
-    std::array<vk::MemoryBarrier2, 3> cross_frame_barriers{reservoir_cross_frame, volumetric_filter_cross_frame, svgf_history_cross_frame};
+    // Previous frame's fragment-stage writes to `lighting_raw` (the SVGF-input storage
+    // image at mesh binding 14) must be made available to this frame's TRANSFER-stage
+    // zero-clear of the same image — write-after-write hazard. Submission order alone
+    // gives execution ordering between frames on the same queue, but not memory
+    // availability/visibility per the Vulkan memory model. Phase 8 Etape 42c-polish-3
+    // hardening: the per-frame zero-clear (added below, just before the mesh-shader
+    // beginRendering) was introduced to prevent stale lighting_raw values at sky /
+    // transparent pixels leaking into the SVGF input on disocclusion.
+    vk::MemoryBarrier2 lighting_raw_cross_frame{};
+    lighting_raw_cross_frame.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+    lighting_raw_cross_frame.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    lighting_raw_cross_frame.dstStageMask = vk::PipelineStageFlagBits2::eClear;
+    lighting_raw_cross_frame.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+
+    std::array<vk::MemoryBarrier2, 4> cross_frame_barriers{reservoir_cross_frame, volumetric_filter_cross_frame, svgf_history_cross_frame, lighting_raw_cross_frame};
 
     vk::DependencyInfo dep_cross_frame{};
     dep_cross_frame.setMemoryBarriers(cross_frame_barriers);
@@ -525,7 +544,13 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     // srcAccess lists only writes — reads are covered by execution ordering via srcStage alone.
     vk::ImageMemoryBarrier2 hdr_to_render{};
     hdr_to_render.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
-    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+    // Honest src access mask covering BOTH stage paths in srcStageMask: the previous frame's
+    // volumetric composite (compute) writes HDR via storage image, and the previous frame's
+    // colour-attachment pass writes HDR via blend output. `oldLayout = eUndefined` (below)
+    // discards prior contents per Vulkan spec, so this dependency is benign for correctness,
+    // but listing both access bits matches the stage mask exactly and silences any
+    // strict-mode synchronisation-validation warning about a write-after-write hazard.
+    hdr_to_render.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite | vk::AccessFlagBits2::eShaderStorageWrite;
     hdr_to_render.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     hdr_to_render.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_render.oldLayout = vk::ImageLayout::eUndefined;
@@ -566,6 +591,59 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::DependencyInfo dep_to_render{};
     dep_to_render.setImageMemoryBarriers(to_render_barriers);
     cmd.pipelineBarrier2(dep_to_render);
+
+    // ── Per-frame zero-clear of `lighting_raw` (Phase 8 Etape 42c-polish-3 hardening) ──
+    //
+    // `lighting_raw` is written by the mesh-shader fragment ONLY at pixels covered by an
+    // opaque draw (binding 14, fragmentStoresAndAtomics, sample-0 gated). Sky pixels
+    // (rendered by the skybox pipeline, which has no binding 14) and transparent-only
+    // pixels (rendered by `fragTransparent`, which doesn't write the SVGF input) would
+    // otherwise carry STALE values from the previous frame into this frame's SVGF input.
+    // The svgf_denoise.slang init pass has no depth/sky reject and reads the storage
+    // image unconditionally — so the stale data gets folded into the wavelet output and,
+    // on disocclusion (e.g. camera turn that exposes obsidian floor where sky used to be),
+    // the next frame's `fragMain` reads polluted denoised history at the newly-revealed
+    // pixel as `indirect_gi`, producing a one-frame visual artefact.
+    //
+    // Clearing `lighting_raw` to zero each frame ensures un-written pixels carry zero
+    // (which the wavelet smooths to roughly zero), so disoccluded fragments read a
+    // benign zero value from history on their first frame instead of a polluted one.
+    // Cost: one TRANSFER-stage clear of an rgba16f full-screen image — dominated by
+    // memory bandwidth, ~50 µs at 1280×720 on RTX 4090, negligible relative to the
+    // ~17 ms frame budget.
+    //
+    // Synchronisation: the cross-frame `MemoryBarrier2` at the top of recordFrame
+    // already covers "previous frame's fragment writes to lighting_raw are visible";
+    // this barrier covers the inverse direction inside this frame — the TRANSFER write
+    // of the clear must be visible to this frame's mesh-shader fragment writes (a
+    // write-after-write hazard on the same image). Layout stays eGeneral throughout
+    // (set at startup), so this is a pure memory barrier with no layout transition.
+    vk::ImageSubresourceRange lighting_raw_range{};
+    lighting_raw_range.aspectMask = vk::ImageAspectFlagBits::eColor;
+    lighting_raw_range.baseMipLevel = 0;
+    lighting_raw_range.levelCount = 1;
+    lighting_raw_range.baseArrayLayer = 0;
+    lighting_raw_range.layerCount = 1;
+
+    vk::ClearColorValue lighting_raw_zero{};
+    lighting_raw_zero.setFloat32(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+    cmd.clearColorImage(lighting_raw_image, vk::ImageLayout::eGeneral, lighting_raw_zero, lighting_raw_range);
+
+    vk::ImageMemoryBarrier2 lighting_raw_clear_to_frag{};
+    lighting_raw_clear_to_frag.srcStageMask = vk::PipelineStageFlagBits2::eClear;
+    lighting_raw_clear_to_frag.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+    lighting_raw_clear_to_frag.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+    lighting_raw_clear_to_frag.dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    lighting_raw_clear_to_frag.oldLayout = vk::ImageLayout::eGeneral;
+    lighting_raw_clear_to_frag.newLayout = vk::ImageLayout::eGeneral;
+    lighting_raw_clear_to_frag.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    lighting_raw_clear_to_frag.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    lighting_raw_clear_to_frag.image = lighting_raw_image;
+    lighting_raw_clear_to_frag.subresourceRange = lighting_raw_range;
+
+    vk::DependencyInfo dep_lighting_raw_clear{};
+    dep_lighting_raw_clear.setImageMemoryBarriers(lighting_raw_clear_to_frag);
+    cmd.pipelineBarrier2(dep_lighting_raw_clear);
 
     // ── Render scene to HDR image ──
 
@@ -772,13 +850,18 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     std::array<vk::ImageMemoryBarrier2, 6> to_compute_barriers{
         hdr_to_general, swap_to_general, bloom_to_general, froxel_to_general, froxel_filter_a_to_general, froxel_filter_b_to_general};
 
-    // Same-frame fragment-stage SSBO write → compute-stage SSBO read for the ReSTIR
-    // reservoir (Phase 8 Etape 42c-polish-3). The mesh shader fragment writes
-    // reservoir_current via binding 10 just above; the SVGF compute pass below reads it
-    // via SVGF binding 0. Without this barrier the SVGF dispatch could race the writes
-    // even though they're ordered by submission. The dst stage stays generic enough that
-    // it costs nothing for the volumetric inject (which doesn't read the reservoir SSBO)
-    // since vol-inject doesn't use any storage-buffer reads in the fragment-write set.
+    // Same-frame fragment-stage shader-storage write → compute-stage shader-storage read
+    // (Phase 8 Etape 42c-polish-3). The mesh-shader fragment writes TWO things at the same
+    // pipeline stage with the same access mask, both consumed by the SVGF compute pass
+    // immediately below — one barrier covers both because `eShaderStorageWrite`/Read are
+    // categorical and apply to SSBOs and storage images alike:
+    //   (1) `reservoir_current` SSBO at mesh binding 10 → consumed by the next frame's mesh
+    //       shader (cross-frame), but also subject to read-after-write within this frame
+    //       if any compute pass touches it (defensive coverage).
+    //   (2) `lighting_raw` storage image at mesh binding 14 → consumed by the SVGF init
+    //       pass at SVGF binding 0 in the next dispatch chunk (THIS is the load-bearing
+    //       hand-off — without this barrier SVGF would race the fragment writes even
+    //       though submission order serialises them, per Vulkan memory model).
     vk::MemoryBarrier2 reservoir_frag_to_compute{};
     reservoir_frag_to_compute.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
     reservoir_frag_to_compute.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
@@ -3006,7 +3089,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], *inject_pipeline, *inject_pipeline_layout, *inject_descriptor_sets[0], *filter_pipeline,
             *filter_pipeline_layout, *filter_descriptor_sets[current_frame], filter_output_image, *composite_pipeline, *composite_pipeline_layout,
             *composite_descriptor_sets[current_frame], froxel_image.image(), froxel_image_filter_a.image(), froxel_image_filter_b.image(), inject_push, filter_push,
-            *svgf_pipeline, *svgf_pipeline_layout, *svgf_descriptor_sets[current_frame], *query_pool, current_frame);
+            *svgf_pipeline, *svgf_pipeline_layout, *svgf_descriptor_sets[current_frame], lighting_raw.image(), *query_pool, current_frame);
 
         // GPU profiler: this slot now has timestamps that the next iteration through this
         // slot will read back (after the matching fence wait).

@@ -90,6 +90,17 @@ struct CameraUBO {
     float time{0.0f}; //!< Elapsed time in seconds; drives sky-cloud animation in skybox.slang and mesh.slang's reflection-miss sky sampling.
 };
 
+//! Compile-time tripwire: the Slang `CameraData` structs in mesh.slang, skybox.slang, and
+//! task.slang declare fields at fixed scalar-block-layout offsets matching this struct
+//! byte-for-byte. A future field reorder or insertion that changes `sizeof(CameraUBO)`
+//! must update all three Slang copies in lockstep — this assert catches the drift before
+//! the GPU silently reads garbage offsets. Layout (scalar):
+//!   view 0 / projection 64 / inv_view_projection 128 / prev_view_projection 192
+//!   / camera_pos 256 / frame_count 268 / emissive_count 272 / total_emissive_power 276
+//!   / screen_width 280 / screen_height 284 / time 288 → total 292 bytes.
+static_assert(sizeof(CameraUBO) == 292,
+    "CameraUBO must be 292 bytes — Slang CameraData struct in mesh.slang/skybox.slang/task.slang depends on this exact layout (scalar block layout)");
+
 //! Emissive triangle for area light sampling — matches the Slang EmissiveTriangle struct.
 struct EmissiveTriangle {
     MathLib::Vec3 v0{}; //!< Triangle vertex 0.
