@@ -237,37 +237,148 @@ Five lines of code; benefits both the direct fragment-shader read of
 `r.indirect` and the reflection-path lookup of the reflected hit's
 indirect (which reads the same field via the previous-frame reservoir).
 
-#### Sub-etape 42c — 4K performance pass (rescoped)
+#### Sub-etape 42c — 4K performance pass (research-grounded plan)
 
 **Original scope:** Nanite-style hierarchical meshlet LOD.
 
 **Why rescoped:** 42a profiling showed the dominant per-frame cost at
-4K projection isn't *geometric* mesh-shader work (vertex transforms,
-meshlet count) — it's **per-fragment ReSTIR + RT** (direct shadow ray,
-AO ray, reflection ray, indirect bounce). That cost scales with pixel
-count, not with mesh complexity. A Nanite-style LOD wouldn't move the
-needle on the 4K bottleneck. The current scene also has only 6 BLASes
-and ~25 k triangles — Nanite is genuinely over-engineering at that
-scale.
+4K projection isn't *geometric* mesh-shader work — it's **per-fragment
+ReSTIR + RT** (direct shadow ray, AO ray, reflection ray, indirect
+bounce). That cost scales with pixel count, not with mesh complexity.
+The current scene has only 6 BLASes / ~25 k triangles — Nanite is
+genuinely over-engineering at that scale. Adaptive meshlet LOD moves to
+**Backlog**, revisit during Phase 10 (asset pipeline + procedural world).
 
-**Rescoped goal:** hit the Phase 8 4K @ 60+ FPS target by reducing
-per-pixel RT cost where possible without sacrificing the polished
-look. Candidate techniques:
+**Research synthesis (2026-04-26 literature review):**
 
-- **Sub-resolution ReSTIR** — sample at half resolution, bilateral
-  upsample to full. ~4× speedup on the dominant cost.
-- **Variable-rate shading** (`VK_KHR_fragment_shading_rate`) — pixel
-  shader rate ½×½ in regions of low contrast.
-- **Temporal upscaling** (DLSS-style) — render at 1440p, upsample to
-  4K with motion vectors. Driver-agnostic FidelityFX implementation.
+- **VRS dropped from candidate set.** Khronos spec: enabling sample-rate
+  shading "effectively disables the fragment shading rate". Project uses
+  full sample-rate shading on 8× MSAA (Etape 33). Additional blockers:
+  `maxFragmentShadingRateRasterizationSamples` is commonly 4 (we need 8);
+  collapsing 4 pixels to 1 reservoir candidate breaks ReSTIR spatial-reuse
+  diversity. Defer entirely; revisit only if we ever drop sample-rate
+  shading + 8× MSAA in favour of TAA-based AA.
+- **Industry reality check.** Cyberpunk 2077 RT Overdrive on RTX 4090 =
+  **<20 FPS native 4K**; the shipping configuration is DLSS Super
+  Resolution + Ray Reconstruction + Frame Generation getting to ~75 FPS.
+  RE Engine, UE5, etc. all rely on DLSS-class upscaling. **No production
+  engine renders ReSTIR at native 4K.** The path to "4K @ 60+ with full
+  RT" is upscaling, not more efficient native rendering.
+- **In-house upscaling is feasible WITHOUT third-party libs.** Karis
+  SIGGRAPH 2014 + Salvi GDC 2016 + Pedersen INSIDE GDC 2016 define a
+  ~300-line shader pattern (jitter, motion vectors, neighbourhood-AABB
+  history clamp, blend, RCAS-style sharpen). Playdead INSIDE TAA repo is
+  the canonical reference, MIT-licensed (study only — we re-implement).
+  Not FSR2-grade quality but production-quality TAA + TAAU. Multi-day
+  to ~2-week effort.
+- **Sub-resolution ReSTIR is real and shipped.** UE5 Lumen does ¼-res
+  integration + bilateral upsample with depth+normal weights, full-res
+  temporal accumulation. NRD/RTXDI uses checkerboard-at-native +
+  "Nearest Z" upsample. Realistic saving on the ReSTIR pass: 1.5–2.5× of
+  pass cost, not 4× (composite/upsample reclaims part).
+- **Vulkan tutorial chapters 04/05 are silent on render-scale
+  decoupling.** Greenfield design decision against canonical rendergraph
+  and dynamic-rendering hooks the tutorials *do* provide.
 
-Sequence will likely be: profile 4K → pick the lowest-hanging
-optimisation → measure → iterate. Possibly multiple PRs.
+**Refined sub-etape sequence:**
 
-Adaptive meshlet LOD work (the original 42c plan) moves to
-**Backlog** with explicit cross-reference to revisit during Phase 10
-(asset pipeline + procedural world) when the scene grows enough
-geometric variety to justify the implementation cost.
+##### 42c-0 — Post-process modernisation (style polish)
+
+Drop the scan-line overlay from `postprocess.slang` (3-pixel-period
+horizontal stripes shipped in Etape 36 — the most overtly retro CRT
+element of the cinematic post-process). Optionally tone down chromatic
+aberration. Keep cool colour grade and subtle vignette — those read as
+timeless cinematic, not retro. Modern Tron (Legacy 2010 / Ares 2025)
+doesn't use scan lines.
+
+Bonus benefit for the rest of 42c: scan lines create a per-pixel
+high-frequency alternating brightness pattern that would actively fight
+TAA history clamping in 42c-ii. Removing them first makes the temporal
+accumulator stable. ~15-line shader change, no perf change either way.
+
+##### 42c-i — Render-scale infrastructure
+
+Decouple `render_extent` from `swapchain_extent`. HDR / MSAA / depth /
+bloom / reservoirs / volumetric inject push constants all sized to
+`render_extent`; post-process scales to swapchain. Default
+`RENDER_SCALE = 1.0` so behaviour is unchanged at integration time.
+Foundational for both 42c-ii and 42c-iii — every render-at-N-display-at-M
+pattern needs this. Without it, true 4K profiling on the dev display
+(BOE NE180QDM-NM1, 2560×1600 native, 18" laptop QHD+) is impossible
+because the display can't show 4K natively; an external 4K monitor is on
+the project's hardware roadmap but not available immediately. Estimated
+effort: half-day of careful work, multiple touchpoints in `renderThread`.
+
+##### 42c-ii — In-house TAA + TAAU
+
+Karis 2014 + Salvi 2016 + Pedersen 2016 reference pattern. Broken into
+five verifiable sub-steps following the project's incremental etape
+pattern (each is its own commit; user verifies between each):
+
+- **42c-ii-1 — Halton(2, 3) sub-pixel jitter on the projection matrix.**
+  Add a per-frame jitter offset to the projection's xy translation,
+  subtract from motion vectors so reprojection lands on the unjittered
+  surface. ReSTIR Etape 37 already produces motion vectors; verify they
+  remain correct under jitter. Visual gate: scene should look identical
+  to before (jitter alone is invisible without temporal accumulation).
+- **42c-ii-2 — TAA history image + reproject + bicubic sample.** New
+  history texture sized to `render_extent`. Each frame, sample previous
+  frame's history at `current_pixel - motion_vector` via Catmull-Rom /
+  bicubic (not bilinear — bilinear blurs). No clamping yet. Visual
+  gate: motion should look smooth, but disocclusions and fast camera
+  pans will visibly ghost.
+- **42c-ii-3 — YCoCg neighbourhood-AABB history clamp + EMA blend.**
+  Convert current 3×3 neighbourhood + history to YCoCg space, compute
+  per-channel min/max AABB, clip the reprojected history into that AABB
+  (Pedersen INSIDE), blend at ~5–10 % new / ~90–95 % history with a
+  motion-aware bias. Visual gate: ghosting on disocclusions resolves;
+  scene reads as crisp anti-aliased.
+- **42c-ii-4 — Enable upscale (TAAU).** Set `RENDER_SCALE < 1.0`. The
+  TAA pass becomes a TAAU pass: dispatched at output resolution,
+  reconstructs each output pixel from a Lanczos / bicubic kernel over
+  the jittered low-res samples that fall inside it. Visual gate:
+  rendering at 1440p, presenting at 2560×1600 (current native panel)
+  should look ~95 % of native in stills, ~85 % in motion.
+- **42c-ii-5 — CAS-style sharpen pass.** Final compute pass between
+  TAAU output and tonemap to recover micro-contrast lost to the temporal
+  blend. AMD CAS / RCAS algorithm is open and trivial to re-implement
+  (~30 lines of shader). Visual gate: edges crisp, no ringing
+  artefacts.
+
+References: Karis 2014, Salvi 2016, Pedersen 2016, Playdead INSIDE TAA
+shader (study reference, MIT-licensed, ~300 lines), FSR2 manual (study
+reference). Total ~500–800 lines across the five sub-steps; ~1–2 week
+effort honestly stated. Not FSR2-quality (no lock mechanism, no
+luminance-instability factor, no reactive-mask pipeline) but
+production-grade temporal AA + 2× upscale.
+
+Worth doing for the **polished, high-fidelity look** the project
+targets: stable temporal accumulation also means we can drop other
+sample counts (volumetric fog inject samples, ReSTIR M cap, AO ray
+count) since temporal averaging fills in — secondary perf win on top
+of the resolution win.
+
+##### 42c-iii — Sub-resolution ReSTIR DI integration (only if needed)
+
+Lumen-style ¼-res integration of the sampled lighting term + bilateral
+upsample using full-res depth and normal as guides. Per Lumen docs the
+gather *integration* pass becomes ~3× cheaper at the cost of some lost
+fine normal detail. Combined with 42c-ii TAAU this would buy the largest
+remaining headroom on the per-fragment cost. Only pursue if 42c-i + 42c-ii
+profiling shows we still miss the 4K @ 60+ target.
+
+**Most useful research references:**
+
+- Karis 2014 Temporal AA — <https://de45xmedrsdbp.cloudfront.net/Resources/files/TemporalAA_small-59732822.pdf>
+- Salvi 2016 Variance Clipping — <https://developer.download.nvidia.com/gameworks/events/GDC2016/msalvi_temporal_supersampling.pdf>
+- Pedersen / Playdead INSIDE TAA 2016 — <https://github.com/playdeadgames/temporal>
+- FSR2 algorithm manual (study-only) — <https://gpuopen.com/manuals/fidelityfx_sdk2/techniques/super-resolution-temporal/>
+- Lumen SIGGRAPH 2022 — <https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Lumen-Wright%20et%20al.pdf>
+- NVIDIA RTXDI Integration — <https://github.com/NVIDIA-RTX/RTXDI/blob/main/Doc/Integration.md>
+- NVIDIA NRD checkerboard / Nearest Z — <https://github.com/NVIDIA-RTX/NRD>
+- c0de517e depth-aware upsample — <http://c0de517e.blogspot.com/2016/02/downsampled-effects-with-depth-aware.html>
+- Bart Wronski guided filter vs bilateral — <https://bartwronski.com/2019/09/22/local-linear-models-guided-filter/>
+- Cyberpunk RT Overdrive ReSTIR integration — <https://intro-to-restir.cwyman.org/presentations/2023ReSTIR_Course_Cyberpunk_2077_Integration.pdf>
 
 **After this etape:** the world renders at the full Phase 8 quality
 target — noise-free RT, automatic detail scaling, instrumented
@@ -286,9 +397,9 @@ performance.
 - [x] Froxel-based volumetric fog with neon light shafts
 - [x] Temporal reprojection for fog noise reduction
 - [x] Spatial denoising for indirect GI (42b)
-- [ ] 4K @ 60+ performance pass — sub-res ReSTIR / VRS / temporal upscaling (42c rescoped from Nanite)
+- [ ] 4K @ 60+ FPS via in-house TAA + TAAU temporal upscaling on RTX 4090 (42c rescoped from Nanite;
+  VRS dropped after research showed it's incompatible with our sample-rate shading + 8× MSAA + per-fragment ReSTIR)
 - [x] GPU profiling with per-pass timestamps (42a)
-- [ ] 4K @ 60+ FPS sustained on RTX 4090
 - [ ] Proper synchronisation barriers for all new passes
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
@@ -878,6 +989,83 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Phase 8 Etape 42c plan refresh — research-grounded 4K performance pass
+
+Pure documentation pass. After 42a + 42b shipped, the original 42c plan
+("rescoped 4K performance pass") was still abstract — needed grounding in
+the actual literature before any code starts. Spawned four parallel
+research subagents to gather canonical sources on (1) sub-resolution
+ReSTIR, (2) temporal upscaling, (3) the Vulkan tutorial chapters on
+resource management + rendering pipeline, and (4) variable-rate shading.
+
+**Decisive findings:**
+
+- **VRS dropped from the candidate set entirely.** Khronos spec is
+  explicit that enabling sample-rate shading "effectively disables the
+  fragment shading rate"; we use full sample-rate shading on 8× MSAA
+  (Etape 33). Additionally `maxFragmentShadingRateRasterizationSamples`
+  is commonly 4 across vendors (we need 8); collapsing 4 pixels into
+  one reservoir candidate would also break ReSTIR's spatial-reuse
+  diversity. Three blockers stack against us.
+- **Industry reality: no production engine renders ReSTIR at native
+  4K.** Cyberpunk 2077 RT Overdrive on RTX 4090 = <20 FPS native 4K;
+  the shipping configuration is DLSS Super Resolution + Ray
+  Reconstruction + Frame Generation getting to ~75 FPS. RE Engine,
+  UE5, etc. all rely on DLSS-class upscaling. The Phase 8 acceptance
+  criterion "4K @ 60+ FPS sustained on RTX 4090" was honestly not
+  achievable as native rendering. Reworded to "4K @ 60+ FPS via
+  in-house TAA + TAAU temporal upscaling" — matches what production
+  ships, not aspirational marketing.
+- **In-house upscaling is feasible without third-party libraries.**
+  Karis SIGGRAPH 2014 + Salvi GDC 2016 + Pedersen INSIDE GDC 2016
+  define a ~300-line shader pattern. Playdead INSIDE TAA repo is the
+  canonical reference (MIT-licensed; we re-implement, not import).
+  Multi-day to ~2-week effort. Not FSR2-grade quality but
+  production-grade TAA + TAAU.
+- **The Vulkan tutorial is silent on render-scale decoupling.** Both
+  the resource-management and render-pipeline chapters treat
+  attachments as swapchain-sized; rendering at non-swapchain
+  resolution is a greenfield design decision against the canonical
+  rendergraph + dynamic-rendering hooks the tutorials *do* provide.
+
+**Refined sub-etape sequence** (each its own commit / PR with a
+verifiable visual gate, matching the project's incremental etape
+pattern):
+
+- **42c-0** — Post-process modernisation: drop scan-line overlay (most
+  overtly retro element of the cinematic post-process), tone down
+  chromatic aberration. ~15-line shader change. Bonus: removes a
+  per-pixel high-frequency pattern that would fight TAA history
+  clamping.
+- **42c-i** — Render-scale infrastructure: decouple `render_extent`
+  from `swapchain_extent`. Foundation for both 42c-ii and 42c-iii.
+  Required because the dev display is BOE NE180QDM-NM1 at 2560×1600
+  native (18" laptop QHD+) — true 4K profiling needs a render-scale
+  knob that lets us render at 4K and present at 2560×1600. External
+  4K monitor is on the project's hardware roadmap but not immediately
+  available.
+- **42c-ii** — In-house TAA + TAAU, broken into five sub-steps:
+  Halton(2,3) jitter (ii-1) → reproject + bicubic history (ii-2) →
+  YCoCg AABB clamp + EMA (ii-3) → enable upscale, becomes TAAU
+  (ii-4) → CAS-style sharpen (ii-5).
+- **42c-iii** — Sub-resolution ReSTIR DI integration (Lumen pattern,
+  ¼-res integrate + bilateral upsample). Only pursue if 42c-i + 42c-ii
+  profiling shows we still miss the target.
+
+Adaptive meshlet LOD remains in Backlog with explicit cross-reference
+to revisit during Phase 10 (asset pipeline + procedural world). The
+work is still valuable — just not for the immediate 4K performance
+target since the bottleneck is per-fragment, not geometric.
+
+Ten canonical research references inline in the 42c plan section for
+implementer reference (Karis 2014, Salvi 2016, Pedersen 2016 / Playdead
+INSIDE TAA, FSR2 manual, Lumen SIGGRAPH 2022, NVIDIA RTXDI
+Integration, NRD checkerboard / Nearest Z, c0de517e depth-aware
+upsample, Bart Wronski guided filter, Cyberpunk RT Overdrive ReSTIR
+integration).
+
+109 PRs merged.
 
 ### 2026-04-26 — Phase 8 Etape 42 sub-etape 42b: spatial denoising for indirect GI; 42c rescoped
 
