@@ -193,6 +193,43 @@ add_custom_command(
     VERBATIM
 )
 
+# Volumetric fog shaders (Phase 8 Etape 41) — froxel density injection + raymarch composite.
+set(INJECT_DENSITY_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/inject_density.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/inject_density.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${INJECT_DENSITY_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry injectMain
+        -o ${SHADER_OUTPUT_DIR}/inject_density.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/inject_density.spv
+    DEPENDS ${INJECT_DENSITY_SOURCE}
+    COMMENT "Compiling inject_density.slang -> inject_density.spv (with validation)"
+    VERBATIM
+)
+
+set(VOLUMETRIC_COMPOSITE_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/volumetric_composite.slang)
+add_custom_command(
+    OUTPUT ${SHADER_OUTPUT_DIR}/volumetric_composite.spv
+    COMMAND ${SLANGC_EXECUTABLE}
+        ${VOLUMETRIC_COMPOSITE_SOURCE}
+        -target spirv
+        -profile spirv_1_4
+        -emit-spirv-directly
+        -fvk-use-entrypoint-name
+        -warnings-as-errors all
+        -entry compositeMain
+        -o ${SHADER_OUTPUT_DIR}/volumetric_composite.spv
+    COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/volumetric_composite.spv
+    DEPENDS ${VOLUMETRIC_COMPOSITE_SOURCE}
+    COMMENT "Compiling volumetric_composite.slang -> volumetric_composite.spv (with validation)"
+    VERBATIM
+)
+
 # Skybox shader (vertex + fragment) — compile, then validate SPIR-V
 set(SKYBOX_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/skybox.slang)
 add_custom_command(
@@ -224,6 +261,8 @@ add_custom_target(shaders ALL DEPENDS
     ${SHADER_OUTPUT_DIR}/bloom_extract.spv
     ${SHADER_OUTPUT_DIR}/bloom_downsample.spv
     ${SHADER_OUTPUT_DIR}/bloom_upsample.spv
+    ${SHADER_OUTPUT_DIR}/inject_density.spv
+    ${SHADER_OUTPUT_DIR}/volumetric_composite.spv
     ${SHADER_OUTPUT_DIR}/skybox.spv
 )
 add_dependencies(${PROJECT_NAME} shaders)
@@ -250,6 +289,10 @@ add_custom_target(copy_shaders ALL
         ${SHADER_OUTPUT_DIR}/bloom_downsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_downsample.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/bloom_upsample.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/bloom_upsample.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/inject_density.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/inject_density.spv
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${SHADER_OUTPUT_DIR}/volumetric_composite.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/volumetric_composite.spv
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${SHADER_OUTPUT_DIR}/skybox.spv $<TARGET_FILE_DIR:${PROJECT_NAME}>/skybox.spv
     COMMENT "Copying shaders to output directory"

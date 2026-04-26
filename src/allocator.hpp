@@ -223,6 +223,20 @@ public:
     [[nodiscard]] AllocatedImage createImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage,
         VkSampleCountFlagBits sample_count = VK_SAMPLE_COUNT_1_BIT, uint32_t mip_levels = 1) const;
 
+    /*!
+        Allocates a 3D image. Use for froxel grids (Phase 8 Etape 41 volumetrics) and any
+        future volumetric data. Distinct from createImage() because 3D images cannot be
+        MSAA-multisampled and have no mip semantics here (mipLevels = 1).
+
+        \param width Image width in pixels.
+        \param height Image height in pixels.
+        \param depth Image depth in slices.
+        \param format Vulkan image format.
+        \param usage Vulkan image usage flags.
+        \return An RAII wrapper owning the image and its allocation.
+    */
+    [[nodiscard]] AllocatedImage createImage3D(uint32_t width, uint32_t height, uint32_t depth, VkFormat format, VkImageUsageFlags usage) const;
+
     //! Raw VmaAllocator handle.
     [[nodiscard]] VmaAllocator handle() const
     {

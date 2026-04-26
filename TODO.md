@@ -779,6 +779,37 @@ features that separate a tech demo from a published game.
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
 
+### 2026-04-26 — Phase 8 Etape 41 sub-etape 41a: volumetric fog foundation
+
+First of four planned sub-etapes for Etape 41 (volumetric fog + light shafts). 41a
+ships the froxel-grid plumbing and a working composite pipeline with a placeholder
+height-falloff density (no light injection yet — that's 41b).
+
+- New `Allocator::createImage3D` for 3D images.
+- 160 × 90 × 64 froxel grid (rgba16f, 7.4 MB) with logarithmic depth slicing along
+  the view direction (more resolution near the camera). Frustum-aligned x/y tiles.
+- `inject_density.slang` — per-froxel compute that reconstructs the world-space
+  position of each froxel centre via `inv_view_projection` and writes a
+  height-falloff extinction (full strength below `FOG_HEIGHT_BASE = 4 m`,
+  exponentially attenuated above with 6 m falloff). Scattered radiance stays zero
+  in 41a; 41b will sample emissive geometry per froxel via shadow rays through
+  the TLAS.
+- `volumetric_composite.slang` — per-pixel raymarch through the froxel column,
+  accumulates `transmittance *= exp(-extinction_per_slice)` and per-slice
+  scattered radiance per Wronski 2014 / Frostbite "Adaptive Volumetric Shadow
+  Maps". Composites onto HDR as `final = scene * transmittance + scattered`.
+  Sequenced before bloom extraction so the bloom chain operates on the fogged
+  HDR (the fog itself can bloom).
+- recordFrame extension: dispatch inject (writes froxel grid) → barrier → dispatch
+  composite (RW HDR, R froxel) → barrier → existing bloom chain. New `to_compute`
+  barrier set extends from 3 entries to 4 to cover the froxel image transition.
+- Per-frame composite descriptor sets (×MAX_FRAMES_IN_FLIGHT) — caught the classic
+  "single descriptor set + multiple frames in flight" race during build verification:
+  updating the set while a prior frame's command buffer is still pending requires
+  per-frame copies (matches existing bloom / postprocess pattern).
+
+103 PRs merged.
+
 ### 2026-04-26 — Maintenance Etape M3: XCB window hardening
 
 Five findings from the parallel `libs/` audit, closing out the libs-audit

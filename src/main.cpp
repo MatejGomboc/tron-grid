@@ -99,6 +99,58 @@ constexpr float BLOOM_STRENGTH{0.095f};
 //! Fence poll timeout — short enough for responsive shutdown, long enough to avoid busy-waiting.
 constexpr uint64_t FENCE_TIMEOUT_NS{100'000'000};
 
+//! Volumetric froxel grid dimensions (Phase 8 Etape 41 sub-etape 41a).
+//! Frustum-aligned: x/y are screen-space tiles, z is logarithmically spaced view-space depth.
+//! 160 × 90 × 64 = 921 600 froxels; at rgba16f = 8 bytes/froxel → 7.4 MB total. Cheap.
+constexpr uint32_t FROXEL_WIDTH{160};
+constexpr uint32_t FROXEL_HEIGHT{90};
+constexpr uint32_t FROXEL_DEPTH{64};
+
+//! Volumetric near/far in view-space metres. The grid spans [near, far] along z, with
+//! the rest of the depth range (beyond FROXEL_FAR) rendered without volumetric fog.
+constexpr float FROXEL_NEAR{0.1f};
+constexpr float FROXEL_FAR{120.0f};
+
+//! Base extinction coefficient (m^-1) at ground level. Subtle uniform fog for 41a; later
+//! sub-etapes will keep this as the baseline density underneath emissive light scattering.
+constexpr float FOG_DENSITY{0.012f};
+
+//! World-space y where the height-falloff fog density starts to attenuate.
+constexpr float FOG_HEIGHT_BASE{4.0f};
+
+//! Exponential falloff scale (metres). Density at height (FOG_HEIGHT_BASE + h) is
+//! FOG_DENSITY * exp(-h / FOG_HEIGHT_FALLOFF).
+constexpr float FOG_HEIGHT_FALLOFF{6.0f};
+
+//! Volumetric inject compute shader push-constant block. Layout MUST match the slang
+//! FroxelPushConstants struct in src/inject_density.slang byte-for-byte (scalar layout).
+struct VolumetricInjectPushConstants {
+    uint32_t froxel_width{0};
+    uint32_t froxel_height{0};
+    uint32_t froxel_depth{0};
+    float fog_density{0.0f};
+    float fog_height_base{0.0f};
+    float fog_height_falloff{0.0f};
+    float near_plane{0.0f};
+    float far_plane{0.0f};
+    MathLib::Mat4 inv_view_projection{}; //!< World reconstruction at froxel centres.
+    MathLib::Vec3 camera_pos{};
+    float pad{0.0f};
+};
+
+//! Volumetric composite compute shader push-constant block. Layout MUST match the slang
+//! VolumetricPushConstants struct in src/volumetric_composite.slang.
+struct VolumetricCompositePushConstants {
+    uint32_t screen_width{0};
+    uint32_t screen_height{0};
+    uint32_t froxel_width{0};
+    uint32_t froxel_height{0};
+    uint32_t froxel_depth{0};
+    float pad0{0.0f};
+    float pad1{0.0f};
+    float pad2{0.0f};
+};
+
 //! Computes the number of mip levels for the bloom texture (base = half swapchain resolution).
 [[nodiscard]] static uint32_t bloomMipCount(vk::Extent2D extent)
 {
@@ -278,7 +330,9 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     vk::DescriptorSet pp_descriptor_set, vk::Image bloom_image, uint32_t bloom_mip_count, uint32_t bloom_base_w, uint32_t bloom_base_h,
     vk::Pipeline bloom_extract_pipeline, vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline, vk::PipelineLayout bloom_layout,
     const std::vector<vk::DescriptorSet>& bloom_sets, const std::vector<vk::DescriptorSet>& bloom_upsample_sets, vk::Pipeline skybox_pipeline,
-    vk::PipelineLayout skybox_layout, vk::DescriptorSet skybox_descriptor_set, float time)
+    vk::PipelineLayout skybox_layout, vk::DescriptorSet skybox_descriptor_set, vk::Pipeline inject_pipeline, vk::PipelineLayout inject_pipeline_layout,
+    vk::DescriptorSet inject_descriptor_set, vk::Pipeline composite_pipeline, vk::PipelineLayout composite_pipeline_layout, vk::DescriptorSet composite_descriptor_set,
+    vk::Image froxel_image, const VolumetricInjectPushConstants& inject_push, float time)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -508,10 +562,105 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     bloom_to_general.subresourceRange.baseArrayLayer = 0;
     bloom_to_general.subresourceRange.layerCount = 1;
 
-    std::array<vk::ImageMemoryBarrier2, 3> to_compute_barriers{hdr_to_general, swap_to_general, bloom_to_general};
+    // Froxel image: UNDEFINED (or previous-frame eGeneral) → eGeneral. Discarding the
+    // prior frame's data is fine for 41a (no temporal reprojection yet); 41c will switch
+    // this to a non-discarding eGeneral → eGeneral layout transition so the prior frame's
+    // froxels stay readable for reprojection.
+    vk::ImageMemoryBarrier2 froxel_to_general{};
+    froxel_to_general.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_to_general.srcAccessMask = vk::AccessFlagBits2::eNone;
+    froxel_to_general.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_to_general.dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    froxel_to_general.oldLayout = vk::ImageLayout::eUndefined;
+    froxel_to_general.newLayout = vk::ImageLayout::eGeneral;
+    froxel_to_general.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_to_general.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_to_general.image = froxel_image;
+    froxel_to_general.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    froxel_to_general.subresourceRange.baseMipLevel = 0;
+    froxel_to_general.subresourceRange.levelCount = 1;
+    froxel_to_general.subresourceRange.baseArrayLayer = 0;
+    froxel_to_general.subresourceRange.layerCount = 1;
+
+    std::array<vk::ImageMemoryBarrier2, 4> to_compute_barriers{hdr_to_general, swap_to_general, bloom_to_general, froxel_to_general};
     vk::DependencyInfo dep_to_compute{};
     dep_to_compute.setImageMemoryBarriers(to_compute_barriers);
     cmd.pipelineBarrier2(dep_to_compute);
+
+    // ── Volumetric inject + composite (Phase 8 Etape 41 sub-etape 41a) ──
+    // Inject writes the per-froxel scattered radiance + extinction; composite raymarches
+    // along each pixel's view ray, accumulates the in-scattered radiance and transmittance,
+    // and blends them onto the existing HDR colour. Sequenced before bloom extraction so
+    // the bloom chain operates on the fogged HDR (the fog itself can bloom).
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, inject_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, inject_pipeline_layout, 0, {inject_descriptor_set}, {});
+    cmd.pushConstants<VolumetricInjectPushConstants>(inject_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, inject_push);
+
+    constexpr uint32_t INJECT_GROUP_SIZE{8};
+    uint32_t inject_groups_x{(FROXEL_WIDTH + INJECT_GROUP_SIZE - 1) / INJECT_GROUP_SIZE};
+    uint32_t inject_groups_y{(FROXEL_HEIGHT + INJECT_GROUP_SIZE - 1) / INJECT_GROUP_SIZE};
+    cmd.dispatch(inject_groups_x, inject_groups_y, FROXEL_DEPTH);
+
+    // Barrier: froxel write (inject) → froxel read (composite). Compute → compute, same
+    // image, same layout, just an execution + memory dependency between dispatches.
+    vk::ImageMemoryBarrier2 froxel_inject_to_composite{};
+    froxel_inject_to_composite.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_inject_to_composite.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    froxel_inject_to_composite.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    froxel_inject_to_composite.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+    froxel_inject_to_composite.oldLayout = vk::ImageLayout::eGeneral;
+    froxel_inject_to_composite.newLayout = vk::ImageLayout::eGeneral;
+    froxel_inject_to_composite.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_inject_to_composite.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    froxel_inject_to_composite.image = froxel_image;
+    froxel_inject_to_composite.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    froxel_inject_to_composite.subresourceRange.baseMipLevel = 0;
+    froxel_inject_to_composite.subresourceRange.levelCount = 1;
+    froxel_inject_to_composite.subresourceRange.baseArrayLayer = 0;
+    froxel_inject_to_composite.subresourceRange.layerCount = 1;
+
+    vk::DependencyInfo dep_inject_to_composite{};
+    dep_inject_to_composite.setImageMemoryBarriers(froxel_inject_to_composite);
+    cmd.pipelineBarrier2(dep_inject_to_composite);
+
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, composite_pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, composite_pipeline_layout, 0, {composite_descriptor_set}, {});
+
+    VolumetricCompositePushConstants composite_push{};
+    composite_push.screen_width = extent.width;
+    composite_push.screen_height = extent.height;
+    composite_push.froxel_width = FROXEL_WIDTH;
+    composite_push.froxel_height = FROXEL_HEIGHT;
+    composite_push.froxel_depth = FROXEL_DEPTH;
+    cmd.pushConstants<VolumetricCompositePushConstants>(composite_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, composite_push);
+
+    uint32_t composite_groups_x{(extent.width + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
+    uint32_t composite_groups_y{(extent.height + PP_WORKGROUP_SIZE - 1) / PP_WORKGROUP_SIZE};
+    cmd.dispatch(composite_groups_x, composite_groups_y, 1);
+
+    // Barrier: HDR write (composite) → HDR read (bloom extract). Without this the bloom
+    // chain could read stale HDR (pre-fog) and the post-process pass would see bloom that
+    // doesn't match the fogged scene.
+    vk::ImageMemoryBarrier2 hdr_composite_to_bloom{};
+    hdr_composite_to_bloom.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    hdr_composite_to_bloom.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+    hdr_composite_to_bloom.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+    hdr_composite_to_bloom.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+    hdr_composite_to_bloom.oldLayout = vk::ImageLayout::eGeneral;
+    hdr_composite_to_bloom.newLayout = vk::ImageLayout::eGeneral;
+    hdr_composite_to_bloom.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_composite_to_bloom.dstQueueFamilyIndex = vk::QueueFamilyIgnored;
+    hdr_composite_to_bloom.image = hdr_image;
+    hdr_composite_to_bloom.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    hdr_composite_to_bloom.subresourceRange.baseMipLevel = 0;
+    hdr_composite_to_bloom.subresourceRange.levelCount = 1;
+    hdr_composite_to_bloom.subresourceRange.baseArrayLayer = 0;
+    hdr_composite_to_bloom.subresourceRange.layerCount = 1;
+
+    vk::DependencyInfo dep_hdr_composite_to_bloom{};
+    dep_hdr_composite_to_bloom.setImageMemoryBarriers(hdr_composite_to_bloom);
+    cmd.pipelineBarrier2(dep_hdr_composite_to_bloom);
 
     // ── Bloom extraction + downsample + upsample chain ──
 
@@ -1080,6 +1229,170 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
     };
 
+    // ── Volumetric fog (Phase 8 Etape 41 sub-etape 41a) — froxel grid + 2 compute pipelines ──
+
+    // 3D froxel grid: stores per-froxel scattered radiance (rgb) + extinction (a).
+    AllocatedImage froxel_image{allocator.createImage3D(FROXEL_WIDTH, FROXEL_HEIGHT, FROXEL_DEPTH, static_cast<VkFormat>(HDR_FORMAT), VK_IMAGE_USAGE_STORAGE_BIT)};
+
+    vk::ImageViewCreateInfo froxel_view_info{};
+    froxel_view_info.image = froxel_image.image();
+    froxel_view_info.viewType = vk::ImageViewType::e3D;
+    froxel_view_info.format = HDR_FORMAT;
+    froxel_view_info.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eColor;
+    froxel_view_info.subresourceRange.baseMipLevel = 0;
+    froxel_view_info.subresourceRange.levelCount = 1;
+    froxel_view_info.subresourceRange.baseArrayLayer = 0;
+    froxel_view_info.subresourceRange.layerCount = 1;
+    vk::raii::ImageView froxel_view{device.get(), froxel_view_info};
+
+    // Inject pipeline — 1 storage image (the froxel grid) + push constants.
+    std::vector<uint32_t> inject_spirv{loadSpirv(exe_dir_rt + "inject_density.spv", logger)};
+
+    vk::DescriptorSetLayoutBinding inject_binding{};
+    inject_binding.binding = 0;
+    inject_binding.descriptorType = vk::DescriptorType::eStorageImage;
+    inject_binding.descriptorCount = 1;
+    inject_binding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo inject_layout_info{};
+    inject_layout_info.setBindings(inject_binding);
+    vk::raii::DescriptorSetLayout inject_descriptor_set_layout{device.get(), inject_layout_info};
+
+    vk::PushConstantRange inject_push_range{};
+    inject_push_range.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    inject_push_range.offset = 0;
+    inject_push_range.size = sizeof(VolumetricInjectPushConstants);
+
+    vk::PipelineLayoutCreateInfo inject_pipeline_layout_info{};
+    inject_pipeline_layout_info.setSetLayouts(*inject_descriptor_set_layout);
+    inject_pipeline_layout_info.setPushConstantRanges(inject_push_range);
+    vk::raii::PipelineLayout inject_pipeline_layout{device.get(), inject_pipeline_layout_info};
+
+    vk::ShaderModuleCreateInfo inject_module_info{};
+    inject_module_info.setCode(inject_spirv);
+    vk::raii::ShaderModule inject_module{device.get(), inject_module_info};
+
+    vk::PipelineShaderStageCreateInfo inject_stage{};
+    inject_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    inject_stage.module = *inject_module;
+    inject_stage.setPName("injectMain");
+
+    vk::ComputePipelineCreateInfo inject_pipeline_info{};
+    inject_pipeline_info.stage = inject_stage;
+    inject_pipeline_info.layout = *inject_pipeline_layout;
+    vk::raii::Pipeline inject_pipeline{device.get(), nullptr, inject_pipeline_info};
+
+    // Composite pipeline — 2 storage images (HDR in/out + froxel read) + push constants.
+    std::vector<uint32_t> composite_spirv{loadSpirv(exe_dir_rt + "volumetric_composite.spv", logger)};
+
+    std::array<vk::DescriptorSetLayoutBinding, 2> composite_bindings{};
+    composite_bindings[0].binding = 0;
+    composite_bindings[0].descriptorType = vk::DescriptorType::eStorageImage;
+    composite_bindings[0].descriptorCount = 1;
+    composite_bindings[0].stageFlags = vk::ShaderStageFlagBits::eCompute;
+    composite_bindings[1].binding = 1;
+    composite_bindings[1].descriptorType = vk::DescriptorType::eStorageImage;
+    composite_bindings[1].descriptorCount = 1;
+    composite_bindings[1].stageFlags = vk::ShaderStageFlagBits::eCompute;
+
+    vk::DescriptorSetLayoutCreateInfo composite_layout_info{};
+    composite_layout_info.setBindings(composite_bindings);
+    vk::raii::DescriptorSetLayout composite_descriptor_set_layout{device.get(), composite_layout_info};
+
+    vk::PushConstantRange composite_push_range{};
+    composite_push_range.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    composite_push_range.offset = 0;
+    composite_push_range.size = sizeof(VolumetricCompositePushConstants);
+
+    vk::PipelineLayoutCreateInfo composite_pipeline_layout_info{};
+    composite_pipeline_layout_info.setSetLayouts(*composite_descriptor_set_layout);
+    composite_pipeline_layout_info.setPushConstantRanges(composite_push_range);
+    vk::raii::PipelineLayout composite_pipeline_layout{device.get(), composite_pipeline_layout_info};
+
+    vk::ShaderModuleCreateInfo composite_module_info{};
+    composite_module_info.setCode(composite_spirv);
+    vk::raii::ShaderModule composite_module{device.get(), composite_module_info};
+
+    vk::PipelineShaderStageCreateInfo composite_stage{};
+    composite_stage.stage = vk::ShaderStageFlagBits::eCompute;
+    composite_stage.module = *composite_module;
+    composite_stage.setPName("compositeMain");
+
+    vk::ComputePipelineCreateInfo composite_pipeline_info{};
+    composite_pipeline_info.stage = composite_stage;
+    composite_pipeline_info.layout = *composite_pipeline_layout;
+    vk::raii::Pipeline composite_pipeline{device.get(), nullptr, composite_pipeline_info};
+
+    logger.logInfo("Volumetric compute pipelines created (inject + composite).");
+
+    // Descriptor pool — 1 inject set (1 storage image) + MAX_FRAMES_IN_FLIGHT composite
+    // sets (2 storage images each). Per-frame composite sets are required because the set
+    // is updated each frame (HDR view binding) while the prior frame's command buffer may
+    // still reference it; updating a set in use without VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT
+    // is a Vulkan validation error.
+    std::array<vk::DescriptorPoolSize, 1> volumetric_pool_sizes{};
+    volumetric_pool_sizes[0].type = vk::DescriptorType::eStorageImage;
+    volumetric_pool_sizes[0].descriptorCount = 1 + (MAX_FRAMES_IN_FLIGHT * 2); // inject (1) + composite (2 per frame)
+
+    vk::DescriptorPoolCreateInfo volumetric_pool_info{};
+    volumetric_pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+    volumetric_pool_info.maxSets = 1 + MAX_FRAMES_IN_FLIGHT;
+    volumetric_pool_info.setPoolSizes(volumetric_pool_sizes);
+    vk::raii::DescriptorPool volumetric_descriptor_pool{device.get(), volumetric_pool_info};
+
+    std::array<vk::DescriptorSetLayout, 1> inject_set_layouts{*inject_descriptor_set_layout};
+    vk::DescriptorSetAllocateInfo inject_alloc_info{};
+    inject_alloc_info.descriptorPool = *volumetric_descriptor_pool;
+    inject_alloc_info.setSetLayouts(inject_set_layouts);
+    std::vector<vk::raii::DescriptorSet> inject_descriptor_sets{device.get().allocateDescriptorSets(inject_alloc_info)};
+
+    std::vector<vk::DescriptorSetLayout> composite_set_layouts(MAX_FRAMES_IN_FLIGHT, *composite_descriptor_set_layout);
+    vk::DescriptorSetAllocateInfo composite_alloc_info{};
+    composite_alloc_info.descriptorPool = *volumetric_descriptor_pool;
+    composite_alloc_info.setSetLayouts(composite_set_layouts);
+    std::vector<vk::raii::DescriptorSet> composite_descriptor_sets{device.get().allocateDescriptorSets(composite_alloc_info)};
+
+    // Inject descriptor set is bound once — only references the (persistent) froxel image.
+    // No per-frame update needed; the same set is safely referenced by every command buffer.
+    {
+        vk::DescriptorImageInfo inject_image_info{};
+        inject_image_info.imageView = *froxel_view;
+        inject_image_info.imageLayout = vk::ImageLayout::eGeneral;
+
+        vk::WriteDescriptorSet inject_write{};
+        inject_write.dstSet = *inject_descriptor_sets[0];
+        inject_write.dstBinding = 0;
+        inject_write.dstArrayElement = 0;
+        inject_write.descriptorType = vk::DescriptorType::eStorageImage;
+        inject_write.setImageInfo(inject_image_info);
+
+        device.get().updateDescriptorSets({inject_write}, {});
+    }
+
+    // Composite descriptor set is rebound each frame for the per-frame composite_descriptor_sets[frame_index]
+    // — the HDR view changes on resize. Per-frame sets avoid the in-flight-update race.
+    auto updateVolumetricCompositeDescriptors = [&](uint32_t frame_index, vk::ImageView hdr_sv) {
+        std::array<vk::DescriptorImageInfo, 2> infos{};
+        infos[0].imageView = hdr_sv;
+        infos[0].imageLayout = vk::ImageLayout::eGeneral;
+        infos[1].imageView = *froxel_view;
+        infos[1].imageLayout = vk::ImageLayout::eGeneral;
+
+        std::array<vk::WriteDescriptorSet, 2> writes{};
+        writes[0].dstSet = *composite_descriptor_sets[frame_index];
+        writes[0].dstBinding = 0;
+        writes[0].dstArrayElement = 0;
+        writes[0].descriptorType = vk::DescriptorType::eStorageImage;
+        writes[0].setImageInfo(infos[0]);
+        writes[1].dstSet = *composite_descriptor_sets[frame_index];
+        writes[1].dstBinding = 1;
+        writes[1].dstArrayElement = 0;
+        writes[1].descriptorType = vk::DescriptorType::eStorageImage;
+        writes[1].setImageInfo(infos[1]);
+
+        device.get().updateDescriptorSets(writes, {});
+    };
+
     // ── Skybox graphics pipeline ──
 
     std::vector<uint32_t> skybox_spirv{loadSpirv(exe_dir_rt + "skybox.spv", logger)};
@@ -1428,8 +1741,19 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
 
         bool swapchain_suboptimal{acquire_result == vk::Result::eSuboptimalKHR};
 
-        // Update camera UBO and extract frustum planes
+        // Update camera UBO and extract frustum planes. Also build the volumetric inject
+        // push-constant block (needs inv_view_projection + camera_pos to reconstruct the
+        // world-space position of each froxel centre).
         MathLib::Frustum frustum{};
+        VolumetricInjectPushConstants inject_push{};
+        inject_push.froxel_width = FROXEL_WIDTH;
+        inject_push.froxel_height = FROXEL_HEIGHT;
+        inject_push.froxel_depth = FROXEL_DEPTH;
+        inject_push.fog_density = FOG_DENSITY;
+        inject_push.fog_height_base = FOG_HEIGHT_BASE;
+        inject_push.fog_height_falloff = FOG_HEIGHT_FALLOFF;
+        inject_push.near_plane = FROXEL_NEAR;
+        inject_push.far_plane = FROXEL_FAR;
         {
             uint32_t extent_height{swapchain.extent().height};
 
@@ -1454,6 +1778,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             prev_view_projection = current_vp;
             ++frame_counter;
             frustum = MathLib::extractFrustum(ubo.projection * ubo.view);
+
+            inject_push.inv_view_projection = ubo.inv_view_projection;
+            inject_push.camera_pos = ubo.camera_pos;
         }
 
         // Record command buffer — mesh shaders + compute post-process in one submission
@@ -1462,6 +1789,7 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         updatePostProcessDescriptors(current_frame, *hdr_view, *swapchain_storage_views[image_index], *bloom_mip_views[0]);
         updateBloomDescriptors(current_frame);
         updateBloomUpsampleDescriptors(current_frame);
+        updateVolumetricCompositeDescriptors(current_frame, *hdr_view);
 
         // Collect bloom descriptor sets for this frame (reuses pre-allocated vectors).
         bloom_sets_for_frame.clear();
@@ -1477,7 +1805,9 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
             swapchain.extent(), pipeline, pipeline.descriptorSet(current_frame), frustum, opaque_object_count, transparent_object_count, *pp_pipeline,
             *pp_pipeline_layout, *pp_descriptor_sets[current_frame], bloom_image.image(), bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline,
             *bloom_downsample_pipeline, *bloom_upsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame, bloom_upsample_sets_for_frame, *skybox_pipeline,
-            *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
+            *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], *inject_pipeline, *inject_pipeline_layout, *inject_descriptor_sets[0], *composite_pipeline,
+            *composite_pipeline_layout, *composite_descriptor_sets[current_frame], froxel_image.image(), inject_push,
+            std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
