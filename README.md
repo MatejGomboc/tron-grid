@@ -25,11 +25,18 @@ aberration, cool colour grade, vignette, scan lines). Physically-correct
 lighting from emissive neon tube geometry (no point-light abstraction) with
 ReSTIR DI — temporal + spatial reservoir reuse for direct illumination,
 single-bounce indirect GI via cosine-weighted hemisphere sampling with Russian
-roulette. RT hard shadows and single-bounce reflections via inline ray query
-(`VK_KHR_ray_query`). Mesh shader rendering (task + mesh + fragment),
-procedural Tron terrain, per-object frustum culling, meshlet-based geometry,
-entity/component scene. Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`,
-ASan/UBSan/TSan, GPU validation.
+roulette, ray-traced ambient occlusion (cosine-weighted hemisphere, 2 m TMax,
+temporal EMA + spatial averaging, applied to diffuse lobes only). RT hard
+shadows and single-bounce reflections via inline ray query
+(`VK_KHR_ray_query`). Transparent materials with ray-traced refraction
+(Snell's law, total-internal-reflection fallback, Schlick Fresnel,
+Beer-Lambert-lite tint) — glass tower and red energy-barrier pillar render
+through a dedicated transparent pipeline (premultiplied alpha, depth test
+only) that shares the descriptor set layout with the opaque pipeline. Mesh
+shader rendering (task + mesh + fragment), procedural Tron terrain,
+per-object frustum culling, meshlet-based geometry, entity/component scene.
+Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU
+validation.
 
 See [docs/VISION.md](docs/VISION.md) for the full vision, architecture overview, and phased roadmap.
 

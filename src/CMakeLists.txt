@@ -115,6 +115,7 @@ add_custom_command(
         -capability GL_EXT_ray_query
         -entry meshMain
         -entry fragMain
+        -entry fragTransparent
         -o ${SHADER_OUTPUT_DIR}/mesh.spv
     COMMAND ${SPIRV_VAL_EXECUTABLE} --target-env vulkan1.3 ${SHADER_OUTPUT_DIR}/mesh.spv
     DEPENDS ${MESH_SOURCE}

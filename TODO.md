@@ -217,9 +217,11 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 - [x] Russian roulette path termination
 - [x] Motion vectors for temporal reuse
 - [x] Ray-traced ambient occlusion (RTAO)
-- [ ] Transparent materials with refraction (Snell's law, IOR)
-- [ ] Weighted Blended OIT or equivalent
-- [ ] Per-material opacity in material SSBO
+- [x] Transparent materials with refraction (Snell's law, IOR)
+- [ ] Weighted Blended OIT or equivalent (Etape 40 deliberately uses simpler premultiplied-alpha
+  blending — full WBOIT is deferred until the scene has enough overlapping transparents to
+  justify the accumulation/revealage targets)
+- [x] Per-material opacity in material SSBO
 - [ ] Froxel-based volumetric fog with neon light shafts
 - [ ] Temporal reprojection for fog noise reduction
 - [ ] Adaptive meshlet LOD with seamless transitions
@@ -230,6 +232,138 @@ ray tracing and automatic detail scaling. Unreal Engine-quality output.
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
 - [ ] All existing + new tests pass on all CI presets
 - [ ] **Phase 8 complete — full RT + advanced rendering**
+
+---
+
+## Library Hardening (Maintenance — runs in parallel with phases)
+
+A parallel `libs/` audit (2026-04-26) surfaced ten findings ranging from
+correctness bugs to cosmetic issues. None block any in-progress phase work,
+so they are scheduled as a sequence of small focused PRs that can land
+between or alongside main-phase etapes. Each maintenance etape is one PR
+on its own branch off `main`.
+
+### Maintenance Etape M1 — logger race + math/quaternion hardening
+
+**Goal:** fix the most consequential cross-cutting bugs in
+`libs/logging` and `libs/math`. These are small files, the changes are
+local, and they unblock confidence in any future investigation that
+relies on logging or matrix data layout.
+
+**Scope:**
+
+- [ ] **Logger missed-wakeup race** (`libs/logging/src/logger.cpp:82-86`).
+  `enqueue` calls `m_queue.emit()` outside `m_mutex`, then `notify_one()`.
+  The waiter at `:93-96` reads `m_queue.empty()` under `m_mutex`. Per the
+  C++ memory model, state read by the predicate must be modified under
+  the same mutex used by `wait` to avoid lost wake-ups. Fix: hold
+  `m_mutex` while calling `m_queue.emit(...)` in `enqueue`. (Alternative:
+  drop the redundant CV/mutex and use a `Signal` wait directly — bigger
+  change, defer.)
+- [ ] **Missing `<algorithm>` in quaternion**
+  (`libs/math/include/math/quaternion.hpp:148`). Uses `std::min` but only
+  includes `<cmath>` / `<array>`. Compiles by transitive include today —
+  add `#include <algorithm>` to make it standard-conformant.
+- [ ] **`Mat4::data()` nested-array UB**
+  (`libs/math/include/math/matrix.hpp:179-182`). Returns `&m[0][0]` on a
+  `std::array<std::array<float, 4>, 4>`; standard does not guarantee
+  contiguity across inner arrays. Switch storage to `std::array<float, 16>`
+  with `(col * 4 + row)` accessors. Update `math_tests.cpp:264-267` to
+  match.
+- [ ] **Logger destructor redundant `notify_one()`** (`libs/logging/src/logger.cpp:53`).
+  The `std::stop_token`-aware `cv.wait` overload already wakes on stop;
+  the manual notify is harmless noise. Remove.
+- [ ] **`testing` library `toString` opaqueness** (`libs/testing/include/testing/testing.hpp:64`).
+  Returns `"<?>"` for non-arithmetic non-string types — failure messages
+  for `Vec3`, `Mat4` etc. read as `<?> != <?>`. Add an ADL-detected
+  `to_string(v)` hook so project types print useful diagnostics.
+
+**Acceptance:** all `libs/` tests pass on every preset; new tests cover
+the logger race fix (synthetic producer + thread-sanitiser preset) and
+the new `Mat4::data()` layout invariant.
+
+### Maintenance Etape M2 — Win32 window hardening
+
+**Goal:** clean up the Windows window-backend bugs that affect cursor
+behaviour, system keys, and the visible "hollow" startup window.
+
+**Scope:**
+
+- [ ] **`setCursorCaptured` unbalanced `ShowCursor` counter**
+  (`libs/window/src/win32_window.cpp:121-142`). `ShowCursor` keeps a
+  per-process counter; double-call to `setCursorCaptured(true)` sinks
+  it to -2 and a single `(false)` only restores to -1, leaving the
+  cursor hidden. Add an early return when `m_cursor_captured == captured`.
+- [ ] **`WM_SYSKEYDOWN` / `WM_SYSKEYUP` swallow system keys**
+  (`libs/window/src/win32_window.cpp:212-228`). Both handlers `return 0`
+  instead of falling through to `DefWindowProcW`. Breaks Alt+F4,
+  Alt+Space (system menu), F10. Forward to `DefWindowProcW` from
+  `WM_SYSKEY*`, or synthesise a Close event for Alt+F4 explicitly.
+- [ ] **Hollow window before first Vulkan frame**
+  (`libs/window/src/win32_window.cpp` window-class registration). Caused
+  by `WS_EX_NOREDIRECTIONBITMAP` excluding the window from DWM
+  compositing combined with no GDI background brush. Fix: remove
+  `WS_EX_NOREDIRECTIONBITMAP` and set
+  `wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH)` so the client
+  area paints black before the swapchain present.
+- [ ] **Title string off-by-one** (`libs/window/src/win32_window.cpp:72-74`).
+  `MultiByteToWideChar` with `cchSrc = -1` returns the count *including*
+  the trailing null; sizing the `std::wstring` with that count puts a
+  spurious `L'\0'` at `back()`. Use `title_len - 1`.
+- [ ] **`CS_OWNDC` cosmetic** (`libs/window/src/win32_window.cpp:34`).
+  Meaningless when paired with `WS_EX_NOREDIRECTIONBITMAP`; redundant
+  even if the latter is removed. Drop the flag.
+- [ ] **Synthetic mouse-warp event filtering**
+  (`libs/window/src/win32_window.cpp:230-261`). The recentre warp
+  generates a `MouseMove` with `dx == 0 && dy == 0` after every real
+  move, doubling the event count. Filter by tracking `m_warp_pending`
+  or by skipping zero-delta synthetic events.
+
+**Acceptance:** Win32 build runs without "hollow" startup; cursor toggle
+works any number of times; Alt+F4 closes the window via the system path;
+mouse-look has no phantom zero-delta events.
+
+### Maintenance Etape M3 — XCB window hardening
+
+**Goal:** the same kind of clean-up for the X11/XCB backend on Linux.
+
+**Scope:**
+
+- [ ] **Invisible-cursor pixmap never initialised**
+  (`libs/window/src/xcb_window.cpp:164-165`). 1×1 depth-1 pixmap
+  contents are undefined per X11 spec; can render as a visible single
+  pixel. Either zero the pixmap with a GC fill / `xcb_put_image`, or
+  use the documented `XCB_CURSOR_NONE` fallback.
+- [ ] **Cursor freed while grab still references it**
+  (`libs/window/src/xcb_window.cpp:186`). `xcb_free_cursor` runs
+  immediately after `xcb_grab_pointer` while the active grab still
+  holds the resource — implementation-defined. Move the free into the
+  `else` branch (after `xcb_ungrab_pointer`) and store the cursor
+  handle in a member.
+- [ ] **`screen_num` out-of-range crash**
+  (`libs/window/src/xcb_window.cpp:51-56`). If `xcb_connect` returns
+  `screen_num >= rem`, the iterator advances past the end and
+  `iter.data` is null; the next access at `:71` segfaults. Guard with
+  `iter.rem` and `logFatal` if no screen is found.
+- [ ] **`WM_NAME` set as Latin-1, breaking UTF-8 titles**
+  (`libs/window/src/xcb_window.cpp:82`). `XCB_ATOM_STRING` is Latin-1
+  per ICCCM. Set `_NET_WM_NAME` with `UTF8_STRING` in addition (modern
+  WMs prefer it).
+- [ ] **Synthetic mouse-warp event filtering**
+  (`libs/window/src/xcb_window.cpp:246-275`). Same root cause as the
+  Win32 issue — recentre `xcb_warp_pointer` generates a synthetic
+  MotionNotify. Filter by tracking a warp-pending flag.
+
+**Acceptance:** Linux X11 build passes all window tests; cursor is
+invisible during capture; UTF-8 titles render correctly on GNOME/KDE;
+no crash on multi-screen setups with non-zero default screen.
+
+### Acceptance Criteria
+
+- [ ] Maintenance Etape M1 merged
+- [ ] Maintenance Etape M2 merged
+- [ ] Maintenance Etape M3 merged
+- [ ] All findings from the 2026-04-26 `libs/` audit addressed
 
 ---
 
@@ -644,6 +778,44 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Phase 8 Etape 40: transparency + ray-traced refraction
+
+Etape 40 introduces a complete transparent-rendering path. Two new test entities — a
+cyan-tinted glass tower at (-15, 8, -15) and a red energy-barrier pillar at (15, 4, 15),
+each a 12-triangle box generated by a new `generateBox()` helper in `terrain.cpp` — sit
+behind opaque entities in a deterministic SSBO ordering enforced by a startup partition
+assertion. A new `Pipeline::transparentPipeline` shares the descriptor set layout, pipeline
+layout, and task/mesh stages with the existing opaque pipeline; only the fragment entry
+point (`fragTransparent` vs `fragMain`), depth-write state, and blend equations differ.
+Premultiplied-alpha "over" blending (Porter-Duff: `srcA = ONE`, `dstA = ONE_MINUS_SRC_ALPHA`)
+composes the transparent surfaces over the opaque pass + skybox. The task shader gains a
+`base_object_index` push constant so a single dispatch covers any contiguous SSBO slice
+(opaque uses `[0, N_opaque)`, transparent uses `[N_opaque, N_opaque + N_transparent)`). The
+skybox draws between opaque and transparent passes within the same render pass; the
+transparent dispatch must rebind the mesh-pipeline descriptor set after the skybox switches
+to its own pipeline layout (a Vulkan layout-compatibility rule that bit me first try). The
+shader does Snell-law refraction via HLSL `refract(I, N, eta)` — equivalent to the canonical
+`T = η·I − (η·c1 + √k)·N` form, returns zero on negative discriminant for TIR fallback to
+`reflect(I, N)`. Schlick Fresnel from `((n-1)/(n+1))²`, Beer-Lambert-lite tint via
+`base_colour` on the refracted contribution, composite is `F·reflect + (1−F)·refract +
+emissive`. To prevent self-intersection (refraction ray hitting its own back face and
+sampling the glass material again), the glass + pillar BLAS geometries are flagged
+non-opaque so a `RayQuery` Proceed() loop can skip candidates whose `CandidateInstanceID()`
+matches the originating instance. Other BLASes stay `eOpaque` for traversal speed. The
+pipeline outputs alpha 0.7 (premultiplied) so the explicit ray-traced result captures most
+of the background while a 30 % dst bleed-through softens the visual toward "tinted glass
+over a real background". Pillar emissive tuned to 1.5× (down from 4×) so the dielectric
+refraction and reflection terms remain visible alongside the warm glow; emissive colour
+matches the orb (material 1) byte-for-byte so the two warm light sources visually rhyme.
+ReSTIR reservoir state stays exclusively owned by the opaque pass — `fragTransparent`
+performs no reservoir reads or writes. Sub-etape verification gates: 40a (boxes appear as
+opaque solids → confirms BLAS + scene wiring), 40b (transparents render translucent via
+alpha blend → confirms pipeline + dispatch partition), 40c (terrain visible refracted
+through glass → confirms Snell + Fresnel + self-instance skip). Full WBOIT (accumulation
+and revealage targets, composite compute pass) was scoped out — premultiplied-alpha blending
+is sufficient for two non-overlapping transparents and the WBOIT plumbing should land only
+when the scene has enough overlapping translucent surfaces to justify it.
 
 ### 2026-04-24 — Phase 8 Etape 39: ray-traced ambient occlusion (RTAO)
 

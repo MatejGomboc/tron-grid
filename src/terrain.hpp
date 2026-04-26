@@ -38,17 +38,19 @@ struct TerrainMesh {
     float bounding_radius{0.0f}; //!< Bounding sphere radius from origin.
 };
 
-//! Sub-mesh for a single colour of neon tube geometry (cyan or orange).
-struct NeonSubMesh {
-    std::vector<Vertex> vertices; //!< Per-face vertices (6 per edge quad, flat shaded).
-    std::vector<uint32_t> indices; //!< Triangle indices.
+//! Generic flat-shaded mesh container — vertices, triangle indices, and the matching
+//! position-only array used by the meshlet builder. Used by all procedural geometry
+//! generators (neon tube sub-meshes, glass tower, energy-barrier pillar, etc.).
+struct Mesh {
+    std::vector<Vertex> vertices; //!< Per-face vertices (flat shaded — three vertices per triangle, no shared-vertex indexing).
+    std::vector<uint32_t> indices; //!< Triangle indices into `vertices`.
     std::vector<MathLib::Vec3> positions; //!< Vertex positions (for meshlet generation).
 };
 
 //! Result of neon tube generation — thin emissive quads along terrain grid edges.
 struct NeonTubeMesh {
-    NeonSubMesh cyan; //!< Primary grid tubes (cyan emissive).
-    NeonSubMesh orange; //!< Major grid line tubes (orange emissive).
+    Mesh cyan; //!< Primary grid tubes (cyan emissive).
+    Mesh orange; //!< Major grid line tubes (orange emissive).
     float bounding_radius{0.0f}; //!< Bounding sphere radius from origin.
 };
 
@@ -77,3 +79,17 @@ struct NeonTubeMesh {
     \return NeonTubeMesh with cyan and orange sub-meshes.
 */
 [[nodiscard]] NeonTubeMesh generateNeonTubes(const TerrainConfig& config);
+
+/*!
+    Generates a flat-shaded axis-aligned box mesh — 12 triangles, 36 vertices
+    (per-face vertices, no indexed sharing so face normals are correct).
+
+    The returned Mesh flows through the same meshlet / BLAS / vertex-buffer
+    plumbing used by the neon tube and sphere meshes.
+
+    \param centre World-space centre of the box.
+    \param half_extents Half-size along each axis (so the box spans
+        centre - half_extents to centre + half_extents).
+    \return Mesh with vertices, indices, and positions populated.
+*/
+[[nodiscard]] Mesh generateBox(const MathLib::Vec3& centre, const MathLib::Vec3& half_extents);

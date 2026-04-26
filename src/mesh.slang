@@ -81,6 +81,7 @@ struct MeshOutput {
     nointerpolation uint material_index : TEXCOORD3; // Index into the material SSBO.
     float4 prev_clip_pos : TEXCOORD4; // Previous frame's clip-space position (for motion vectors).
     float3 smooth_normal : TEXCOORD5; // Per-vertex smooth normal (interpolated, for reflections).
+    nointerpolation uint instance_id : TEXCOORD6; // TLAS instance index — fragTransparent skips self-hits during refraction ray traversal.
 };
 
 [[vk::binding(0, 0)]]
@@ -369,6 +370,17 @@ uint searchCDF(float r, uint count)
 [shader("fragment")]
 float4 fragMain(MeshOutput input, uint sample_index : SV_SampleIndex) : SV_Target
 {
+    // Force input.instance_id into this fragment shader's SPIR-V input interface so the
+    // validation layer does not flag a mesh-stage Output (Location 6) with no matching
+    // fragment Input. Only fragTransparent logically needs the field, but the mesh shader
+    // emits it for both fragment entry points; without this reference Slang strips it from
+    // fragMain's interface and Vulkan reports a (harmless) "Output declared but no Input"
+    // warning at pipeline creation. The discard branch never triggers — scene instance
+    // IDs are always far below 0xFFFFFFFF.
+    if (input.instance_id == 0xFFFFFFFFu) {
+        discard;
+    }
+
     // With MSAA + full sample-rate shading the fragment shader runs once per
     // covered sample. All samples of a given pixel share the same pixel_idx
     // and would non-atomically race to write the same reservoir slot. Only
@@ -1105,6 +1117,7 @@ void meshMain(
                 output.material_index = mat_idx;
                 output.prev_clip_pos = mul(camera.prev_view_projection, world_pos);
                 output.smooth_normal = mul((float3x3)model, smooth_normals[v]);
+                output.instance_id = task_payload.object_index;
                 out_vertices[vert_base + v] = output;
             }
 
@@ -1112,4 +1125,151 @@ void meshMain(
             out_triangles[tri_index] = uint3(vert_base, vert_base + 1, vert_base + 2);
         }
     }
+}
+
+// Sky colour at a given world-space ray direction. Lightweight gradient used as the miss
+// fallback for refraction and reflection ray queries fired from fragTransparent — too cheap
+// to be the canonical skybox but visually consistent (cool dark cyan-blue near horizon, even
+// darker overhead). The full procedural skybox shader is not invoked here because that
+// pipeline runs in a separate draw call against the depth buffer; we just need a sensible
+// background-colour estimate for misses.
+float3 transparentMissColour(float3 ray_dir)
+{
+    float horizon_t = saturate(ray_dir.y * 0.5 + 0.5);
+    float3 horizon = float3(0.06, 0.10, 0.14);
+    float3 zenith = float3(0.01, 0.02, 0.04);
+    return lerp(horizon, zenith, horizon_t);
+}
+
+// Samples the unlit surface colour at a refraction/reflection ray hit. Reads the hit instance's
+// material via CommittedInstanceID (which equals the C++ `instanceCustomIndex = entity index`
+// set during TLAS build) and returns base_colour + emissive*strength. This is intentionally
+// "look-up only", not a full Cook-Torrance + ReSTIR evaluation — recursive ReSTIR sampling
+// would be prohibitively expensive (per-fragment ReSTIR reservoir lookups for every refracted
+// pixel). The visual approximation is acceptable for a translucent surface: emissive geometry
+// behind the glass shows its hot colour, dielectric geometry shows its base albedo dimly.
+float3 sampleHitColour(uint hit_instance_id)
+{
+    uint hit_material_index = objects[hit_instance_id].material_index;
+    MaterialData hit_mat = materials[hit_material_index];
+    return hit_mat.base_colour + (hit_mat.emissive * hit_mat.emissive_strength);
+}
+
+// Inline ray query that traces along `ray_dir` from `origin`, skipping any hit whose
+// instance ID matches `self_instance` (so a refraction ray fired from the front face of the
+// glass tower does NOT immediately re-hit the glass tower's own back face). Requires the
+// transparent BLAS geometries to be marked non-opaque so candidate hits go through Proceed()
+// rather than auto-committing — see main.cpp glass + pillar BLAS build flags.
+float3 traceTransparentRay(float3 origin, float3 ray_dir, uint self_instance)
+{
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = ray_dir;
+    ray.TMin = 0.001;
+    ray.TMax = 1000.0;
+
+    RayQuery<RAY_FLAG_NONE> q;
+    q.TraceRayInline(scene_tlas, RAY_FLAG_NONE, 0xFF, ray);
+
+    while (q.Proceed()) {
+        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+            if (q.CandidateInstanceID() == self_instance) {
+                continue; // Skip self-instance — front-face fragment refracting through its own back face.
+            }
+            q.CommitNonOpaqueTriangleHit();
+        }
+    }
+
+    if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        return sampleHitColour(q.CommittedInstanceID());
+    }
+    return transparentMissColour(ray_dir);
+}
+
+// Per-fragment opacity for the transparent surface. The ray-traced refraction explicitly
+// samples what's behind the surface (so we don't strictly need destination bleed-through),
+// but allowing a partial dst contribution makes the surface read as "thinner" / glassier.
+// 0.7 → 70% of the explicit ray-traced result + 30% of whatever the opaque pass + skybox
+// wrote underneath. Slight double-counting (dst already represents the world behind), but
+// the visual is more pleasing than an alpha = 1 full-replacement.
+static const float TRANSPARENT_OUTPUT_ALPHA = 0.7;
+
+// Transparent fragment shader (Phase 8 Etape 40 sub-etape 40c). Real-time glass shader:
+// Schlick Fresnel from material IOR, ray-traced refraction via Snell's law (HLSL `refract()`
+// implements the canonical GLSL spec T = η·I − (η·(N·I) + √k)·N where
+// k = 1 − η²·(1 − (N·I)²); incident I points INTO the surface and N points TOWARD I's
+// origin so N·I is typically negative). TIR fallback to reflection when k < 0 (refract()
+// returns the zero vector). Fresnel-weighted blend of refraction + reflection plus the
+// surface's own emissive radiance.
+//
+// No reservoir reads or writes — transparents stay out of the ReSTIR temporal/spatial state
+// so the opaque pass keeps full ownership of per-pixel reservoir slots.
+//
+// Output uses TRANSPARENT_OUTPUT_ALPHA (premultiplied) — the refraction ray query has
+// explicitly captured what's behind the surface, but the partial alpha lets some of the
+// destination (opaque pass + skybox) bleed through to soften the look from "explicit
+// substitute" toward "tinted glass over a real background". The transparent pipeline is
+// still in use (rather than the opaque one) so depth writes stay disabled and future
+// overlapping transparents can blend correctly.
+[shader("fragment")]
+float4 fragTransparent(MeshOutput input) : SV_Target
+{
+    MaterialData mat = materials[input.material_index];
+
+    float3 V = normalize(camera.camera_pos - input.world_position);
+    float3 N_face = normalize(input.world_normal);
+
+    // Orient the surface normal toward the viewer for the Snell convention. The mesh produces
+    // outward face normals, but a transparent box is two-sided — we may be looking at a back
+    // face from the camera's perspective when the camera is positioned past the surface. The
+    // entering_surface flag also feeds the eta selection: ray going from air into the medium
+    // uses η = 1/IOR; ray going from medium into air uses η = IOR.
+    bool entering_surface = (dot(N_face, V) >= 0.0);
+    float3 N = entering_surface ? N_face : (-N_face);
+    float NdotV = saturate(dot(N, V));
+
+    // Schlick Fresnel from material IOR. F0 = ((n-1)/(n+1))² (canonical form for air↔dielectric
+    // boundary at normal incidence). Glass at IOR 1.5 gives F0 ≈ 0.04, the standard PBR value.
+    float ior_ratio = (mat.ior - 1.0) / (mat.ior + 1.0);
+    float F0 = ior_ratio * ior_ratio;
+    float F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+
+    // Snell's law refraction direction. eta = n_from / n_to (incident to transmitted medium).
+    // refract() returns the zero vector when total internal reflection occurs, which only
+    // happens for medium→air (eta > 1) at angles past the critical angle.
+    float3 I = -V;
+    float eta = entering_surface ? (1.0 / mat.ior) : mat.ior;
+    float3 T = refract(I, N, eta);
+    bool tir = (dot(T, T) < 1e-6);
+    float3 refract_dir = tir ? reflect(I, N) : T;
+
+    // Origin offsets to avoid self-intersection at the originating surface. Refraction goes
+    // INTO the surface so origin sits just beyond the surface in the −N direction; reflection
+    // bounces OFF so origin sits just outside the surface in the +N direction. The skip-self
+    // logic in traceTransparentRay handles the same-instance case but the offset still helps
+    // numerical robustness on grazing rays.
+    float3 refract_origin = input.world_position - (N * 0.001);
+    float3 refract_colour = traceTransparentRay(refract_origin, refract_dir, input.instance_id);
+
+    // Beer-Lambert-lite tint: refracted light passes through the medium and picks up the
+    // material's base colour. A full Beer-Lambert would attenuate by exp(-σ·d) where d is the
+    // path length inside the medium, but for a thin transparent box the linear tint is a
+    // reasonable approximation and avoids needing a second ray hit to measure d.
+    refract_colour *= mat.base_colour;
+
+    // Reflection ray uses the same canonical reflect() (R = I − 2·(N·I)·N).
+    float3 reflect_dir = reflect(I, N);
+    float3 reflect_origin = input.world_position + (N * 0.001);
+    float3 reflect_colour = traceTransparentRay(reflect_origin, reflect_dir, input.instance_id);
+
+    // Fresnel-weighted composite + the surface's own emissive radiance (which always emits
+    // regardless of whether light bounces or transmits). Energy-barrier pillar emission is
+    // tuned moderate (1.5×) so it glows visibly but does not swamp the dielectric reflection
+    // / refraction terms; clear glass (zero emissive) shows pure F·reflect + (1−F)·refract.
+    float3 emissive_term = mat.emissive * mat.emissive_strength;
+    float3 surface_colour = (F * reflect_colour) + ((1.0 - F) * refract_colour) + emissive_term;
+
+    // Premultiplied-alpha output: the blend equation final = src + (1 − srcA) × dst then
+    // composes a partial bleed of the destination over the explicitly traced result.
+    return float4(surface_colour * TRANSPARENT_OUTPUT_ALPHA, TRANSPARENT_OUTPUT_ALPHA);
 }

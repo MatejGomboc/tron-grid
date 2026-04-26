@@ -274,11 +274,11 @@ static void recordBloomUpsample(const vk::raii::CommandBuffer& cmd, vk::Image bl
 */
 static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image, vk::ImageView msaa_view, vk::Image hdr_image, vk::ImageView hdr_view,
     vk::ImageView depth_view, vk::Image depth_image, vk::Image swapchain_image, vk::Extent2D extent, const Pipeline& pipeline, vk::DescriptorSet descriptor_set,
-    const MathLib::Frustum& frustum, uint32_t total_objects, vk::Pipeline pp_pipeline, vk::PipelineLayout pp_layout, vk::DescriptorSet pp_descriptor_set,
-    vk::Image bloom_image, uint32_t bloom_mip_count, uint32_t bloom_base_w, uint32_t bloom_base_h, vk::Pipeline bloom_extract_pipeline,
-    vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline, vk::PipelineLayout bloom_layout, const std::vector<vk::DescriptorSet>& bloom_sets,
-    const std::vector<vk::DescriptorSet>& bloom_upsample_sets, vk::Pipeline skybox_pipeline, vk::PipelineLayout skybox_layout, vk::DescriptorSet skybox_descriptor_set,
-    float time)
+    const MathLib::Frustum& frustum, uint32_t opaque_object_count, uint32_t transparent_object_count, vk::Pipeline pp_pipeline, vk::PipelineLayout pp_layout,
+    vk::DescriptorSet pp_descriptor_set, vk::Image bloom_image, uint32_t bloom_mip_count, uint32_t bloom_base_w, uint32_t bloom_base_h,
+    vk::Pipeline bloom_extract_pipeline, vk::Pipeline bloom_downsample_pipeline, vk::Pipeline bloom_upsample_pipeline, vk::PipelineLayout bloom_layout,
+    const std::vector<vk::DescriptorSet>& bloom_sets, const std::vector<vk::DescriptorSet>& bloom_upsample_sets, vk::Pipeline skybox_pipeline,
+    vk::PipelineLayout skybox_layout, vk::DescriptorSet skybox_descriptor_set, float time)
 {
     vk::CommandBufferBeginInfo begin_info{};
     begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
@@ -391,8 +391,6 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
 
     cmd.beginRendering(rendering_info);
 
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline.get());
-
     vk::Viewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
@@ -409,19 +407,58 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
 
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
 
-    TaskPushConstants push{};
-    push.planes = frustum.planes;
-    push.object_count = total_objects;
-    cmd.pushConstants<TaskPushConstants>(*pipeline.layout(), vk::ShaderStageFlagBits::eTaskEXT, 0, push);
+    // ── Opaque pass: render entities [0, opaque_object_count) ──
+    // Reservoir writes happen here. Depth is written so the transparent pass can test
+    // against the opaque silhouette.
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline.opaquePipeline());
 
-    cmd.drawMeshTasksEXT(total_objects, 1, 1);
+    TaskPushConstants opaque_push{};
+    opaque_push.planes = frustum.planes;
+    opaque_push.object_count = opaque_object_count;
+    opaque_push.base_object_index = 0;
+    cmd.pushConstants<TaskPushConstants>(*pipeline.layout(), vk::ShaderStageFlagBits::eTaskEXT, 0, opaque_push);
 
-    // ── Skybox: procedural sky behind the terrain (same render pass) ──
+    if (opaque_object_count > 0) {
+        cmd.drawMeshTasksEXT(opaque_object_count, 1, 1);
+    }
 
+    // ── Skybox: procedural sky behind the terrain (same render pass, between opaque and transparent passes) ──
+    // The skybox is depth-tested with eLessOrEqual at z=1, so it fills any pixel the opaque
+    // pass left untouched (no depth write from skybox). Drawing it here means the transparent
+    // pass below will alpha-blend over either the opaque colour or the skybox colour, which
+    // is the visually correct order for "see through glass at the sky" cases.
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, skybox_pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, skybox_layout, 0, {skybox_descriptor_set}, {});
     cmd.pushConstants<float>(skybox_layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, time);
     cmd.draw(3, 1, 0, 0);
+
+    // ── Transparent pass: render entities [opaque_object_count, total_objects) ──
+    // Premultiplied alpha blend over whatever the opaque pass + skybox wrote. Depth is
+    // tested but not written, so multiple transparent surfaces stacked along the same
+    // ray would composite in arbitrary draw order rather than back-to-front. The
+    // current scene has only two transparent entities (glass tower + energy-barrier
+    // pillar) at well-separated world positions that do not overlap from any
+    // reasonable viewpoint, so CPU-side back-to-front sorting is unnecessary; it
+    // would be needed if future content added closely-stacked translucent geometry.
+    if (transparent_object_count > 0) {
+        // Re-bind the mesh-pipeline descriptor set: the skybox draw above bound a different
+        // descriptor set with skybox_pipeline_layout, which invalidates set 0 for any
+        // subsequent draw using a non-compatible pipeline layout (skybox_pipeline_layout
+        // vs pipeline.layout() are not compatible — different push-constant ranges and
+        // different descriptor set layouts). Without this rebind the transparent dispatch
+        // would read garbage descriptor data and validation would (correctly) flag a
+        // pipeline-layout-compatibility error.
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline.transparentPipeline());
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline.layout(), 0, {descriptor_set}, {});
+
+        TaskPushConstants transparent_push{};
+        transparent_push.planes = frustum.planes;
+        transparent_push.object_count = transparent_object_count;
+        transparent_push.base_object_index = opaque_object_count;
+        cmd.pushConstants<TaskPushConstants>(*pipeline.layout(), vk::ShaderStageFlagBits::eTaskEXT, 0, transparent_push);
+
+        cmd.drawMeshTasksEXT(transparent_object_count, 1, 1);
+    }
 
     cmd.endRendering();
 
@@ -545,10 +582,10 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     sends RenderEvent messages via Signal<T>. Owns the Vulkan rendering timeline,
     camera state, input processing, and delta time.
 */
-static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t total_objects, uint32_t emissive_count,
-    float total_emissive_power, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers, VkBuffer reservoir_a_buf, VkBuffer reservoir_b_buf,
-    VkDeviceSize reservoir_buffer_size, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex, std::condition_variable& render_cv,
-    LoggingLib::Logger& logger)
+static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipeline, Allocator& allocator, uint32_t opaque_object_count, uint32_t transparent_object_count,
+    uint32_t emissive_count, float total_emissive_power, vk::raii::CommandPool& command_pool, vk::raii::CommandBuffers& command_buffers, VkBuffer reservoir_a_buf,
+    VkBuffer reservoir_b_buf, VkDeviceSize reservoir_buffer_size, SignalsLib::Signal<RenderEvent>& render_signal, std::mutex& render_mutex,
+    std::condition_variable& render_cv, LoggingLib::Logger& logger)
 {
     // Frame synchronisation — per-frame fences and acquire semaphores
     std::vector<vk::raii::Semaphore> image_available_semaphores;
@@ -689,9 +726,8 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
     auto resetReservoirs = [&]() {
         VkDeviceSize required_pixels{static_cast<VkDeviceSize>(swapchain.extent().width) * swapchain.extent().height};
         if (required_pixels > reservoir_pixel_capacity) {
-            logger.logFatal("Swapchain extent exceeds reservoir capacity (" + std::to_string(swapchain.extent().width) + "x"
-                + std::to_string(swapchain.extent().height) + " pixels, capacity " + std::to_string(reservoir_pixel_capacity)
-                + "). Resize beyond 4K is not supported.");
+            logger.logFatal("Swapchain extent exceeds reservoir capacity (" + std::to_string(swapchain.extent().width) + "x" + std::to_string(swapchain.extent().height)
+                + " pixels, capacity " + std::to_string(reservoir_pixel_capacity) + "). Resize beyond 4K is not supported.");
             std::abort();
             return;
         }
@@ -1438,10 +1474,10 @@ static void renderThread(Device& device, Swapchain& swapchain, Pipeline& pipelin
         }
 
         recordFrame(cmd, msaa_image.image(), *msaa_view, hdr_image.image(), *hdr_view, *depth_view, depth_image.image(), swapchain.images()[image_index],
-            swapchain.extent(), pipeline, pipeline.descriptorSet(current_frame), frustum, total_objects, *pp_pipeline, *pp_pipeline_layout,
-            *pp_descriptor_sets[current_frame], bloom_image.image(), bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline, *bloom_downsample_pipeline,
-            *bloom_upsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame, bloom_upsample_sets_for_frame, *skybox_pipeline, *skybox_pipeline_layout,
-            *skybox_descriptor_sets[current_frame], std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
+            swapchain.extent(), pipeline, pipeline.descriptorSet(current_frame), frustum, opaque_object_count, transparent_object_count, *pp_pipeline,
+            *pp_pipeline_layout, *pp_descriptor_sets[current_frame], bloom_image.image(), bloom_mip_count, bloom_base_w, bloom_base_h, *bloom_extract_pipeline,
+            *bloom_downsample_pipeline, *bloom_upsample_pipeline, *bloom_pipeline_layout, bloom_sets_for_frame, bloom_upsample_sets_for_frame, *skybox_pipeline,
+            *skybox_pipeline_layout, *skybox_descriptor_sets[current_frame], std::chrono::duration<float>(std::chrono::steady_clock::now() - start_time).count());
 
         // Submit
         vk::SemaphoreSubmitInfo wait_sem{};
@@ -1683,13 +1719,69 @@ int main()
             m.triangle_offset += cum_tri_idx_2;
         }
 
-        // Combined vertex data — terrain + sphere + cyan neon + orange neon.
+        // ── Glass tower + energy-barrier pillar (Phase 8 Etape 40 transparent geometry) ──
+        // The two boxes use procedural axis-aligned geometry baked at world position
+        // (centre passed to generateBox). TLAS instances + scene transforms are identity
+        // for both, mirroring the cyan/orange neon pattern.
+        constexpr MathLib::Vec3 GLASS_TOWER_CENTRE{-15.0f, 8.0f, -15.0f};
+        constexpr MathLib::Vec3 GLASS_TOWER_HALF_EXTENTS{3.0f, 8.0f, 3.0f};
+        constexpr MathLib::Vec3 ENERGY_PILLAR_CENTRE{15.0f, 4.0f, 15.0f};
+        constexpr MathLib::Vec3 ENERGY_PILLAR_HALF_EXTENTS{0.5f, 4.0f, 0.5f};
+
+        Mesh glass_tower{generateBox(GLASS_TOWER_CENTRE, GLASS_TOWER_HALF_EXTENTS)};
+        Mesh energy_pillar{generateBox(ENERGY_PILLAR_CENTRE, ENERGY_PILLAR_HALF_EXTENTS)};
+
+        MeshData glass_meshlets{buildMeshlets(glass_tower.positions, glass_tower.indices)};
+        MeshData pillar_meshlets{buildMeshlets(energy_pillar.positions, energy_pillar.indices)};
+
+        // Glass tower meshlet offsets — after orange neon.
+        uint32_t glass_meshlet_offset{orange_meshlet_offset + orange_meshlet_count};
+        uint32_t glass_meshlet_count{static_cast<uint32_t>(glass_meshlets.meshlets.size())};
+
+        uint32_t orange_vertex_count{static_cast<uint32_t>(neon_tubes.orange.vertices.size())};
+        uint32_t combined_vert_count_before_glass{combined_vert_count_before_orange + orange_vertex_count};
+        for (uint32_t& idx : glass_meshlets.vertex_indices) {
+            idx += combined_vert_count_before_glass;
+        }
+
+        uint32_t orange_vert_idx_count{static_cast<uint32_t>(orange_meshlets.vertex_indices.size())};
+        uint32_t orange_tri_idx_count{static_cast<uint32_t>(orange_meshlets.triangle_indices.size())};
+        uint32_t cum_vert_idx_3{cum_vert_idx_2 + orange_vert_idx_count};
+        uint32_t cum_tri_idx_3{cum_tri_idx_2 + orange_tri_idx_count};
+        for (Meshlet& m : glass_meshlets.meshlets) {
+            m.vertex_offset += cum_vert_idx_3;
+            m.triangle_offset += cum_tri_idx_3;
+        }
+
+        // Energy-barrier pillar meshlet offsets — after glass tower.
+        uint32_t pillar_meshlet_offset{glass_meshlet_offset + glass_meshlet_count};
+        uint32_t pillar_meshlet_count{static_cast<uint32_t>(pillar_meshlets.meshlets.size())};
+
+        uint32_t glass_vertex_count{static_cast<uint32_t>(glass_tower.vertices.size())};
+        uint32_t combined_vert_count_before_pillar{combined_vert_count_before_glass + glass_vertex_count};
+        for (uint32_t& idx : pillar_meshlets.vertex_indices) {
+            idx += combined_vert_count_before_pillar;
+        }
+
+        uint32_t glass_vert_idx_count{static_cast<uint32_t>(glass_meshlets.vertex_indices.size())};
+        uint32_t glass_tri_idx_count{static_cast<uint32_t>(glass_meshlets.triangle_indices.size())};
+        uint32_t cum_vert_idx_4{cum_vert_idx_3 + glass_vert_idx_count};
+        uint32_t cum_tri_idx_4{cum_tri_idx_3 + glass_tri_idx_count};
+        for (Meshlet& m : pillar_meshlets.meshlets) {
+            m.vertex_offset += cum_vert_idx_4;
+            m.triangle_offset += cum_tri_idx_4;
+        }
+
+        // Combined vertex data — terrain + sphere + cyan neon + orange neon + glass tower + energy pillar.
         std::vector<Vertex> all_vertices;
-        all_vertices.reserve(terrain.vertices.size() + sphere_vertices.size() + neon_tubes.cyan.vertices.size() + neon_tubes.orange.vertices.size());
+        all_vertices.reserve(terrain.vertices.size() + sphere_vertices.size() + neon_tubes.cyan.vertices.size() + neon_tubes.orange.vertices.size()
+            + glass_tower.vertices.size() + energy_pillar.vertices.size());
         all_vertices.insert(all_vertices.end(), terrain.vertices.begin(), terrain.vertices.end());
         all_vertices.insert(all_vertices.end(), sphere_vertices.begin(), sphere_vertices.end());
         all_vertices.insert(all_vertices.end(), neon_tubes.cyan.vertices.begin(), neon_tubes.cyan.vertices.end());
         all_vertices.insert(all_vertices.end(), neon_tubes.orange.vertices.begin(), neon_tubes.orange.vertices.end());
+        all_vertices.insert(all_vertices.end(), glass_tower.vertices.begin(), glass_tower.vertices.end());
+        all_vertices.insert(all_vertices.end(), energy_pillar.vertices.begin(), energy_pillar.vertices.end());
 
         logger.logInfo("Light orb: " + std::to_string(sphere_vertices.size()) + " vertices, " + std::to_string(sphere_indices.size() / 3) + " triangles, "
             + std::to_string(sphere_meshlet_count) + " meshlets.");
@@ -2255,7 +2347,277 @@ int main()
 
         logger.logInfo("Orange neon BLAS built: " + std::to_string(orange_triangle_count) + " triangles.");
 
-        // Scene — terrain at origin, orb above, cyan and orange neon tubes at origin.
+        // ── Glass tower index buffer + BLAS ──
+
+        VkDeviceSize glass_index_buffer_size{static_cast<VkDeviceSize>(glass_tower.indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer glass_index_buffer{allocator.createBuffer(glass_index_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress
+                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer glass_idx_staging{allocator.createBuffer(glass_index_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(glass_idx_staging.allocationInfo().pMappedData, glass_tower.indices.data(), glass_index_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = glass_index_buffer_size;
+            copy_cmd.copyBuffer(glass_idx_staging.buffer(), glass_index_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        vk::DeviceAddress glass_vertex_address{vertex_device_address + static_cast<vk::DeviceSize>(combined_vert_count_before_glass * sizeof(Vertex))};
+
+        vk::BufferDeviceAddressInfo glass_index_addr_info{};
+        glass_index_addr_info.buffer = glass_index_buffer.buffer();
+        vk::DeviceAddress glass_index_device_address{device.get().getBufferAddress(glass_index_addr_info)};
+
+        vk::AccelerationStructureGeometryTrianglesDataKHR glass_tri_data{};
+        glass_tri_data.vertexFormat = vk::Format::eR32G32B32Sfloat;
+        glass_tri_data.vertexData.deviceAddress = glass_vertex_address;
+        glass_tri_data.vertexStride = sizeof(Vertex);
+        glass_tri_data.maxVertex = static_cast<uint32_t>(glass_tower.vertices.size() - 1);
+        glass_tri_data.indexType = vk::IndexType::eUint32;
+        glass_tri_data.indexData.deviceAddress = glass_index_device_address;
+
+        vk::AccelerationStructureGeometryKHR glass_geometry{};
+        glass_geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+        // Phase 8 Etape 40c: glass + pillar BLAS geometries intentionally OMIT the eOpaque
+        // flag so that inline ray queries fired from fragTransparent receive each candidate
+        // hit through Proceed() rather than auto-committing. This lets the refraction ray
+        // skip its own originating instance — a refraction ray fired from the glass tower's
+        // front face would otherwise immediately re-hit the tower's back face and sample
+        // the glass material instead of the terrain behind. All other BLASes (terrain, orb,
+        // cyan / orange neon) keep eOpaque for traversal performance — transparents are the
+        // only geometries that need the candidate-filter path.
+        glass_geometry.geometry.triangles = glass_tri_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR glass_build_info{};
+        glass_build_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        glass_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        glass_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        glass_build_info.geometryCount = 1;
+        glass_build_info.setGeometries(glass_geometry);
+
+        uint32_t glass_triangle_count{static_cast<uint32_t>(glass_tower.indices.size() / 3)};
+        vk::AccelerationStructureBuildSizesInfoKHR glass_build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, glass_build_info, {glass_triangle_count})};
+
+        AllocatedBuffer glass_blas_buffer{allocator.createBuffer(glass_build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR glass_as_create{};
+        glass_as_create.buffer = glass_blas_buffer.buffer();
+        glass_as_create.size = glass_build_sizes.accelerationStructureSize;
+        glass_as_create.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        vk::raii::AccelerationStructureKHR glass_blas{device.get(), glass_as_create};
+
+        glass_build_info.dstAccelerationStructure = *glass_blas;
+
+        {
+            uint32_t scratch_align{device.asScratchAlignment()};
+            AllocatedBuffer scratch{allocator.createBuffer(glass_build_sizes.buildScratchSize + scratch_align,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo scratch_addr_info{};
+            scratch_addr_info.buffer = scratch.buffer();
+            vk::DeviceAddress scratch_addr{device.get().getBufferAddress(scratch_addr_info)};
+            vk::DeviceAddress as_align_mask{static_cast<vk::DeviceAddress>(scratch_align) - 1};
+            glass_build_info.scratchData.deviceAddress = (scratch_addr + as_align_mask) & ~as_align_mask;
+
+            vk::CommandBufferAllocateInfo cmd_alloc{};
+            cmd_alloc.commandPool = *command_pool;
+            cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
+            cmd_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers cmds(device.get(), cmd_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = cmds[0];
+            vk::CommandBufferBeginInfo begin_info{};
+            begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(begin_info);
+
+            vk::AccelerationStructureBuildRangeInfoKHR glass_range{};
+            glass_range.primitiveCount = glass_triangle_count;
+            const vk::AccelerationStructureBuildRangeInfoKHR* glass_range_ptr{&glass_range};
+            build_cmd.buildAccelerationStructuresKHR({glass_build_info}, {glass_range_ptr});
+
+            vk::MemoryBarrier2 as_barrier{};
+            as_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            as_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            as_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo dep_info{};
+            dep_info.setMemoryBarriers(as_barrier);
+            build_cmd.pipelineBarrier2(dep_info);
+
+            build_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            vk::SubmitInfo build_submit{};
+            build_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Glass tower BLAS built: " + std::to_string(glass_triangle_count) + " triangles.");
+
+        // ── Energy-barrier pillar index buffer + BLAS ──
+
+        VkDeviceSize pillar_index_buffer_size{static_cast<VkDeviceSize>(energy_pillar.indices.size() * sizeof(uint32_t))};
+        AllocatedBuffer pillar_index_buffer{allocator.createBuffer(pillar_index_buffer_size,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eShaderDeviceAddress
+                | vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR),
+            0, VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        {
+            AllocatedBuffer pillar_idx_staging{allocator.createBuffer(pillar_index_buffer_size, static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eTransferSrc),
+                VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT, VMA_MEMORY_USAGE_AUTO)};
+            std::memcpy(pillar_idx_staging.allocationInfo().pMappedData, energy_pillar.indices.data(), pillar_index_buffer_size);
+
+            vk::CommandBufferAllocateInfo copy_alloc{};
+            copy_alloc.commandPool = *command_pool;
+            copy_alloc.level = vk::CommandBufferLevel::ePrimary;
+            copy_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers copy_cmds(device.get(), copy_alloc);
+
+            const vk::raii::CommandBuffer& copy_cmd = copy_cmds[0];
+            vk::CommandBufferBeginInfo copy_begin{};
+            copy_begin.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            copy_cmd.begin(copy_begin);
+
+            vk::BufferCopy region{};
+            region.size = pillar_index_buffer_size;
+            copy_cmd.copyBuffer(pillar_idx_staging.buffer(), pillar_index_buffer.buffer(), {region});
+
+            copy_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*copy_cmd};
+            vk::SubmitInfo copy_submit{};
+            copy_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({copy_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        vk::DeviceAddress pillar_vertex_address{vertex_device_address + static_cast<vk::DeviceSize>(combined_vert_count_before_pillar * sizeof(Vertex))};
+
+        vk::BufferDeviceAddressInfo pillar_index_addr_info{};
+        pillar_index_addr_info.buffer = pillar_index_buffer.buffer();
+        vk::DeviceAddress pillar_index_device_address{device.get().getBufferAddress(pillar_index_addr_info)};
+
+        vk::AccelerationStructureGeometryTrianglesDataKHR pillar_tri_data{};
+        pillar_tri_data.vertexFormat = vk::Format::eR32G32B32Sfloat;
+        pillar_tri_data.vertexData.deviceAddress = pillar_vertex_address;
+        pillar_tri_data.vertexStride = sizeof(Vertex);
+        pillar_tri_data.maxVertex = static_cast<uint32_t>(energy_pillar.vertices.size() - 1);
+        pillar_tri_data.indexType = vk::IndexType::eUint32;
+        pillar_tri_data.indexData.deviceAddress = pillar_index_device_address;
+
+        vk::AccelerationStructureGeometryKHR pillar_geometry{};
+        pillar_geometry.geometryType = vk::GeometryTypeKHR::eTriangles;
+        // Non-opaque for the same Phase 8 Etape 40c reason as the glass tower BLAS — see
+        // glass_geometry.flags comment above.
+        pillar_geometry.geometry.triangles = pillar_tri_data;
+
+        vk::AccelerationStructureBuildGeometryInfoKHR pillar_build_info{};
+        pillar_build_info.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        pillar_build_info.flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace;
+        pillar_build_info.mode = vk::BuildAccelerationStructureModeKHR::eBuild;
+        pillar_build_info.geometryCount = 1;
+        pillar_build_info.setGeometries(pillar_geometry);
+
+        uint32_t pillar_triangle_count{static_cast<uint32_t>(energy_pillar.indices.size() / 3)};
+        vk::AccelerationStructureBuildSizesInfoKHR pillar_build_sizes{
+            device.get().getAccelerationStructureBuildSizesKHR(vk::AccelerationStructureBuildTypeKHR::eDevice, pillar_build_info, {pillar_triangle_count})};
+
+        AllocatedBuffer pillar_blas_buffer{allocator.createBuffer(pillar_build_sizes.accelerationStructureSize,
+            static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+            VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+        vk::AccelerationStructureCreateInfoKHR pillar_as_create{};
+        pillar_as_create.buffer = pillar_blas_buffer.buffer();
+        pillar_as_create.size = pillar_build_sizes.accelerationStructureSize;
+        pillar_as_create.type = vk::AccelerationStructureTypeKHR::eBottomLevel;
+        vk::raii::AccelerationStructureKHR pillar_blas{device.get(), pillar_as_create};
+
+        pillar_build_info.dstAccelerationStructure = *pillar_blas;
+
+        {
+            uint32_t scratch_align{device.asScratchAlignment()};
+            AllocatedBuffer scratch{allocator.createBuffer(pillar_build_sizes.buildScratchSize + scratch_align,
+                static_cast<VkBufferUsageFlags>(vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress), 0,
+                VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE)};
+
+            vk::BufferDeviceAddressInfo scratch_addr_info{};
+            scratch_addr_info.buffer = scratch.buffer();
+            vk::DeviceAddress scratch_addr{device.get().getBufferAddress(scratch_addr_info)};
+            vk::DeviceAddress as_align_mask{static_cast<vk::DeviceAddress>(scratch_align) - 1};
+            pillar_build_info.scratchData.deviceAddress = (scratch_addr + as_align_mask) & ~as_align_mask;
+
+            vk::CommandBufferAllocateInfo cmd_alloc{};
+            cmd_alloc.commandPool = *command_pool;
+            cmd_alloc.level = vk::CommandBufferLevel::ePrimary;
+            cmd_alloc.commandBufferCount = 1;
+            vk::raii::CommandBuffers cmds(device.get(), cmd_alloc);
+
+            const vk::raii::CommandBuffer& build_cmd = cmds[0];
+            vk::CommandBufferBeginInfo begin_info{};
+            begin_info.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+            build_cmd.begin(begin_info);
+
+            vk::AccelerationStructureBuildRangeInfoKHR pillar_range{};
+            pillar_range.primitiveCount = pillar_triangle_count;
+            const vk::AccelerationStructureBuildRangeInfoKHR* pillar_range_ptr{&pillar_range};
+            build_cmd.buildAccelerationStructuresKHR({pillar_build_info}, {pillar_range_ptr});
+
+            vk::MemoryBarrier2 as_barrier{};
+            as_barrier.srcStageMask = vk::PipelineStageFlagBits2::eAccelerationStructureBuildKHR;
+            as_barrier.srcAccessMask = vk::AccessFlagBits2::eAccelerationStructureWriteKHR;
+            as_barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            as_barrier.dstAccessMask = vk::AccessFlagBits2::eAccelerationStructureReadKHR;
+
+            vk::DependencyInfo dep_info{};
+            dep_info.setMemoryBarriers(as_barrier);
+            build_cmd.pipelineBarrier2(dep_info);
+
+            build_cmd.end();
+
+            vk::CommandBuffer raw_cmd{*build_cmd};
+            vk::SubmitInfo build_submit{};
+            build_submit.setCommandBuffers(raw_cmd);
+            device.graphicsQueue().submit({build_submit});
+            device.graphicsQueue().waitIdle();
+        }
+
+        logger.logInfo("Energy-barrier pillar BLAS built: " + std::to_string(pillar_triangle_count) + " triangles.");
+
+        // Scene — terrain at origin, orb above, neon tubes at origin, glass tower
+        // and energy-barrier pillar baked at their world positions (identity transforms).
+        // Bounding radii for the boxes are conservative bounding spheres around their
+        // half-extents, computed from world centre.
+        constexpr float GLASS_TOWER_BOUNDING_RADIUS{9.0554f}; //!< sqrt(3^2 + 8^2 + 3^2) ≈ 9.0554, matches GLASS_TOWER_HALF_EXTENTS.
+        constexpr float ENERGY_PILLAR_BOUNDING_RADIUS{4.0623f}; //!< sqrt(0.5^2 + 4^2 + 0.5^2) ≈ 4.0623, matches ENERGY_PILLAR_HALF_EXTENTS.
+
         Scene scene;
         Transform terrain_transform{};
         (void)scene.addEntity(terrain_transform, {0}, {{0.0f, 0.0f, 0.0f}, terrain.bounding_radius});
@@ -2269,6 +2631,12 @@ int main()
 
         Transform orange_neon_transform{};
         (void)scene.addEntity(orange_neon_transform, {3}, {{0.0f, 0.0f, 0.0f}, neon_tubes.bounding_radius});
+
+        Transform glass_tower_transform{};
+        (void)scene.addEntity(glass_tower_transform, {4}, {GLASS_TOWER_CENTRE, GLASS_TOWER_BOUNDING_RADIUS});
+
+        Transform energy_pillar_transform{};
+        (void)scene.addEntity(energy_pillar_transform, {5}, {ENERGY_PILLAR_CENTRE, ENERGY_PILLAR_BOUNDING_RADIUS});
 
         uint32_t total_objects{scene.entityCount()};
 
@@ -2291,8 +2659,18 @@ int main()
         orange_blas_addr_info.accelerationStructure = *orange_blas;
         vk::DeviceAddress orange_blas_address{device.get().getAccelerationStructureAddressKHR(orange_blas_addr_info)};
 
-        // BLAS reference per mesh ID — 0=terrain, 1=sphere, 2=cyan neon, 3=orange neon.
-        std::vector<vk::DeviceAddress> blas_per_mesh{terrain_blas_address, sphere_blas_address, cyan_blas_address, orange_blas_address};
+        vk::AccelerationStructureDeviceAddressInfoKHR glass_blas_addr_info{};
+        glass_blas_addr_info.accelerationStructure = *glass_blas;
+        vk::DeviceAddress glass_blas_address{device.get().getAccelerationStructureAddressKHR(glass_blas_addr_info)};
+
+        vk::AccelerationStructureDeviceAddressInfoKHR pillar_blas_addr_info{};
+        pillar_blas_addr_info.accelerationStructure = *pillar_blas;
+        vk::DeviceAddress pillar_blas_address{device.get().getAccelerationStructureAddressKHR(pillar_blas_addr_info)};
+
+        // BLAS reference per mesh ID — 0=terrain, 1=sphere, 2=cyan neon, 3=orange neon,
+        // 4=glass tower, 5=energy-barrier pillar.
+        std::vector<vk::DeviceAddress> blas_per_mesh{
+            terrain_blas_address, sphere_blas_address, cyan_blas_address, orange_blas_address, glass_blas_address, pillar_blas_address};
 
         // Build instance data — one per scene entity.
         std::vector<VkAccelerationStructureInstanceKHR> as_instances;
@@ -2487,6 +2865,38 @@ int main()
                 1.0f, // opacity.
                 0.0f, // pad.
             },
+            {
+                // Material 4: glass tower (Phase 8 Etape 40 transparent geometry).
+                // Opacity < 1 routes the entity through the transparent pipeline (sub-etape
+                // 40b) which uses fragTransparent + premultiplied-alpha blending. 0.18 reads
+                // as faintly tinted clear glass — not so opaque that the terrain behind
+                // disappears, not so transparent the surface vanishes.
+                {0.4f, 0.6f, 0.7f}, // base_colour — cool cyan-tinted dielectric.
+                0.05f, // roughness — clear glass.
+                {}, // emissive — none.
+                0.0f, // emissive_strength.
+                0.0f, // metallic — pure dielectric.
+                1.5f, // ior — typical glass (Schlick F0 ≈ 0.04).
+                0.18f, // opacity — faint cyan tint, terrain visible behind.
+                0.0f, // pad.
+            },
+            {
+                // Material 5: energy-barrier pillar (Phase 8 Etape 40 transparent geometry).
+                // 0.45 lets the cyan-grid floor and any background bleed through while the
+                // red emissive still reads as a hot column. Emissive colour matches the orb
+                // (material 1) so the two warm light sources visually rhyme. Emissive
+                // radiance stays moderate (1.5×) — strong enough to glow against the dark
+                // sky, dim enough that ray-traced refraction through the box still shows
+                // the cyan grid bent through the interior.
+                {0.6f, 0.05f, 0.0f}, // base_colour — deep red.
+                0.4f, // roughness — slightly diffused.
+                {1.0f, 0.03f, 0.0f}, // emissive — pure red (matches orb material 1).
+                1.5f, // emissive_strength.
+                0.0f, // metallic.
+                1.33f, // ior — soft "energy field" (water-like).
+                0.45f, // opacity — semi-transparent energy field.
+                0.0f, // pad.
+            },
         };
 
         // Per-object data — meshlet offsets and material index.
@@ -2500,6 +2910,8 @@ int main()
             {sphere_meshlet_offset, sphere_meshlet_count, 1},
             {cyan_meshlet_offset, cyan_meshlet_count, 2},
             {orange_meshlet_offset, orange_meshlet_count, 3},
+            {glass_meshlet_offset, glass_meshlet_count, 4},
+            {pillar_meshlet_offset, pillar_meshlet_count, 5},
         };
 
         std::vector<ObjectData> object_data;
@@ -2513,6 +2925,32 @@ int main()
             obj.material_index = mesh_infos[mesh_id].material_index;
             object_data.push_back(obj);
         }
+
+        // Partition entities into opaque (material.opacity == 1) and transparent (opacity < 1)
+        // ranges. Phase 8 Etape 40 expects opaque entities first in the SSBO so that the
+        // task shader's two dispatches — opaque (base = 0, count = N_opaque) followed by
+        // transparent (base = N_opaque, count = N_transparent) — index a contiguous range
+        // each. Verified at startup; future scene-construction changes that violate the
+        // invariant will trip the abort below before the GPU sees inconsistent state.
+        uint32_t opaque_object_count{0};
+        uint32_t transparent_object_count{0};
+        for (uint32_t i{0}; i < total_objects; ++i) {
+            float opacity{material_data[object_data[i].material_index].opacity};
+            if (opacity >= 1.0f) {
+                ++opaque_object_count;
+            } else {
+                ++transparent_object_count;
+            }
+        }
+        for (uint32_t i{0}; i < opaque_object_count; ++i) {
+            float opacity{material_data[object_data[i].material_index].opacity};
+            if (opacity < 1.0f) {
+                logger.logFatal("Entity ordering invariant violated: transparent entity (material " + std::to_string(object_data[i].material_index) + ", opacity "
+                    + std::to_string(opacity) + ") found before all opaque entities. Reorder the scene so opaque entities come first.");
+                std::abort();
+            }
+        }
+        logger.logInfo("Object partition: " + std::to_string(opaque_object_count) + " opaque, " + std::to_string(transparent_object_count) + " transparent.");
 
         VkDeviceSize ssbo_size{static_cast<VkDeviceSize>(object_data.size() * sizeof(ObjectData))};
         AllocatedBuffer object_ssbo{allocator.createBuffer(ssbo_size,
@@ -2601,24 +3039,30 @@ int main()
 
         // ── Combined meshlet SSBOs ──
 
-        // Combine meshlet data from terrain + sphere + cyan neon + orange neon.
+        // Combine meshlet data from terrain + sphere + cyan neon + orange neon + glass tower + energy pillar.
         std::vector<Meshlet> all_meshlets;
         all_meshlets.insert(all_meshlets.end(), terrain_meshlets.meshlets.begin(), terrain_meshlets.meshlets.end());
         all_meshlets.insert(all_meshlets.end(), sphere_meshlets.meshlets.begin(), sphere_meshlets.meshlets.end());
         all_meshlets.insert(all_meshlets.end(), cyan_meshlets.meshlets.begin(), cyan_meshlets.meshlets.end());
         all_meshlets.insert(all_meshlets.end(), orange_meshlets.meshlets.begin(), orange_meshlets.meshlets.end());
+        all_meshlets.insert(all_meshlets.end(), glass_meshlets.meshlets.begin(), glass_meshlets.meshlets.end());
+        all_meshlets.insert(all_meshlets.end(), pillar_meshlets.meshlets.begin(), pillar_meshlets.meshlets.end());
 
         std::vector<uint32_t> all_vert_indices;
         all_vert_indices.insert(all_vert_indices.end(), terrain_meshlets.vertex_indices.begin(), terrain_meshlets.vertex_indices.end());
         all_vert_indices.insert(all_vert_indices.end(), sphere_meshlets.vertex_indices.begin(), sphere_meshlets.vertex_indices.end());
         all_vert_indices.insert(all_vert_indices.end(), cyan_meshlets.vertex_indices.begin(), cyan_meshlets.vertex_indices.end());
         all_vert_indices.insert(all_vert_indices.end(), orange_meshlets.vertex_indices.begin(), orange_meshlets.vertex_indices.end());
+        all_vert_indices.insert(all_vert_indices.end(), glass_meshlets.vertex_indices.begin(), glass_meshlets.vertex_indices.end());
+        all_vert_indices.insert(all_vert_indices.end(), pillar_meshlets.vertex_indices.begin(), pillar_meshlets.vertex_indices.end());
 
         std::vector<uint8_t> all_tri_indices;
         all_tri_indices.insert(all_tri_indices.end(), terrain_meshlets.triangle_indices.begin(), terrain_meshlets.triangle_indices.end());
         all_tri_indices.insert(all_tri_indices.end(), sphere_meshlets.triangle_indices.begin(), sphere_meshlets.triangle_indices.end());
         all_tri_indices.insert(all_tri_indices.end(), cyan_meshlets.triangle_indices.begin(), cyan_meshlets.triangle_indices.end());
         all_tri_indices.insert(all_tri_indices.end(), orange_meshlets.triangle_indices.begin(), orange_meshlets.triangle_indices.end());
+        all_tri_indices.insert(all_tri_indices.end(), glass_meshlets.triangle_indices.begin(), glass_meshlets.triangle_indices.end());
+        all_tri_indices.insert(all_tri_indices.end(), pillar_meshlets.triangle_indices.begin(), pillar_meshlets.triangle_indices.end());
 
         VkDeviceSize meshlet_desc_size{static_cast<VkDeviceSize>(all_meshlets.size() * sizeof(Meshlet))};
         AllocatedBuffer meshlet_desc_ssbo{allocator.createBuffer(meshlet_desc_size,
@@ -2692,7 +3136,7 @@ int main()
         std::vector<EmissiveTriangle> emissive_list;
 
         // Helper: adds all triangles from a sub-mesh with given emissive radiance.
-        auto addEmissiveTriangles = [&emissive_list](const NeonSubMesh& mesh, const MathLib::Vec3& emissive_colour, float emissive_strength) {
+        auto addEmissiveTriangles = [&emissive_list](const Mesh& mesh, const MathLib::Vec3& emissive_colour, float emissive_strength) {
             MathLib::Vec3 emissive_radiance{emissive_colour.x * emissive_strength, emissive_colour.y * emissive_strength, emissive_colour.z * emissive_strength};
             for (size_t t{0}; t < mesh.indices.size(); t += 3) {
                 MathLib::Vec3 v0{mesh.positions[mesh.indices[t + 0]]};
@@ -2717,6 +3161,11 @@ int main()
         addEmissiveTriangles(neon_tubes.cyan, {0.0f, 0.8f, 1.0f}, 15.0f);
         // Orange neon tubes.
         addEmissiveTriangles(neon_tubes.orange, {1.0f, 0.03f, 0.0f}, 15.0f);
+        // Energy-barrier pillar — modest emissive so the terrain picks it up as a soft red key
+        // light (same emissive colour × strength as material 5 so ReSTIR estimates and the
+        // material SSBO self-illumination agree numerically). Colour matches the orb so the
+        // pillar reads as a "lower sister" of the sun-orb light.
+        addEmissiveTriangles(energy_pillar, {1.0f, 0.03f, 0.0f}, 1.5f);
 
         // Orb emissive triangles.
         {
@@ -2863,9 +3312,9 @@ int main()
         std::condition_variable render_cv;
 
         // Spawn the render thread
-        std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), static_cast<uint32_t>(total_objects),
-            emissive_count, total_power, std::ref(command_pool), std::ref(command_buffers), reservoir_a.buffer(), reservoir_b.buffer(), reservoir_buffer_size,
-            std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
+        std::thread render_worker(renderThread, std::ref(device), std::ref(swapchain), std::ref(pipeline), std::ref(allocator), opaque_object_count,
+            transparent_object_count, emissive_count, total_power, std::ref(command_pool), std::ref(command_buffers), reservoir_a.buffer(), reservoir_b.buffer(),
+            reservoir_buffer_size, std::ref(render_signal), std::ref(render_mutex), std::ref(render_cv), std::ref(logger));
 
         //! Emits a render event and wakes the render thread.
         auto emitRenderEvent = [&](RenderEvent event) {
