@@ -280,66 +280,136 @@ genuinely over-engineering at that scale. Adaptive meshlet LOD moves to
   decoupling.** Greenfield design decision against canonical rendergraph
   and dynamic-rendering hooks the tutorials *do* provide.
 
-**Refined sub-etape sequence:**
+**Two-phase sub-etape structure:**
 
-##### 42c-0 — Post-process modernisation (style polish)
+42c is split into a **visual polish phase** (open-ended, multi-iteration:
+each issue gets its own small PR with a visual gate, expect ~3–6 PRs)
+followed by a **performance phase** (render-scale + TAAU). The polish
+phase has to land first because (a) we don't want to optimise on top of
+visual bugs, (b) TAA's history-clamp interacts subtly with any noise or
+mirroring in the source signal, and (c) the user has explicitly
+prioritised "absolutely perfect" visuals over the perf target.
+
+#### Phase A — Visual polish (multi-iteration)
+
+##### 42c-polish-1 — Post-process modernisation
 
 Drop the scan-line overlay from `postprocess.slang` (3-pixel-period
 horizontal stripes shipped in Etape 36 — the most overtly retro CRT
-element of the cinematic post-process). Optionally tone down chromatic
-aberration. Keep cool colour grade and subtle vignette — those read as
-timeless cinematic, not retro. Modern Tron (Legacy 2010 / Ares 2025)
-doesn't use scan lines.
+element of the cinematic post-process). Halve chromatic aberration
+strength (0.003 → 0.0015) for a more modern lens-defect read. Reduce
+volumetric fog density 6× (0.012 → 0.002) so the residual MC variance
+from emissive sampling stops reading as visible film grain. Keep cool
+colour grade and subtle vignette — those read as timeless cinematic.
+Modern Tron (Legacy 2010 / Ares 2025) doesn't use scan lines.
 
-Bonus benefit for the rest of 42c: scan lines create a per-pixel
+Bonus benefit for the perf phase: scan lines create a per-pixel
 high-frequency alternating brightness pattern that would actively fight
-TAA history clamping in 42c-ii. Removing them first makes the temporal
-accumulator stable. ~15-line shader change, no perf change either way.
+TAA history clamping. Removing them first makes the temporal accumulator
+stable.
 
-##### 42c-i — Render-scale infrastructure
+##### 42c-polish-2 — Fog Y-flip bug fix
+
+Discovered during 42c-polish-1 visual review. Inject and filter's
+`froxelToWorld` use the formula
+`ndc.y = (froxel_y + 0.5) / froxel_h × 2 - 1`,
+which puts froxel index y=0 at math-NDC y=-1 (bottom of math-convention
+frustum). With `-fvk-invert-y` flipping SV_Position only at the
+rasterisation stage (compute shaders never see it), and the composite
+mapping pixel.y=0 (Vulkan top of screen) to froxel index y=0, **the
+fog data is vertically mirrored** — what was computed for the bottom
+of the frustum displays at the top of the screen and vice versa. The
+filter's reprojection (`-prev_ndc.y`) actually has the correct
+convention; only inject + filter's copy of `froxelToWorld` is wrong.
+
+2-line fix in two shaders: flip the Y mapping so froxel index y=0
+corresponds to math-NDC y=+1 (top of math frustum, which after the
+mesh-shader `-fvk-invert-y` flip displays at Vulkan top of screen).
+
+##### 42c-polish-3 — Indirect GI grain reduction
+
+Heavy red speckle visible on the obsidian floor near the energy-barrier
+pillar — single-bounce hemisphere-sampling MC variance leaking through
+even after Etape 38 temporal EMA + Etape 42b spatial filter. Bright
+nearby light source (pillar emissive ~15 × red) + dark obsidian (where
+indirect IS the dominant lighting signal) + inverse-square-cos hemisphere
+contributions produce low-frequency variance blobs that the existing
+5-neighbour / 20-pixel-radius spatial filter can't smooth hard enough.
+
+Initial pass (cheap fixes, single PR):
+
+- Tighten `INDIRECT_FIREFLY_MAX` from 30 to 10. Caps spike intensity
+  hard, costs nothing.
+- Widen `SPATIAL_RADIUS` from 20 to 40 pixels. Same per-frame cost
+  (still 5 neighbour samples), wider footprint smooths low-frequency
+  blobs better.
+
+If still insufficient (visual gate after rebuild), escalate:
+
+- Take 2 indirect samples per frame instead of 1 (~+1 ms cost, MC
+  variance halves).
+- Add an A-trous bilateral filter pass after the mesh shader (proper
+  edge-aware denoiser, ~3–5× quality win, biggest implementation
+  effort — a full new compute pass).
+
+##### 42c-polish-N — Open-ended quality polish
+
+Future polish PRs as visual issues are identified during iteration.
+Anticipate camera-movement edge cases, disocclusion artefacts in
+ReSTIR, RT reflection flicker, fog reprojection on rapid camera turns,
+etc. Each iteration: discover → small PR → user verifies → identify
+next → repeat. The polish phase ends when the user is satisfied.
+
+#### Phase B — 4K performance pass
+
+Begins only when the visual baseline is "absolutely perfect" per user
+verification. Same sequence as previously planned.
+
+##### 42c-perf-1 — Render-scale infrastructure
 
 Decouple `render_extent` from `swapchain_extent`. HDR / MSAA / depth /
 bloom / reservoirs / volumetric inject push constants all sized to
 `render_extent`; post-process scales to swapchain. Default
 `RENDER_SCALE = 1.0` so behaviour is unchanged at integration time.
-Foundational for both 42c-ii and 42c-iii — every render-at-N-display-at-M
-pattern needs this. Without it, true 4K profiling on the dev display
-(BOE NE180QDM-NM1, 2560×1600 native, 18" laptop QHD+) is impossible
-because the display can't show 4K natively; an external 4K monitor is on
-the project's hardware roadmap but not available immediately. Estimated
-effort: half-day of careful work, multiple touchpoints in `renderThread`.
+Foundational for both 42c-perf-2 and 42c-perf-3 — every
+render-at-N-display-at-M pattern needs this. Without it, true 4K
+profiling on the dev display (BOE NE180QDM-NM1, 2560×1600 native,
+18" laptop QHD+) is impossible because the display can't show 4K
+natively; an external 4K monitor is on the project's hardware roadmap
+but not available immediately. Estimated effort: half-day of careful
+work, multiple touchpoints in `renderThread`.
 
-##### 42c-ii — In-house TAA + TAAU
+##### 42c-perf-2 — In-house TAA + TAAU
 
 Karis 2014 + Salvi 2016 + Pedersen 2016 reference pattern. Broken into
 five verifiable sub-steps following the project's incremental etape
 pattern (each is its own commit; user verifies between each):
 
-- **42c-ii-1 — Halton(2, 3) sub-pixel jitter on the projection matrix.**
+- **42c-perf-2.1 — Halton(2, 3) sub-pixel jitter on the projection matrix.**
   Add a per-frame jitter offset to the projection's xy translation,
   subtract from motion vectors so reprojection lands on the unjittered
   surface. ReSTIR Etape 37 already produces motion vectors; verify they
   remain correct under jitter. Visual gate: scene should look identical
   to before (jitter alone is invisible without temporal accumulation).
-- **42c-ii-2 — TAA history image + reproject + bicubic sample.** New
+- **42c-perf-2.2 — TAA history image + reproject + bicubic sample.** New
   history texture sized to `render_extent`. Each frame, sample previous
   frame's history at `current_pixel - motion_vector` via Catmull-Rom /
   bicubic (not bilinear — bilinear blurs). No clamping yet. Visual
   gate: motion should look smooth, but disocclusions and fast camera
   pans will visibly ghost.
-- **42c-ii-3 — YCoCg neighbourhood-AABB history clamp + EMA blend.**
+- **42c-perf-2.3 — YCoCg neighbourhood-AABB history clamp + EMA blend.**
   Convert current 3×3 neighbourhood + history to YCoCg space, compute
   per-channel min/max AABB, clip the reprojected history into that AABB
   (Pedersen INSIDE), blend at ~5–10 % new / ~90–95 % history with a
   motion-aware bias. Visual gate: ghosting on disocclusions resolves;
   scene reads as crisp anti-aliased.
-- **42c-ii-4 — Enable upscale (TAAU).** Set `RENDER_SCALE < 1.0`. The
+- **42c-perf-2.4 — Enable upscale (TAAU).** Set `RENDER_SCALE < 1.0`. The
   TAA pass becomes a TAAU pass: dispatched at output resolution,
   reconstructs each output pixel from a Lanczos / bicubic kernel over
   the jittered low-res samples that fall inside it. Visual gate:
   rendering at 1440p, presenting at 2560×1600 (current native panel)
   should look ~95 % of native in stills, ~85 % in motion.
-- **42c-ii-5 — CAS-style sharpen pass.** Final compute pass between
+- **42c-perf-2.5 — CAS-style sharpen pass.** Final compute pass between
   TAAU output and tonemap to recover micro-contrast lost to the temporal
   blend. AMD CAS / RCAS algorithm is open and trivial to re-implement
   (~30 lines of shader). Visual gate: edges crisp, no ringing
@@ -358,14 +428,15 @@ sample counts (volumetric fog inject samples, ReSTIR M cap, AO ray
 count) since temporal averaging fills in — secondary perf win on top
 of the resolution win.
 
-##### 42c-iii — Sub-resolution ReSTIR DI integration (only if needed)
+##### 42c-perf-3 — Sub-resolution ReSTIR DI integration (only if needed)
 
 Lumen-style ¼-res integration of the sampled lighting term + bilateral
 upsample using full-res depth and normal as guides. Per Lumen docs the
 gather *integration* pass becomes ~3× cheaper at the cost of some lost
-fine normal detail. Combined with 42c-ii TAAU this would buy the largest
-remaining headroom on the per-fragment cost. Only pursue if 42c-i + 42c-ii
-profiling shows we still miss the 4K @ 60+ target.
+fine normal detail. Combined with 42c-perf-2 TAAU this would buy the
+largest remaining headroom on the per-fragment cost. Only pursue if
+42c-perf-1 + 42c-perf-2 profiling shows we still miss the 4K @ 60+
+target.
 
 **Most useful research references:**
 
@@ -397,8 +468,10 @@ performance.
 - [x] Froxel-based volumetric fog with neon light shafts
 - [x] Temporal reprojection for fog noise reduction
 - [x] Spatial denoising for indirect GI (42b)
-- [ ] 4K @ 60+ FPS via in-house TAA + TAAU temporal upscaling on RTX 4090 (42c rescoped from Nanite;
-  VRS dropped after research showed it's incompatible with our sample-rate shading + 8× MSAA + per-fragment ReSTIR)
+- [ ] Visual baseline polished to "absolutely perfect" — clean modern Tron Legacy / Ares look,
+  no visible MC noise / grain / bug artefacts (42c Phase A — open-ended polish, multi-iteration)
+- [ ] 4K @ 60+ FPS via in-house TAA + TAAU temporal upscaling on RTX 4090 (42c Phase B; rescoped
+  from Nanite; VRS dropped after research showed it's incompatible with our sample-rate shading + 8× MSAA + per-fragment ReSTIR)
 - [x] GPU profiling with per-pass timestamps (42a)
 - [ ] Proper synchronisation barriers for all new passes
 - [ ] Proper doxygen, STYLE.md compliant, British spelling
@@ -989,6 +1062,79 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Phase 8 Etape 42c-polish-1: post-process modernisation + plan refresh into polish/perf phases
+
+Two threads in one PR:
+
+**Code change (42c-polish-1).** Modernise the cinematic post-process to
+read more like Tron Legacy (2010) / Tron Ares (2025) than 80s arcade
+CRT. Three small edits to `postprocess.slang`:
+
+- Drop the scan-line overlay (3-pixel-period horizontal stripes shipped
+  in Etape 36) — the most overtly retro element.
+- Halve chromatic aberration strength (0.003 → 0.0015) for a subtler
+  lens-defect read.
+
+Plus one tuning change to `main.cpp`: reduce volumetric fog density 6×
+(0.012 → 0.002) so the residual MC variance from emissive sampling
+stops reading as visible film grain. Keep cool colour grade and subtle
+vignette — those read as timeless cinematic rather than retro.
+
+Bonus benefit for the upcoming perf-phase work: scan lines create a
+per-pixel high-frequency alternating brightness pattern that would
+actively fight TAA history clamping in 42c-perf-2. Removing them first
+makes the temporal accumulator stable.
+
+**Plan refresh.** The original 42c structure (42c-0 → 42c-i → 42c-ii →
+42c-iii) didn't anticipate the multi-iteration visual polish work the
+user has explicitly asked for ("anticipate multiple back and forths
+until the visuals are absolutely perfect"). Restructured 42c into two
+phases:
+
+- **Phase A — Visual polish (multi-iteration).** Open-ended sequence of
+  small PRs, one per discovered visual issue, each with a verification
+  gate. Initial known queue: 42c-polish-1 (this PR) → 42c-polish-2
+  (fog Y-flip bug) → 42c-polish-3 (indirect GI grain reduction) →
+  more as iteration discovers them. Polish phase ends when user is
+  satisfied with the baseline image quality.
+- **Phase B — 4K performance.** Render-scale infrastructure
+  (42c-perf-1) → in-house TAA + TAAU (42c-perf-2 with five sub-steps)
+  → sub-res ReSTIR if needed (42c-perf-3). Begins only after Phase A
+  completes — TAA's history clamp interacts subtly with any noise or
+  bug in the source signal, so the visual baseline must be solid first.
+
+Two new acceptance criteria reflect the split: "Visual baseline
+polished to 'absolutely perfect'" (Phase A goal) and the existing
+"4K @ 60+ FPS via TAA + TAAU" (Phase B goal).
+
+**Discovered during 42c-polish-1 visual review** (queued for
+42c-polish-2 and 42c-polish-3):
+
+- **Fog Y-flip bug** in `inject_density.slang` and
+  `volumetric_filter.slang` — `froxelToWorld` uses
+  `ndc.y = (froxel_y + 0.5) / froxel_h × 2 - 1`, putting froxel index
+  y=0 at math-NDC y=-1 (bottom of math frustum). With `-fvk-invert-y`
+  flipping SV_Position only at the rasterisation stage and the
+  composite mapping pixel.y=0 (Vulkan top of screen) to froxel index
+  y=0, the fog data is vertically mirrored. Filter's reprojection
+  (`-prev_ndc.y`) actually has the correct convention; only inject +
+  filter's copy of `froxelToWorld` is wrong. 2-line fix in two
+  shaders. Hidden since Etape 41a by the orb being far above the
+  camera and the height-falloff density curve being similar at two
+  symmetric world heights.
+- **Indirect GI grain** on the obsidian floor near the energy-barrier
+  pillar — single-bounce hemisphere-sampling MC variance leaking
+  through Etape 38 temporal EMA + 42b spatial filter. Bright nearby
+  emissive (pillar ~15 × red) + dark obsidian (where indirect IS the
+  dominant signal) + inverse-square-cos hemisphere contributions
+  produce low-frequency variance blobs the existing 5-neighbour /
+  20-pixel-radius spatial filter can't smooth hard enough. Initial
+  fix queue: tighten `INDIRECT_FIREFLY_MAX` 30→10, widen
+  `SPATIAL_RADIUS` 20→40. Escalation path documented if cheap fixes
+  insufficient (multi-sample → A-trous bilateral).
+
+110 PRs merged.
 
 ### 2026-04-26 — Phase 8 Etape 42c plan refresh — research-grounded 4K performance pass
 

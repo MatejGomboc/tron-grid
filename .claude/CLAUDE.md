@@ -193,8 +193,10 @@ with tunable strength). 8× MSAA with full sample-rate shading and
 derivative wireframe antialiasing (fwidth-based smoothstep), automatic GPU
 capability fallback. Procedural cyberpunk skybox (value noise data fog clouds,
 horizon gradient, animated drift). Per-material PBR via material SSBO
-(binding 8, data-driven). Cinematic post-process (chromatic aberration with
-signed-int clamp, cool colour grade, vignette, 3-pixel-period scan lines).
+(binding 8, data-driven). Cinematic post-process (subtle chromatic aberration with
+signed-int clamp, cool colour grade, vignette — modernised in Etape 42c-polish-1
+which dropped the retro 3-pixel-period scan-line overlay and halved CA strength
+for a cleaner Tron Legacy / Ares look rather than 80s arcade CRT).
 Emissive area light sampling — real neon tube quad geometry (binding 9
 emissive triangle SSBO) replaces the point light; power-weighted CDF, PCG
 hash RNG, Cook-Torrance BRDF evaluation, shadow ray visibility. ReSTIR DI
