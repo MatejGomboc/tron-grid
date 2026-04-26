@@ -17,6 +17,7 @@
 #include "xcb_window.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 //! Looks up or creates an X11 atom by name.
 [[nodiscard]] static xcb_atom_t internAtom(xcb_connection_t* conn, const char* name)
@@ -47,11 +48,19 @@ namespace WindowLib
             return;
         }
 
-        // Get the screen
+        // Get the screen. Guard against pathological xcb_connect responses where
+        // screen_num >= the number of screens reported by the setup — without the
+        // guard, advancing past the end leaves iter.data == nullptr and the next
+        // m_screen->width_in_pixels access segfaults.
         const xcb_setup_t* setup{xcb_get_setup(m_connection)};
         xcb_screen_iterator_t iter{xcb_setup_roots_iterator(setup)};
-        for (int i{0}; i < screen_num; ++i) {
+        for (int i{0}; (i < screen_num) && (iter.rem > 0); ++i) {
             xcb_screen_next(&iter);
+        }
+        if ((iter.rem == 0) || (iter.data == nullptr)) {
+            m_logger.logFatal("X server reported no usable screen (screen_num=" + std::to_string(screen_num) + ").");
+            std::abort();
+            return;
         }
         m_screen = iter.data;
 
@@ -78,8 +87,20 @@ namespace WindowLib
         m_width = config.width;
         m_height = config.height;
 
-        // Set window title
-        xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, m_window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, config.title.length(), config.title.c_str());
+        // Set window title twice — once with the legacy ICCCM WM_NAME (Latin-1, picked up
+        // by older window managers) and once with the modern EWMH _NET_WM_NAME (UTF-8,
+        // preferred by GNOME / KDE / every contemporary WM). Without the second one,
+        // multibyte UTF-8 sequences in config.title display as garbage on non-ASCII
+        // characters.
+        xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, m_window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, static_cast<uint32_t>(config.title.length()),
+            config.title.c_str());
+
+        xcb_atom_t net_wm_name{internAtom(m_connection, "_NET_WM_NAME")};
+        xcb_atom_t utf8_string{internAtom(m_connection, "UTF8_STRING")};
+        if ((net_wm_name != XCB_ATOM_NONE) && (utf8_string != XCB_ATOM_NONE)) {
+            xcb_change_property(m_connection, XCB_PROP_MODE_REPLACE, m_window, net_wm_name, utf8_string, 8, static_cast<uint32_t>(config.title.length()),
+                config.title.c_str());
+        }
 
         // Set up WM_DELETE_WINDOW handling (so we get close events)
         m_wm_protocols = internAtom(m_connection, "WM_PROTOCOLS");
@@ -119,6 +140,18 @@ namespace WindowLib
 
     XcbWindow::~XcbWindow()
     {
+        // Defensive cursor free — if the program is shutting down while still in capture
+        // mode, release the cursor before tearing down the connection so the X server
+        // doesn't end up holding an orphaned reference. Releasing the pointer grab
+        // first lets the cursor handle drop cleanly.
+        if (m_invisible_cursor != 0) {
+            if (m_cursor_captured) {
+                xcb_ungrab_pointer(m_connection, XCB_CURRENT_TIME);
+            }
+            xcb_free_cursor(m_connection, m_invisible_cursor);
+            m_invisible_cursor = 0;
+        }
+
         if (m_window) {
             xcb_destroy_window(m_connection, m_window);
         }
@@ -156,37 +189,82 @@ namespace WindowLib
 
     void XcbWindow::setCursorCaptured(bool captured)
     {
+        // Idempotent guard — repeated calls with the same value are no-ops. Without this,
+        // double-toggle would leak cursor handles and double-grab the pointer.
+        if (m_cursor_captured == captured) {
+            return;
+        }
         m_cursor_captured = captured;
         if (captured) {
-            // Create invisible cursor
+            // Create an invisible cursor. The previous code created a 1×1 depth-1 pixmap
+            // without initialising it; per the X11 spec, freshly-created pixmap contents
+            // are undefined, so on some servers the "invisible" cursor would render as a
+            // visible single pixel. Explicitly zero the pixmap with a GC fill so the
+            // cursor is guaranteed transparent.
             xcb_pixmap_t pixmap{xcb_generate_id(m_connection)};
-            xcb_cursor_t cursor{xcb_generate_id(m_connection)};
             xcb_create_pixmap(m_connection, 1, pixmap, m_window, 1, 1);
-            xcb_create_cursor(m_connection, cursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 0, 0);
+
+            xcb_gcontext_t gc{xcb_generate_id(m_connection)};
+            uint32_t fg{0};
+            xcb_create_gc(m_connection, gc, pixmap, XCB_GC_FOREGROUND, &fg);
+
+            xcb_rectangle_t rect{0, 0, 1, 1};
+            xcb_poly_fill_rectangle(m_connection, pixmap, gc, 1, &rect);
+
+            xcb_free_gc(m_connection, gc);
+
+            // Build the cursor from the (now zeroed) pixmap. xcb_create_cursor takes a
+            // source bitmap and a mask bitmap; the mask determines which pixels are drawn
+            // at all (mask bit 0 = transparent, mask bit 1 = use source colour). With the
+            // mask all-zero, every pixel is transparent regardless of source — so passing
+            // the same zeroed pixmap for both arguments yields a fully invisible cursor.
+            m_invisible_cursor = xcb_generate_id(m_connection);
+            xcb_create_cursor(m_connection, m_invisible_cursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 0, 0);
+
+            // Pixmap can be freed now — xcb_create_cursor copies the bitmap data into the
+            // server-side cursor object.
             xcb_free_pixmap(m_connection, pixmap);
 
-            // Grab pointer with invisible cursor.
-            xcb_grab_pointer_cookie_t grab_cookie{xcb_grab_pointer(m_connection, 1, m_window,
-                XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, m_window, cursor,
-                XCB_CURRENT_TIME)};
+            // Grab pointer with the invisible cursor.
+            xcb_grab_pointer_cookie_t grab_cookie{
+                xcb_grab_pointer(m_connection, 1, m_window, XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE | XCB_EVENT_MASK_POINTER_MOTION,
+                    XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, m_window, m_invisible_cursor, XCB_CURRENT_TIME)};
             xcb_grab_pointer_reply_t* grab_reply{xcb_grab_pointer_reply(m_connection, grab_cookie, nullptr)};
             if (grab_reply != nullptr) {
                 bool grab_ok{grab_reply->status == XCB_GRAB_STATUS_SUCCESS};
                 free(grab_reply);
                 if (!grab_ok) {
                     m_cursor_captured = false;
+                    // Grab failed — release the cursor we just created.
+                    xcb_free_cursor(m_connection, m_invisible_cursor);
+                    m_invisible_cursor = 0;
+                    xcb_flush(m_connection);
+                    return;
                 }
             }
 
-            // Centre cursor
+            // Centre cursor. The warp triggers a synthetic XCB_MOTION_NOTIFY — flag it so
+            // the motion handler consumes the event without emitting a duplicate.
             xcb_warp_pointer(m_connection, XCB_NONE, m_window, 0, 0, 0, 0, static_cast<int16_t>(m_width / 2), static_cast<int16_t>(m_height / 2));
             m_last_mouse_x = static_cast<int32_t>(m_width / 2);
             m_last_mouse_y = static_cast<int32_t>(m_height / 2);
+            m_warp_pending = true;
 
-            xcb_free_cursor(m_connection, cursor);
+            // The cursor is intentionally NOT freed here — the pointer grab still
+            // references it, and the X server's behaviour when a still-referenced cursor
+            // is freed is implementation-defined. The cursor lives on m_invisible_cursor
+            // for the lifetime of the grab and is freed when capture is released below.
+
             xcb_flush(m_connection);
         } else {
             xcb_ungrab_pointer(m_connection, XCB_CURRENT_TIME);
+
+            // Now that the grab is released, it's safe to free the cursor handle.
+            if (m_invisible_cursor != 0) {
+                xcb_free_cursor(m_connection, m_invisible_cursor);
+                m_invisible_cursor = 0;
+            }
+
             xcb_flush(m_connection);
         }
     }
@@ -247,6 +325,20 @@ namespace WindowLib
             xcb_motion_notify_event_t* mn{reinterpret_cast<xcb_motion_notify_event_t*>(event)};
             int32_t x{static_cast<int32_t>(mn->event_x)};
             int32_t y{static_cast<int32_t>(mn->event_y)};
+
+            // Filter the synthetic recentre event. After xcb_warp_pointer (in this branch
+            // or in setCursorCaptured), the X server dispatches a follow-up MOTION_NOTIFY
+            // with the new position. Without this filter, every real mouse move emits two
+            // events — one real, one phantom (dx=0, dy=0) — doubling consumer event load
+            // and potentially confusing camera-look code that integrates dx/dy.
+            if (m_warp_pending) {
+                m_warp_pending = false;
+                m_last_mouse_x = x;
+                m_last_mouse_y = y;
+                m_mouse_tracked = true;
+                break;
+            }
+
             int32_t dx{m_mouse_tracked ? (x - m_last_mouse_x) : 0};
             int32_t dy{m_mouse_tracked ? (y - m_last_mouse_y) : 0};
 
@@ -258,6 +350,7 @@ namespace WindowLib
                 m_last_mouse_y = static_cast<int32_t>(cy);
                 xcb_warp_pointer(m_connection, XCB_NONE, m_window, 0, 0, 0, 0, cx, cy);
                 xcb_flush(m_connection);
+                m_warp_pending = true; // The next XCB_MOTION_NOTIFY will be the synthetic recentre.
             } else {
                 m_last_mouse_x = x;
                 m_last_mouse_y = y;

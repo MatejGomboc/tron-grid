@@ -329,27 +329,27 @@ mouse-look has no phantom zero-delta events.
 
 **Scope:**
 
-- [ ] **Invisible-cursor pixmap never initialised**
+- [x] **Invisible-cursor pixmap never initialised**
   (`libs/window/src/xcb_window.cpp:164-165`). 1×1 depth-1 pixmap
   contents are undefined per X11 spec; can render as a visible single
   pixel. Either zero the pixmap with a GC fill / `xcb_put_image`, or
   use the documented `XCB_CURSOR_NONE` fallback.
-- [ ] **Cursor freed while grab still references it**
+- [x] **Cursor freed while grab still references it**
   (`libs/window/src/xcb_window.cpp:186`). `xcb_free_cursor` runs
   immediately after `xcb_grab_pointer` while the active grab still
   holds the resource — implementation-defined. Move the free into the
   `else` branch (after `xcb_ungrab_pointer`) and store the cursor
   handle in a member.
-- [ ] **`screen_num` out-of-range crash**
+- [x] **`screen_num` out-of-range crash**
   (`libs/window/src/xcb_window.cpp:51-56`). If `xcb_connect` returns
   `screen_num >= rem`, the iterator advances past the end and
   `iter.data` is null; the next access at `:71` segfaults. Guard with
   `iter.rem` and `logFatal` if no screen is found.
-- [ ] **`WM_NAME` set as Latin-1, breaking UTF-8 titles**
+- [x] **`WM_NAME` set as Latin-1, breaking UTF-8 titles**
   (`libs/window/src/xcb_window.cpp:82`). `XCB_ATOM_STRING` is Latin-1
   per ICCCM. Set `_NET_WM_NAME` with `UTF8_STRING` in addition (modern
   WMs prefer it).
-- [ ] **Synthetic mouse-warp event filtering**
+- [x] **Synthetic mouse-warp event filtering**
   (`libs/window/src/xcb_window.cpp:246-275`). Same root cause as the
   Win32 issue — recentre `xcb_warp_pointer` generates a synthetic
   MotionNotify. Filter by tracking a warp-pending flag.
@@ -360,8 +360,8 @@ no crash on multi-screen setups with non-zero default screen.
 
 ### Acceptance Criteria
 
-- [ ] Maintenance Etape M1 merged
-- [ ] Maintenance Etape M2 merged
+- [x] Maintenance Etape M1 merged
+- [x] Maintenance Etape M2 merged
 - [ ] Maintenance Etape M3 merged
 - [ ] All findings from the 2026-04-26 `libs/` audit addressed
 
@@ -778,6 +778,47 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Maintenance Etape M3: XCB window hardening
+
+Five findings from the parallel `libs/` audit, closing out the libs-audit
+follow-up sequence (audit plan in PR #99, M1 in PR #100, M2 in PR #101).
+
+1. **`screen_num` out-of-range guard.** The constructor's screen iterator
+   now checks `iter.rem` before advancing and aborts with `logFatal` if no
+   usable screen is found. The previous code blindly advanced past the
+   end on pathological `xcb_connect` responses, leaving `iter.data` null
+   and crashing on the next `m_screen->width_in_pixels` access.
+2. **Invisible-cursor pixmap explicitly zeroed.** A 1×1 depth-1 pixmap
+   has undefined contents per the X11 spec; on some servers the
+   "invisible" cursor would render as a visible single pixel. The cursor
+   pixmap is now explicitly cleared with a graphics-context fill before
+   being passed to `xcb_create_cursor`.
+3. **Cursor lifetime fixed.** `xcb_free_cursor` was previously called
+   immediately after `xcb_grab_pointer` while the active grab still held
+   the resource — the X server's behaviour for that case is
+   implementation-defined. The cursor handle now lives on a new
+   `m_invisible_cursor` member for the lifetime of the grab; the free
+   moves into the capture-release branch (after `xcb_ungrab_pointer`),
+   with a defensive free in the destructor for shutdown-while-captured.
+4. **`_NET_WM_NAME` (UTF-8) added alongside legacy WM_NAME (Latin-1).**
+   `XCB_ATOM_STRING` is Latin-1 per ICCCM; multibyte UTF-8 sequences in
+   the title displayed as garbage on every modern WM. `_NET_WM_NAME` with
+   `UTF8_STRING` is the EWMH-preferred form and is now set in parallel.
+5. **Synthetic motion-event filter.** New `m_warp_pending` flag set after
+   every `xcb_warp_pointer` (both the `XCB_MOTION_NOTIFY` recentre path
+   and the initial centre-on-capture in `setCursorCaptured`); the next
+   motion event is consumed silently. Without this filter, every real
+   mouse movement generated a phantom `MouseMove` event with `dx = dy =
+   0`, doubling consumer event load. Mirrors the M2 fix on Win32.
+
+`setCursorCaptured` also gained an idempotent guard to match Win32's M2
+behaviour (no-op when the requested state matches the current state) —
+without it, repeated capture toggles would leak cursor handles and
+double-grab the pointer.
+
+All 10 findings from the 2026-04-26 `libs/` audit are now addressed.
+102 PRs merged.
 
 ### 2026-04-26 — Maintenance Etape M2: Win32 window hardening
 
