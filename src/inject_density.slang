@@ -73,21 +73,39 @@ float froxelSliceThickness(uint z_index)
 // Reconstruct the world-space position of a froxel centre from its (x, y, z) integer
 // coordinates. Uses the inverse view-projection matrix to walk from screen-space NDC at
 // the slice's depth back into world coordinates. (For 41a we only need the world Y for
-// the height-falloff density, but the full reconstruction is here for 41b's per-froxel
-// emissive sampling.)
+// the height-falloff density, but the full reconstruction must be correct so 41b's
+// per-froxel emissive sampling and shadow rays land at the right world positions.)
+//
+// Math: froxelSliceToDepth gives view_z, the linear depth along **camera_forward**
+// (the slice's depth in view space). The view ray for an off-axis NDC point is at
+// some angle to camera_forward, so advancing by `view_z` along `ray_dir` would land
+// the result at view depth `view_z · cos(angle)` < view_z (closer than intended) at
+// corner pixels. Correct: parametric distance along the ray equals view_z divided
+// by the cosine of the angle between ray and forward, i.e. `t = view_z /
+// dot(ray_dir, camera_forward)`.
 float3 froxelToWorld(uint3 froxel_id)
 {
     float2 ndc_xy = (float2(froxel_id.xy) + 0.5) / float2(push.froxel_width, push.froxel_height) * 2.0 - 1.0;
     float view_z = froxelSliceToDepth(froxel_id.z);
 
-    // Project a near-plane point and a slice-depth point into world space, then walk
-    // along the resulting view ray to the slice depth.
+    // Unproject the NDC point at the near plane to get a world-space ray direction.
     float4 near_clip = float4(ndc_xy, 0.0, 1.0);
     float4 near_world_h = mul(push.inv_view_projection, near_clip);
     float3 near_world = near_world_h.xyz / near_world_h.w;
-
     float3 ray_dir = normalize(near_world - push.camera_pos);
-    return push.camera_pos + ray_dir * view_z;
+
+    // Compute camera_forward by unprojecting the NDC centre at the near plane and
+    // subtracting the camera position. (Per-froxel cost is one mul + one normalise;
+    // negligible against the 921k-froxel total. Avoids adding a separate camera_forward
+    // push-constant member.)
+    float4 fwd_clip = float4(0.0, 0.0, 0.0, 1.0);
+    float4 fwd_world_h = mul(push.inv_view_projection, fwd_clip);
+    float3 fwd_world = fwd_world_h.xyz / fwd_world_h.w;
+    float3 camera_forward = normalize(fwd_world - push.camera_pos);
+
+    float ray_dot_forward = max(dot(ray_dir, camera_forward), 1e-4);
+    float t = view_z / ray_dot_forward;
+    return push.camera_pos + ray_dir * t;
 }
 
 [shader("compute")]

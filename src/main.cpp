@@ -151,6 +151,17 @@ struct VolumetricCompositePushConstants {
     float pad2{0.0f};
 };
 
+// Compile-time guards on the volumetric push-constant struct sizes. The C++ structs above
+// match the Slang ones byte-for-byte under std430 partly by coincidence — Mat4 in
+// VolumetricInjectPushConstants happens to land at offset 32 (16-byte aligned) because the
+// preceding 8 floats sum to exactly 32. Reordering members would diverge between C++ (which
+// would not pad) and std430 (which would). The static_asserts catch any future reordering
+// before it causes silent shader-side garbage.
+static_assert(sizeof(VolumetricInjectPushConstants) == 112,
+    "VolumetricInjectPushConstants must be 112 bytes — Slang inject_density.slang FroxelPushConstants depends on this exact layout");
+static_assert(sizeof(VolumetricCompositePushConstants) == 32,
+    "VolumetricCompositePushConstants must be 32 bytes — Slang volumetric_composite.slang VolumetricPushConstants depends on this exact layout");
+
 //! Computes the number of mip levels for the bloom texture (base = half swapchain resolution).
 [[nodiscard]] static uint32_t bloomMipCount(vk::Extent2D extent)
 {
@@ -525,7 +536,12 @@ static void recordFrame(const vk::raii::CommandBuffer& cmd, vk::Image msaa_image
     hdr_to_general.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
     hdr_to_general.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
     hdr_to_general.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-    hdr_to_general.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead;
+    // Etape 41 update: includes eShaderStorageWrite because the volumetric composite that
+    // runs immediately after this barrier reads AND writes HDR (in-place fog composite).
+    // Validation didn't flag the prior read-only mask because the composite's read precedes
+    // the write in program order so the prior color-attachment write is transitively visible
+    // to the write too — but listing both is more defensive and self-documenting.
+    hdr_to_general.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
     hdr_to_general.oldLayout = vk::ImageLayout::eColorAttachmentOptimal;
     hdr_to_general.newLayout = vk::ImageLayout::eGeneral;
     hdr_to_general.srcQueueFamilyIndex = vk::QueueFamilyIgnored;
