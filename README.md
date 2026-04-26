@@ -25,7 +25,7 @@ aberration, cool colour grade, vignette, scan lines). Physically-correct
 lighting from emissive neon tube geometry (no point-light abstraction) with
 ReSTIR DI — temporal + spatial reservoir reuse for direct illumination,
 single-bounce indirect GI via cosine-weighted hemisphere sampling with Russian
-roulette, ray-traced ambient occlusion (cosine-weighted hemisphere, 2 m TMax,
+roulette plus spatial averaging across geometrically-similar reservoir neighbours, ray-traced ambient occlusion (cosine-weighted hemisphere, 2 m TMax,
 temporal EMA + spatial averaging, applied to diffuse lobes only). RT hard
 shadows and single-bounce reflections via inline ray query
 (`VK_KHR_ray_query`). Transparent materials with ray-traced refraction

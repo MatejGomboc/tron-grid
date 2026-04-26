@@ -213,7 +213,11 @@ alone is insufficient under the Vulkan memory model. Single-bounce indirect
 GI via cosine-weighted hemisphere sampling (Malley's method) with Russian
 roulette (unbiased estimator: EMA updates every frame with zero on reject,
 not skipped), hit normal from vertex SSBO + bounce shadow ray, temporal EMA
-accumulation in the reservoir. Firefly clamp (per-sample max 30) and tighter
+accumulation in the reservoir, **spatial averaging across geometrically-
+similar neighbours** (Etape 42b — same loop and same geometric reject as
+the existing AO and ReSTIR merges; cost is essentially free because the
+neighbour reservoir reads piggyback on cache lines AO already loads).
+Firefly clamp (per-sample max 30) and tighter
 GI-bounce distance floor (0.04 m²) bound the variance without breaking
 averaging. **RTAO** (Etape 39) — one cosine-weighted hemisphere ray per
 fragment, TMax 2 m for local contact shadows, temporal EMA into the
