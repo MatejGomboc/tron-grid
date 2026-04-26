@@ -259,6 +259,25 @@ is additive per canonical PBR: `(indirect + direct_diffuse) × ao +
 direct_specular + emissive + reflected_colour × F_view`. Per-material
 Fresnel F0 derived from `mat.ior` via Snell's law, unified across direct
 and reflection paths, `lerp(F0_dielectric, base_colour, metallic)`.
+**Volumetric fog foundation** (Phase 8 Etape 41 sub-etape 41a) — 160 ×
+90 × 64 froxel grid (`rgba16f`, ~7.4 MB) with logarithmic depth slicing
+(more resolution near the camera, less at the far plane), frustum-aligned
+x/y tiles. Two compute passes per frame: density-injection compute writes
+per-froxel extinction (height-falloff: full strength below `y = 4 m`,
+exponential attenuation with 6 m falloff above) and zero scattered
+radiance into the grid; raymarch composite per pixel marches the
+froxel column, accumulates `transmittance *= exp(-extinction_per_slice)`
+plus per-slice scattered radiance per Wronski 2014 / Frostbite, then
+blends `final = scene * transmittance + scattered` into HDR before
+bloom extraction so the fog itself bloom. World-space froxel-centre
+reconstruction uses the inverse view-projection plus a shader-side
+`camera_forward` derived from `inv_view_projection` so off-axis
+pixels land at the correct view depth (parametric distance scaled by
+`1 / dot(ray_dir, camera_forward)`). Per-frame composite descriptor
+sets (×MAX_FRAMES_IN_FLIGHT) avoid the in-flight update race; inject
+descriptor set is bound once. Sub-etapes 41b (per-froxel emissive
+sampling via TLAS shadow rays → actual neon light shafts) and 41c
+(temporal reprojection via existing motion vectors) are queued.
 Swapchain lifecycle hardened: `image_available_semaphores` rebuilt on
 resize (symmetry with present semaphores), zero-extent guard BEFORE acquire
 (`waitIdle` doesn't reset semaphore state), `acquireNextImage` catches

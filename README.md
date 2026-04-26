@@ -32,9 +32,15 @@ shadows and single-bounce reflections via inline ray query
 (Snell's law, total-internal-reflection fallback, Schlick Fresnel,
 Beer-Lambert-lite tint) — glass tower and red energy-barrier pillar render
 through a dedicated transparent pipeline (premultiplied alpha, depth test
-only) that shares the descriptor set layout with the opaque pipeline. Mesh
-shader rendering (task + mesh + fragment), procedural Tron terrain,
-per-object frustum culling, meshlet-based geometry, entity/component scene.
+only) that shares the descriptor set layout with the opaque pipeline.
+Volumetric fog foundation — 160×90×64 froxel grid with logarithmic depth
+slicing, height-falloff density injection, raymarch composite that
+accumulates per-slice transmittance and scattered radiance per Wronski
+2014 / Frostbite. Inserted before bloom extraction so the fog itself
+bloom. Light shafts (per-froxel emissive sampling) and temporal
+reprojection are scoped for follow-up sub-etapes. Mesh shader rendering
+(task + mesh + fragment), procedural Tron terrain, per-object frustum
+culling, meshlet-based geometry, entity/component scene.
 Code quality: Clang-Tidy, spirv-val, `-Werror`/`/WX`, ASan/UBSan/TSan, GPU
 validation.
 

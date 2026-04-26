@@ -362,8 +362,8 @@ no crash on multi-screen setups with non-zero default screen.
 
 - [x] Maintenance Etape M1 merged
 - [x] Maintenance Etape M2 merged
-- [ ] Maintenance Etape M3 merged
-- [ ] All findings from the 2026-04-26 `libs/` audit addressed
+- [x] Maintenance Etape M3 merged
+- [x] All findings from the 2026-04-26 `libs/` audit addressed
 
 ---
 
