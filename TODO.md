@@ -326,31 +326,14 @@ convention; only inject + filter's copy of `froxelToWorld` is wrong.
 corresponds to math-NDC y=+1 (top of math frustum, which after the
 mesh-shader `-fvk-invert-y` flip displays at Vulkan top of screen).
 
-##### 42c-polish-3 — Indirect GI grain reduction
+##### 42c-polish-3 — Indirect GI grain reduction ✅ (PR #112)
 
-Heavy red speckle visible on the obsidian floor near the energy-barrier
-pillar — single-bounce hemisphere-sampling MC variance leaking through
-even after Etape 38 temporal EMA + Etape 42b spatial filter. Bright
-nearby light source (pillar emissive ~15 × red) + dark obsidian (where
-indirect IS the dominant lighting signal) + inverse-square-cos hemisphere
-contributions produce low-frequency variance blobs that the existing
-5-neighbour / 20-pixel-radius spatial filter can't smooth hard enough.
-
-Initial pass (cheap fixes, single PR):
-
-- Tighten `INDIRECT_FIREFLY_MAX` from 30 to 10. Caps spike intensity
-  hard, costs nothing.
-- Widen `SPATIAL_RADIUS` from 20 to 40 pixels. Same per-frame cost
-  (still 5 neighbour samples), wider footprint smooths low-frequency
-  blobs better.
-
-If still insufficient (visual gate after rebuild), escalate:
-
-- Take 2 indirect samples per frame instead of 1 (~+1 ms cost, MC
-  variance halves).
-- Add an A-trous bilateral filter pass after the mesh shader (proper
-  edge-aware denoiser, ~3–5× quality win, biggest implementation
-  effort — a full new compute pass).
+Shipped: combined-lighting SVGF denoiser + canonical Schied 2017 §4
+temporal moments + variance estimation + sky reflection on RT
+reflection-ray miss + non-opaque RayQuery loop fix. See Journal entry
+2026-04-26 for the full story. The escalation path (à-trous bilateral
+filter) was the architecturally correct answer; cheap fixes were
+explored and reverted before ship in favour of the canonical SVGF.
 
 ##### 42c-polish-N — Open-ended quality polish
 
@@ -1062,6 +1045,160 @@ features that separate a tech demo from a published game.
 
 <!-- Reverse chronological — newest entries at the top. -->
 <!-- Format: ### YYYY-MM-DD — Short title -->
+
+### 2026-04-26 — Phase 8 Etape 42c-polish-3: combined-lighting SVGF + variance estimation + sky reflection + non-opaque ray query fix
+
+The longest single polish iteration of Phase 8 — bundles three
+substantial features (canonical SVGF denoiser, sky-reflection refactor,
+non-opaque RayQuery fix) plus parameter tuning iterated against visual
+gates. Multi-step diagnostic journey across two sessions; the final
+shipped state has none of the band-aids the iterations explored.
+
+**The original visible artefact.** Heavy red speckle on the obsidian
+floor near the bright red energy-barrier pillar — fine high-frequency
+single-pixel noise that no per-pixel firefly clamp eliminated. Initially
+diagnosed as indirect-GI MC variance and tackled with cheap edits
+(firefly clamp 30 → 10, ReSTIR spatial radius 20 → 40); both helped
+marginally but the underlying variance pattern persisted.
+
+**Diagnosis (four debug-visualiser iterations).** A parallel research
+subagent confirmed the canonical fix is SVGF (Spatiotemporal
+Variance-Guided Filtering, Schied et al. 2017 HPG — the algorithm
+NVIDIA productionised as RELAX in NRD/RTXDI). Building the SVGF
+wavelet revealed (via a per-channel `DEBUG_VIS` switch in the fragment
+shader) that the speckle was actually in `direct_specular` —
+Cook-Torrance D() peak × ReSTIR W variance leaks when the historical
+M-clamped p\_hat average doesn't match the current direction's BRDF
+evaluation, producing per-pixel spikes that no MAGNITUDE clamp could
+remove (clamp bounds magnitude, not variance pattern).
+
+**Architectural fix #1 — combined-lighting SVGF.** Routed ALL
+diffuse-style lighting (indirect bounce + direct\_diffuse +
+direct\_specular) through a single SVGF chain instead of denoising
+only the indirect channel. New `lighting_raw` storage image (rgba16f,
+full screen) written by the mesh-shader fragment at sample 0 holds
+`(r.indirect + direct_diffuse) × ao_factor + direct_specular`. SVGF
+init pass reads it, passes the combined signal through the wavelet
+chain, writes the denoised result to the
+`denoised_indirect_history` ping-pong. Mesh shader composite becomes
+simply `colour = denoised_lighting + emissive + reflected_colour × F_view`.
+EVERY noisy MC-sampled lighting term now gets the same wavelet
+treatment in one pass — no signal is left un-denoised.
+
+**Architectural fix #2 — canonical Schied 2017 §4 temporal moments +
+variance estimation.** Initial wavelet shipped with `φ_color = 10`
+(Falcor canonical) but no variance estimation, which over-smoothed
+sharp BRDF-peak hot spots near emissives. Added 2× `rg16f` ping-pong
+moments textures (μ₁ = luminance EMA, μ₂ = luminance² EMA, α = 0.20)
+plus per-pixel √variance written into the wavelet alpha channel by
+the init pass. Wavelet edge stop becomes per-pixel adaptive:
+`effective_σ = SIGMA_COLOR_BASE × √variance` so noisy pixels get
+aggressive smoothing while stable pixels (genuine hot spots that have
+been bright for several frames) get edge preservation. φ\_color
+iterated 10 → 5 → 3 → 2 against visual gates; 2 is the value at which
+sharp neon glints survive while MC speckle still gets killed in our
+scene's specific ReSTIR-driven variance pattern. À-trous iterations
+truncated 4 → 3 (dropped stride 8) — the largest stride was producing
+low-frequency blob smear on the obsidian floor.
+
+**Architectural fix #3 — sky reflection on RT reflection-ray miss.**
+The previous reflection-miss path returned `float3(0, 0, 0)`, leaving
+the obsidian floor's reflection pitch-black wherever the reflected ray
+pointed at the sky. New `src/skybox_common.slang` Slang module factors
+the procedural sky function (`public float3 sampleProceduralSky(ray_dir,
+time)`) so the dedicated skybox pipeline (skybox.slang) AND the mesh
+shader's reflection-miss handler (mesh.slang) share one bit-identical
+implementation. Slang module wiring: `module skybox_common;`,
+`import skybox_common;` in both consumers, `-I ${CMAKE_CURRENT_SOURCE_DIR}`
+flag added to mesh.spv and skybox.spv slangc invocations,
+`SKYBOX_COMMON_SOURCE` added to the `DEPENDS` list of both targets so
+module changes trigger a rebuild. As a side cleanup the dedicated
+skybox pipeline lost its push constant entirely — `time` is now read
+from `CameraData.time` (a new field) instead, removing one
+pipeline-layout incompatibility footgun.
+
+**Bug fixed during pillar-tilt verification — non-opaque RayQuery loop.**
+Tilted the energy-barrier pillar 15° as an end-to-end RT reflection
+sanity check. No reflection appeared on the obsidian floor below the
+pillar — turned out the reflection ray's `RayQuery.Proceed()` was
+being called once without an iteration loop, so non-opaque BLAS hits
+(the glass tower and energy-barrier pillar, both flagged non-opaque
+per Etape 40) never got committed via `CommitNonOpaqueTriangleHit()`.
+Fixed with a proper `while (Proceed()) { ... }` loop on both the
+reflection ray and the indirect-bounce ray. The bug had been silently
+hiding the pillar from reflections + indirect contributions for the
+entire Phase 8 Etape 40 lifecycle — only became visible when we tilted
+the pillar to make its reflection geometrically distinguishable. Pillar
+tilt itself was reverted before commit (purely a diagnostic aid).
+
+**Direct-specular firefly clamp.** `DIRECT_SPECULAR_FIREFLY_MAX`
+iterated 30 → 10 → 5 against visual gates. Briefly tested at 0 to
+confirm direct_specular's visual contribution in our scene was small
+relative to the RT-reflection path that dominates obsidian highlights;
+restored to a finite value (5) before ship to avoid silently killing a
+canonical PBR direct-lighting term in scenes with rougher materials or
+dimmer reflective contributions.
+
+**SVGF resources added** (~128 MB at 2560×1600):
+
+- `lighting_raw` (rgba16f, full screen) — mesh-shader fragment write target
+- `denoised_indirect_a/b` (rgba16f × 2) — ping-pong, mesh shader reads
+  previous frame's
+- `svgf_wavelet_a/b` (rgba16f × 2) — wavelet ping-pong scratch
+- `moments_a/b` (rg16f × 2) — temporal moments ping-pong (Schied 2017 §4
+  variance estimation; ~16 MB each at 2560×1600)
+- One-shot UNDEFINED → GENERAL transition + zero-clear of all 7 images
+  at startup and after every swapchain resize
+
+**Pipeline + descriptor changes:**
+
+- Mesh pipeline gains binding 12 (denoised lighting history, storage
+  image read in fragment) and binding 14 (lighting\_raw, storage image
+  write in fragment via `fragmentStoresAndAtomics`); binding 13
+  reserved for a future use.
+- SVGF compute pipeline + descriptor set layout — 6 storage image
+  bindings (lighting\_raw read, wavelet\_a/b ping-pong, denoised
+  output, moments\_prev/curr ping-pong); 2 frame-paired descriptor sets
+  alternate which physical images are bound to the read-vs-write slots.
+- Cross-frame barrier extended from 2 → 3 memory barriers (added
+  `svgf_history_cross_frame` for compute-stage write → fragment-stage
+  read on the denoised history).
+- Same-frame `reservoir_frag_to_compute` memory barrier covers both the
+  reservoir SSBO write → compute read AND the new lighting\_raw image
+  write → compute read (one memory barrier covers both because
+  `eShaderStorageWrite` applies to SSBOs and storage images alike).
+- GPU profiler gains a `Svgf` `GpuPass` enum entry covering the entire
+  4-dispatch SVGF chain (init + 3 wavelet iters at strides 1/2/4) as
+  one timed unit; reads ~0.71 ms at 1280×720 in debug.
+- `CameraUBO` gains a `time` field (offset 288, scalar layout); skybox
+  pipeline layout drops its `vk::PushConstantRange` entirely (skybox
+  now reads time from the same UBO it already binds at descriptor 0).
+- `task.slang`'s `CameraData` struct synced with the new `time` field
+  for layout consistency, even though task shader doesn't read it.
+  `triangle.slang` left alone — explicitly marked legacy/stale in its
+  own header.
+
+**Acceptance.** First polish-3 attempt's red speckle: gone. Pillar
+reflection on obsidian: appears correctly. Sharp neon glints on
+obsidian: survive the wavelet (variance-driven σ at φ\_color = 2). Sky
+behind the orb: now reflects on the floor where the previous build
+showed pitch black. SVGF profiler entry: live in the periodic log
+(~0.71 ms at 1280×720 debug). Build clean, no validation errors, no
+warnings on `/W4 /WX`.
+
+References (validated end-to-end during the research phase):
+
+- Schied et al. 2017 "Spatiotemporal Variance-Guided Filtering" (HPG)
+- Dammertz et al. 2010 "Edge-Avoiding À-Trous Wavelet Transform for
+  Fast Global Illumination Filtering" (HPG)
+- NVIDIA NRD README — RELAX is "a variant of SVGF" for RTXDI signals
+- Falcor SVGFPass.h reference parameters
+- Slang user guide — "Modules and Access Control",
+  "Compiling Code with Slang" (module / `-I` search-path semantics)
+- Vulkan spec on inline `RayQuery.Proceed()` loop semantics for
+  non-opaque candidate hits
+
+112 PRs merged.
 
 ### 2026-04-26 — Phase 8 Etape 42c-polish-2: fog Y-flip bug fix + temporal warm-up pre-fill + density tuning
 

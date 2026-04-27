@@ -200,7 +200,7 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     transparent_colour_blend.logicOpEnable = vk::False;
     transparent_colour_blend.setAttachments(transparent_colour_blend_attachment);
 
-    // Descriptor set layout — 12 bindings for the mesh shader pipeline.
+    // Descriptor set layout — 14 bindings for the mesh shader pipeline.
     // Binding 0:  camera UBO (task + mesh + fragment stages)
     // Binding 1:  object transforms SSBO (task + mesh + fragment stages)
     // Binding 2:  object bounds SSBO (task stage only)
@@ -213,7 +213,13 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     // Binding 9:  emissive triangle SSBO (fragment stage — area light sampling)
     // Binding 10: reservoir current — RW (fragment stage — ReSTIR temporal write)
     // Binding 11: reservoir previous — RO (fragment stage — ReSTIR temporal read)
-    std::array<vk::DescriptorSetLayoutBinding, 12> bindings{};
+    // Binding 12: denoised lighting history (fragment stage — SVGF output from prev frame,
+    //             Phase 8 Etape 42c-polish-3; storage image read in eGeneral layout — now
+    //             holds COMBINED denoised diffuse-style lighting, not just indirect)
+    // Binding 13: (reserved)
+    // Binding 14: lighting_raw (fragment stage — write-only this-frame combined lighting
+    //             for SVGF input; Phase 8 Etape 42c-polish-3; storage image)
+    std::array<vk::DescriptorSetLayoutBinding, 14> bindings{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = vk::DescriptorType::eUniformBuffer;
     bindings[0].descriptorCount = 1;
@@ -262,6 +268,14 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
     bindings[11].descriptorType = vk::DescriptorType::eStorageBuffer;
     bindings[11].descriptorCount = 1;
     bindings[11].stageFlags = vk::ShaderStageFlagBits::eFragment;
+    bindings[12].binding = 12;
+    bindings[12].descriptorType = vk::DescriptorType::eStorageImage;
+    bindings[12].descriptorCount = 1;
+    bindings[12].stageFlags = vk::ShaderStageFlagBits::eFragment;
+    bindings[13].binding = 14; // sparse — binding number 13 deliberately skipped, reserved.
+    bindings[13].descriptorType = vk::DescriptorType::eStorageImage;
+    bindings[13].descriptorCount = 1;
+    bindings[13].stageFlags = vk::ShaderStageFlagBits::eFragment;
 
     vk::DescriptorSetLayoutCreateInfo layout_info{};
     layout_info.setBindings(bindings);
@@ -310,14 +324,17 @@ Pipeline::Pipeline(const Device& device, vk::Format colour_format, vk::Format de
 
     m_transparent_pipeline = vk::raii::Pipeline{device.get(), nullptr, transparent_pipeline_info};
 
-    // Descriptor pool — UBO + 10 SSBOs + 1 TLAS per frame.
-    std::array<vk::DescriptorPoolSize, 3> pool_sizes{};
+    // Descriptor pool — UBO + 10 SSBOs + 1 TLAS + 2 storage images per frame
+    // (storage images: binding 12 SVGF history read + binding 14 lighting_raw write).
+    std::array<vk::DescriptorPoolSize, 4> pool_sizes{};
     pool_sizes[0].type = vk::DescriptorType::eUniformBuffer;
     pool_sizes[0].descriptorCount = frames_in_flight;
     pool_sizes[1].type = vk::DescriptorType::eStorageBuffer;
     pool_sizes[1].descriptorCount = frames_in_flight * 10;
     pool_sizes[2].type = vk::DescriptorType::eAccelerationStructureKHR;
     pool_sizes[2].descriptorCount = frames_in_flight;
+    pool_sizes[3].type = vk::DescriptorType::eStorageImage;
+    pool_sizes[3].descriptorCount = frames_in_flight * 2; // binding 12 (SVGF history read) + binding 14 (lighting_raw write).
 
     vk::DescriptorPoolCreateInfo pool_info{};
     pool_info.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -474,4 +491,36 @@ void Pipeline::bindReservoirBuffers(uint32_t frame_index, VkBuffer write_buffer,
     writes[1].setBufferInfo(buffer_infos[1]);
 
     m_device->get().updateDescriptorSets(writes, {});
+}
+
+void Pipeline::bindDenoisedIndirectHistory(uint32_t frame_index, vk::ImageView view) const
+{
+    vk::DescriptorImageInfo image_info{};
+    image_info.imageView = view;
+    image_info.imageLayout = vk::ImageLayout::eGeneral;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = *m_descriptor_sets[frame_index];
+    write.dstBinding = 12;
+    write.dstArrayElement = 0;
+    write.descriptorType = vk::DescriptorType::eStorageImage;
+    write.setImageInfo(image_info);
+
+    m_device->get().updateDescriptorSets({write}, {});
+}
+
+void Pipeline::bindLightingRaw(uint32_t frame_index, vk::ImageView view) const
+{
+    vk::DescriptorImageInfo image_info{};
+    image_info.imageView = view;
+    image_info.imageLayout = vk::ImageLayout::eGeneral;
+
+    vk::WriteDescriptorSet write{};
+    write.dstSet = *m_descriptor_sets[frame_index];
+    write.dstBinding = 14;
+    write.dstArrayElement = 0;
+    write.descriptorType = vk::DescriptorType::eStorageImage;
+    write.setImageInfo(image_info);
+
+    m_device->get().updateDescriptorSets({write}, {});
 }

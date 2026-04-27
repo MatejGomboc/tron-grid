@@ -74,6 +74,8 @@ struct ObjectBounds {
 };
 
 //! Camera uniform buffer — view/projection matrices + camera state, uploaded once per frame.
+//! Layout MUST match the Slang `CameraData` structs in mesh.slang and skybox.slang
+//! byte-for-byte (scalar layout enforced device-wide by VkPhysicalDeviceVulkan12Features::scalarBlockLayout).
 struct CameraUBO {
     MathLib::Mat4 view{}; //!< View matrix.
     MathLib::Mat4 projection{}; //!< Projection matrix.
@@ -85,7 +87,19 @@ struct CameraUBO {
     float total_emissive_power{0.0f}; //!< Sum of all emissive triangle powers (for PDF normalisation).
     uint32_t screen_width{0}; //!< Render target width in pixels (for reservoir indexing).
     uint32_t screen_height{0}; //!< Render target height in pixels (for reservoir indexing).
+    float time{0.0f}; //!< Elapsed time in seconds; drives sky-cloud animation in skybox.slang and mesh.slang's reflection-miss sky sampling.
 };
+
+//! Compile-time tripwire: the Slang `CameraData` structs in mesh.slang, skybox.slang, and
+//! task.slang declare fields at fixed scalar-block-layout offsets matching this struct
+//! byte-for-byte. A future field reorder or insertion that changes `sizeof(CameraUBO)`
+//! must update all three Slang copies in lockstep — this assert catches the drift before
+//! the GPU silently reads garbage offsets. Layout (scalar):
+//!   view 0 / projection 64 / inv_view_projection 128 / prev_view_projection 192
+//!   / camera_pos 256 / frame_count 268 / emissive_count 272 / total_emissive_power 276
+//!   / screen_width 280 / screen_height 284 / time 288 → total 292 bytes.
+static_assert(sizeof(CameraUBO) == 292,
+    "CameraUBO must be 292 bytes — Slang CameraData struct in mesh.slang/skybox.slang/task.slang depends on this exact layout (scalar block layout)");
 
 //! Emissive triangle for area light sampling — matches the Slang EmissiveTriangle struct.
 struct EmissiveTriangle {
@@ -201,6 +215,19 @@ public:
     //! Binds reservoir ping-pong buffers to bindings 10 (write) and 11 (read) for the given frame index.
     void bindReservoirBuffers(uint32_t frame_index, VkBuffer write_buffer, VkDeviceSize write_size, VkBuffer read_buffer, VkDeviceSize read_size) const;
 
+    //! Binds the previous frame's denoised indirect-GI history texture to binding 12.
+    //! Phase 8 Etape 42c-polish-3 (SVGF). The view should point at whichever ping-pong
+    //! image holds the *previous* frame's SVGF output; the host alternates the choice
+    //! between two physical images each frame. Image must be in eGeneral layout when
+    //! sampled (the SVGF compute pass writes it in eGeneral and never transitions away).
+    void bindDenoisedIndirectHistory(uint32_t frame_index, vk::ImageView view) const;
+
+    //! Binds the lighting_raw scratch texture to binding 14 (mesh fragment write target,
+    //! SVGF input). Phase 8 Etape 42c-polish-3. Single image shared across frames (no
+    //! ping-pong needed because mesh shader writes it then SVGF reads it within the same
+    //! frame, then it's discarded). Image must be in eGeneral layout.
+    void bindLightingRaw(uint32_t frame_index, vk::ImageView view) const;
+
     //! Updates the camera UBO for the given frame index via its mapped pointer.
     void updateCameraUBO(uint32_t frame_index, const CameraUBO& ubo) const;
 
@@ -214,7 +241,7 @@ private:
     const Device* m_device{nullptr}; //!< Non-owning device reference.
     LoggingLib::Logger& m_logger; //!< Logger reference (non-owning).
 
-    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 12 bindings: UBO + 10 SSBOs + TLAS.
+    vk::raii::DescriptorSetLayout m_descriptor_set_layout{nullptr}; //!< 14 bindings: UBO + 10 SSBOs + TLAS + 2 SVGF storage images (history read + lighting_raw write).
     vk::raii::PipelineLayout m_layout{nullptr}; //!< Pipeline layout (1 descriptor set + push constants).
     vk::raii::Pipeline m_opaque_pipeline{nullptr}; //!< Opaque mesh shader pipeline (fragMain).
     vk::raii::Pipeline m_transparent_pipeline{nullptr}; //!< Transparent mesh shader pipeline (fragTransparent, alpha blending).
