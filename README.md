@@ -1,5 +1,10 @@
 # TronGrid
 
+> [!IMPORTANT]
+> **This project is retired and the repository is archived.** The idea lives on in the
+> [AiQuokkaWannabe organisation](https://github.com/ai-quokka-wannabe) — its descendant — starting
+> with the [tron-grid-lite](https://github.com/ai-quokka-wannabe/tron-grid-lite) renderer.
+
 <p align="center">
   <img src="images/landscape_dark.png" width="49%" alt="TronGrid vision — dark variant" />
   <img src="images/landscape_light.png" width="49%" alt="TronGrid vision — light variant" />
